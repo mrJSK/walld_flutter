@@ -121,18 +121,20 @@ Future<void> main() async {
 
   await windowManager.ensureInitialized();
 
-  final windowOptions = const WindowOptions(
+  const windowOptions = WindowOptions(
     backgroundColor: Colors.black,
-    titleBarStyle: TitleBarStyle.hidden,
-    skipTaskbar: false,
+    titleBarStyle: TitleBarStyle.hidden, // borderless
+    skipTaskbar: false,         // still shows icon in taskbar
   );
 
   windowManager.waitUntilReadyToShow(windowOptions, () async {
     await windowManager.show();
     await windowManager.focus();
 
-    // Fixed desktop layer behavior
-    await windowManager.setAlwaysOnTop(false);  // apps can open over it
+    // TRUE FULLSCREEN → no white border, taskbar hidden
+    await windowManager.maximize();  
+
+    await windowManager.setAlwaysOnTop(false);
     await windowManager.setMovable(false);
     await windowManager.setResizable(false);
     await windowManager.setMinimizable(false);
@@ -142,20 +144,8 @@ Future<void> main() async {
   runApp(const WallDApp());
 }
 
-class WallDApp extends StatefulWidget {
+class WallDApp extends StatelessWidget {
   const WallDApp({super.key});
-
-  @override
-  State<WallDApp> createState() => _WallDAppState();
-}
-
-class _WallDAppState extends State<WallDApp> {
-  bool isFullScreen = false;
-
-  Future<void> _toggleFullScreen() async {
-    setState(() => isFullScreen = !isFullScreen);
-    await windowManager.setFullScreen(isFullScreen);
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -164,25 +154,13 @@ class _WallDAppState extends State<WallDApp> {
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: Colors.black,
       ),
-      home: Scaffold(
+      home: const Scaffold(
         body: ColoredBox(
           color: Colors.black,
           child: Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  isFullScreen 
-                    ? 'Wall-D (Fullscreen - Taskbar hidden)' 
-                    : 'Wall-D (Taskbar preserved)',
-                  style: const TextStyle(fontSize: 24, color: Colors.white),
-                ),
-                const SizedBox(height: 20),
-                ElevatedButton(
-                  onPressed: _toggleFullScreen,
-                  child: Text(isFullScreen ? 'Show Taskbar' : 'Hide Taskbar'),
-                ),
-              ],
+            child: Text(
+              'Wall-D (True Fullscreen)',
+              style: TextStyle(fontSize: 24, color: Colors.white),
             ),
           ),
         ),
@@ -409,19 +387,17 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance,
 
   FlutterWindow window(project);
 
-  // Get full screen dimensions
-  int screenWidth  = GetSystemMetrics(SM_CXSCREEN);
-  int screenHeight = GetSystemMetrics(SM_CYSCREEN);
-
-  // Get work area (screen minus taskbar)
+  // Work area (screen minus taskbar)
   RECT workArea;
   SystemParametersInfo(SPI_GETWORKAREA, 0, &workArea, 0);
 
-  // Calculate exact position and size
-  int x = workArea.left;
-  int y = workArea.top;
-  int width  = workArea.right - workArea.left;
-  int height = workArea.bottom - workArea.top;
+  // OVERSIZE by 2 px in each direction to push border off-screen
+  const int overshoot = 2;
+
+  int x      = workArea.left   - overshoot;
+  int y      = workArea.top    - overshoot;
+  int width  = (workArea.right  - workArea.left) + overshoot * 2;
+  int height = (workArea.bottom - workArea.top)  + overshoot * 2;
 
   Win32Window::Point origin(x, y);
   Win32Window::Size  size(width, height);
@@ -709,7 +685,7 @@ bool Win32Window::Create(const std::wstring& title,
 }
 
 bool Win32Window::Show() {
-  return ShowWindow(window_handle_, SW_SHOWNORMAL);
+  return ShowWindow(window_handle_, SW_SHOWMAXIMIZED);
 }
 
 // static
