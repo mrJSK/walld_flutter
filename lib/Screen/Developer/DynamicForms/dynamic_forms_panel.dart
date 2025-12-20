@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 import 'dynamic_forms_repository.dart';
@@ -158,7 +159,15 @@ class _DynamicFormsPanelState extends State<DynamicFormsPanel> {
                               style: TextStyle(color: Colors.white70),
                             ),
                           )
-                        : _DynamicFormRenderer(form: selectedForm),
+                        : _DynamicFormRenderer(
+                            tenantId: tenantId,
+                            form: selectedForm,
+                            onSubmit: (payload) async {
+                              // hook for real backend later
+                              debugPrint(
+                                  'Dynamic form "${selectedForm.formId}" submitted: $payload');
+                            },
+                          ),
                   ),
                 ),
               ),
@@ -173,9 +182,15 @@ class _DynamicFormsPanelState extends State<DynamicFormsPanel> {
 /* ------------------------ Runtime form renderer ------------------------ */
 
 class _DynamicFormRenderer extends StatefulWidget {
+  final String tenantId;
   final FormSchemaMeta form;
+  final Future<void> Function(Map<String, dynamic> values)? onSubmit;
 
-  const _DynamicFormRenderer({required this.form});
+  const _DynamicFormRenderer({
+    required this.tenantId,
+    required this.form,
+    this.onSubmit,
+  });
 
   @override
   State<_DynamicFormRenderer> createState() => _DynamicFormRendererState();
@@ -187,6 +202,8 @@ class _DynamicFormRendererState extends State<_DynamicFormRenderer> {
   final Map<String, dynamic> _values = {};
   final Map<String, bool> _checkboxValues = {};
   final Map<String, String?> _dropdownValues = {};
+  final Map<String, List<DropdownMenuItem<String>>> _dropdownItems = {};
+  final Map<String, bool> _loadingDropdown = {};
 
   @override
   void initState() {
@@ -197,6 +214,7 @@ class _DynamicFormRendererState extends State<_DynamicFormRenderer> {
       } else if (field.type == 'dropdown') {
         _dropdownValues[field.id] =
             field.options.isNotEmpty ? field.options.first : null;
+        _loadDropdownOptions(field);
       } else {
         _controllers[field.id] = TextEditingController();
       }
@@ -209,6 +227,44 @@ class _DynamicFormRendererState extends State<_DynamicFormRenderer> {
       c.dispose();
     }
     super.dispose();
+  }
+
+  Future<void> _loadDropdownOptions(FormFieldMeta field) async {
+    if (field.dataSource != 'firestore' ||
+        field.collection == null ||
+        field.displayField == null ||
+        field.valueField == null) {
+      // static options
+      _dropdownItems[field.id] = field.options
+          .map((o) => DropdownMenuItem(value: o, child: Text(o)))
+          .toList();
+      setState(() {});
+      return;
+    }
+
+    setState(() => _loadingDropdown[field.id] = true);
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('tenants/${widget.tenantId}/${field.collection}')
+          .get();
+
+      final items = snap.docs.map((doc) {
+        final data = doc.data();
+        final value = data[field.valueField] ?? doc.id;
+        final label = data[field.displayField] ?? value.toString();
+        return DropdownMenuItem<String>(
+          value: value.toString(),
+          child: Text(label.toString()),
+        );
+      }).toList();
+
+      _dropdownItems[field.id] = items;
+      if (_dropdownValues[field.id] == null && items.isNotEmpty) {
+        _dropdownValues[field.id] = items.first.value;
+      }
+    } finally {
+      setState(() => _loadingDropdown[field.id] = false);
+    }
   }
 
   @override
@@ -270,22 +326,21 @@ class _DynamicFormRendererState extends State<_DynamicFormRenderer> {
               labelText: field.label,
               floatingLabelBehavior: FloatingLabelBehavior.auto,
             ),
-            validator: (v) {
-              final value = v?.trim() ?? '';
-              if (field.required && value.isEmpty) {
-                return '${field.label} is required';
-              }
-              if (field.type == 'email' && value.isNotEmpty) {
-                final ok = RegExp(
-                        r'^[\w\.\-]+@([\w\-]+\.)+[\w\-]{2,4}$')
-                    .hasMatch(value);
-                if (!ok) return 'Invalid email';
-              }
-              return null;
-            },
+            validator: (v) => _runValidation(field, v?.trim() ?? ''),
           ),
         );
       case 'dropdown':
+        final loading = _loadingDropdown[field.id] ?? false;
+        final items = _dropdownItems[field.id] ??
+            field.options
+                .map(
+                  (o) => DropdownMenuItem(
+                    value: o,
+                    child: Text(o),
+                  ),
+                )
+                .toList();
+
         return Padding(
           padding: const EdgeInsets.only(bottom: 16.0),
           child: DropdownButtonFormField<String>(
@@ -295,23 +350,18 @@ class _DynamicFormRendererState extends State<_DynamicFormRenderer> {
               floatingLabelBehavior: FloatingLabelBehavior.auto,
             ),
             dropdownColor: const Color(0xFF111118),
-            items: field.options
-                .map(
-                  (o) => DropdownMenuItem(
-                    value: o,
-                    child: Text(o),
-                  ),
-                )
-                .toList(),
+            items: items,
             validator: (v) {
               if (field.required && (v == null || v.isEmpty)) {
                 return '${field.label} is required';
               }
               return null;
             },
-            onChanged: (v) {
-              setState(() => _dropdownValues[field.id] = v);
-            },
+            onChanged: loading
+                ? null
+                : (v) {
+                    setState(() => _dropdownValues[field.id] = v);
+                  },
           ),
         );
       case 'checkbox':
@@ -322,8 +372,10 @@ class _DynamicFormRendererState extends State<_DynamicFormRenderer> {
             onChanged: (v) {
               setState(() => _checkboxValues[field.id] = v ?? false);
             },
-            title: Text(field.label,
-                style: const TextStyle(color: Colors.white)),
+            title: Text(
+              field.label,
+              style: const TextStyle(color: Colors.white),
+            ),
             controlAffinity: ListTileControlAffinity.leading,
             contentPadding: EdgeInsets.zero,
           ),
@@ -345,7 +397,25 @@ class _DynamicFormRendererState extends State<_DynamicFormRenderer> {
     }
   }
 
-  void _onSubmit() {
+  String? _runValidation(FormFieldMeta field, String value) {
+    if (field.required && value.isEmpty) {
+      return '${field.label} is required';
+    }
+    if (field.type == 'email' && value.isNotEmpty) {
+      final ok =
+          RegExp(r'^[^@]+@[^@]+\.[^@]+$').hasMatch(value);
+      if (!ok) return 'Invalid email';
+    }
+    if (field.validation != null && value.isNotEmpty) {
+      final re = RegExp(field.validation!);
+      if (!re.hasMatch(value)) {
+        return 'Invalid ${field.label}';
+      }
+    }
+    return null;
+  }
+
+  Future<void> _onSubmit() async {
     if (!_formKey.currentState!.validate()) return;
 
     for (final entry in _controllers.entries) {
@@ -358,15 +428,18 @@ class _DynamicFormRendererState extends State<_DynamicFormRenderer> {
       _values[entry.key] = entry.value;
     }
 
-    debugPrint(
-      'Dynamic form "${widget.form.formId}" submitted: $_values',
-    );
-
-    ScaffoldMessenger.of(_formKey.currentContext!).showSnackBar(
-      const SnackBar(
-        content: Text('Form submitted – see debug console for payload'),
-      ),
-    );
+    if (widget.onSubmit != null) {
+      await widget.onSubmit!(_values);
+    } else {
+      debugPrint(
+          'Dynamic form "${widget.form.formId}" submitted: $_values');
+      ScaffoldMessenger.of(_formKey.currentContext!).showSnackBar(
+        const SnackBar(
+          content:
+              Text('Form submitted – see debug console for payload'),
+        ),
+      );
+    }
   }
 }
 

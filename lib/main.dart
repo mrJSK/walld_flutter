@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:window_manager/window_manager.dart';
+import 'Screen/Admin/admin_desktop_screen.dart';
 import 'Screen/Developer/developer_dashboard_screen.dart';
 import 'firebase_options.dart';
 import 'Screen/Auth_screen.dart'; // ← Add this import
@@ -56,7 +57,9 @@ class WallDApp extends StatelessWidget {
           ),
         ),
       ),
-      home: const DeveloperDashboardScreen(), // ← Now imports from Screen/developer_dashboard_screen.dart
+      //home: const AuthScreen(), // ← Now imports from Screen/developer_dashboard_screen.dart
+      //home: const DeveloperDashboardScreen(), // ← Now imports from Screen/developer_dashboard_screen.dart
+      home: const AdminDesktopScreen(), // ← Now imports from Screen/developer_dashboard_screen.dart
     );
   }
 }

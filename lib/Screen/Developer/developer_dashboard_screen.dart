@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'Metadata/metadata_panel.dart';
 import './Hierarchy/hierarchy_panel.dart';
-import 'DynamicForms/dynamic_forms_panel.dart';
+import './DynamicForms/dynamic_forms_panel.dart';
 
 class DeveloperDashboardScreen extends StatefulWidget {
   const DeveloperDashboardScreen({super.key});

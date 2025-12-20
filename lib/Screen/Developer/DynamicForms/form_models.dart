@@ -55,12 +55,14 @@ class FormSchemaMeta {
           type: 'text',
           label: 'Full Name',
           required: true,
+          validation: r'^[a-zA-Z\s]{3,50}$',
         ),
         FormFieldMeta(
           id: 'email',
           type: 'email',
           label: 'Email Address',
           required: true,
+          validation: r'^[^@]+@[^@]+\.[^@]+$',
         ),
       ],
     );
@@ -71,10 +73,19 @@ class FormSchemaMeta {
 
 class FormFieldMeta {
   String id;
-  String type;
+  String type;              // text, email, dropdown, checkbox, date, etc.
   String label;
   bool required;
-  List<String> options;
+  List<String> options;     // for static dropdowns
+
+  // Dynamic data source (for designation / department pickers, etc.)
+  String? dataSource;       // e.g. "firestore"
+  String? collection;       // collection path under tenant (e.g. "designations")
+  String? displayField;     // field used for display text
+  String? valueField;       // field used as stored value
+
+  // Schema-driven validation (regex)
+  String? validation;
 
   FormFieldMeta({
     required this.id,
@@ -82,6 +93,11 @@ class FormFieldMeta {
     required this.label,
     this.required = false,
     List<String>? options,
+    this.dataSource,
+    this.collection,
+    this.displayField,
+    this.valueField,
+    this.validation,
   }) : options = options ?? [];
 
   factory FormFieldMeta.fromMap(Map<String, dynamic> map) {
@@ -91,6 +107,11 @@ class FormFieldMeta {
       label: map['label'] ?? '',
       required: map['required'] ?? false,
       options: List<String>.from(map['options'] ?? const []),
+      dataSource: map['dataSource'],
+      collection: map['collection'],
+      displayField: map['displayField'],
+      valueField: map['valueField'],
+      validation: map['validation'],
     );
   }
 
@@ -101,9 +122,12 @@ class FormFieldMeta {
       'label': label,
       'required': required,
     };
-    if (options.isNotEmpty) {
-      data['options'] = options;
-    }
+    if (options.isNotEmpty) data['options'] = options;
+    if (dataSource != null) data['dataSource'] = dataSource;
+    if (collection != null) data['collection'] = collection;
+    if (displayField != null) data['displayField'] = displayField;
+    if (valueField != null) data['valueField'] = valueField;
+    if (validation != null) data['validation'] = validation;
     return data;
   }
 }
