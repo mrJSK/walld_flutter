@@ -120,14 +120,8 @@ class MetadataRepository {
     }
 
     if (result.isEmpty) {
-      result.add(
-        FormSchemaMeta(
-          formId: 'user_registration',
-          name: 'User Registration Form',
-          description: 'New user signup with designation + department',
-          rawJsonSchema: FormSchemaMeta.defaultUserRegistrationSchema(),
-        ),
-      );
+      // seed with a default user registration form
+      result.add(FormSchemaMeta.defaultUserRegistration());
     }
 
     return result;

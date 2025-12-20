@@ -116,8 +116,15 @@ class _FormSchemaTabState extends State<FormSchemaTab> {
                         ? id
                         : nameController.text.trim(),
                     description: descController.text.trim(),
-                    rawJsonSchema: FormSchemaMeta
-                        .defaultUserRegistrationSchema(), // minimal template
+                    fields: [
+                      // start with one text field as template
+                      FormFieldMeta(
+                        id: 'field1',
+                        type: 'text',
+                        label: 'Field 1',
+                        required: false,
+                      ),
+                    ],
                   ),
                 );
                 _selectedIndex = _forms.length - 1;
@@ -132,18 +139,165 @@ class _FormSchemaTabState extends State<FormSchemaTab> {
     );
   }
 
+  void _openFieldDialog(FormSchemaMeta form, {FormFieldMeta? existing}) {
+    final isNew = existing == null;
+
+    final idController = TextEditingController(text: existing?.id ?? '');
+    final labelController = TextEditingController(text: existing?.label ?? '');
+    String type = existing?.type ?? 'text';
+    bool required = existing?.required ?? false;
+    final optionsController =
+        TextEditingController(text: (existing?.options ?? []).join(', '));
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            backgroundColor: const Color(0xFF111118),
+            title: Text(
+              isNew ? 'Add Field' : 'Edit Field',
+              style: const TextStyle(color: Colors.white),
+            ),
+            content: SizedBox(
+              width: 420,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: idController,
+                    enabled: isNew,
+                    decoration: const InputDecoration(
+                      labelText: 'Field ID (e.g. fullName)',
+                      floatingLabelBehavior: FloatingLabelBehavior.auto,
+                    ),
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: labelController,
+                    decoration: const InputDecoration(
+                      labelText: 'Label',
+                      floatingLabelBehavior: FloatingLabelBehavior.auto,
+                    ),
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    value: type,
+                    dropdownColor: const Color(0xFF111118),
+                    decoration: const InputDecoration(
+                      labelText: 'Field Type',
+                      floatingLabelBehavior: FloatingLabelBehavior.auto,
+                    ),
+                    items: const [
+                      DropdownMenuItem(
+                        value: 'text',
+                        child: Text('Text'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'email',
+                        child: Text('Email'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'password',
+                        child: Text('Password'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'dropdown',
+                        child: Text('Dropdown (static)'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'checkbox',
+                        child: Text('Checkbox'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'date',
+                        child: Text('Date'),
+                      ),
+                    ],
+                    onChanged: (v) =>
+                        setDialogState(() => type = v ?? 'text'),
+                  ),
+                  const SizedBox(height: 12),
+                  SwitchListTile(
+                    value: required,
+                    onChanged: (v) =>
+                        setDialogState(() => required = v),
+                    title: const Text(
+                      'Required',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                  if (type == 'dropdown') ...[
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: optionsController,
+                      decoration: const InputDecoration(
+                        labelText:
+                            'Options (comma-separated, for dropdown)',
+                        floatingLabelBehavior:
+                            FloatingLabelBehavior.auto,
+                      ),
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  final id = idController.text.trim();
+                  if (id.isEmpty) return;
+
+                  final field = FormFieldMeta(
+                    id: id,
+                    type: type,
+                    label: labelController.text.trim().isEmpty
+                        ? id
+                        : labelController.text.trim(),
+                    required: required,
+                    options: _splitCsv(optionsController.text),
+                  );
+
+                  setState(() {
+                    if (isNew) {
+                      form.fields.add(field);
+                    } else {
+                      final idx = form.fields
+                          .indexWhere((element) => element.id == id);
+                      if (idx != -1) form.fields[idx] = field;
+                    }
+                  });
+
+                  Navigator.pop(context);
+                },
+                child: const Text('Save'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  List<String> _splitCsv(String input) {
+    return input
+        .split(',')
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+  }
+
   @override
   Widget build(BuildContext context) {
     final hasForms = _forms.isNotEmpty;
-    final current =
-        hasForms ? _forms[_selectedIndex] : null;
-
-    final nameController =
-        TextEditingController(text: current?.name ?? '');
-    final descController =
-        TextEditingController(text: current?.description ?? '');
-    final schemaController =
-        TextEditingController(text: current?.rawJsonSchema ?? '');
 
     return Column(
       children: [
@@ -191,6 +345,7 @@ class _FormSchemaTabState extends State<FormSchemaTab> {
           child: hasForms
               ? Row(
                   children: [
+                    // LEFT: form list
                     SizedBox(
                       width: 260,
                       child: ListView.builder(
@@ -241,81 +396,10 @@ class _FormSchemaTabState extends State<FormSchemaTab> {
                       ),
                     ),
                     const SizedBox(width: 12),
+
+                    // RIGHT: form editor (name + description + fields table)
                     Expanded(
-                      child: StatefulBuilder(
-                        builder: (context, setLocal) {
-                          if (current == null) {
-                            return const SizedBox.shrink();
-                          }
-                          return Column(
-                            crossAxisAlignment:
-                                CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Editing form: ${current.formId}',
-                                style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 16),
-                              ),
-                              const SizedBox(height: 8),
-                              TextField(
-                                controller: nameController,
-                                decoration: const InputDecoration(
-                                    labelText: 'Name'),
-                                style: const TextStyle(
-                                    color: Colors.white),
-                                onChanged: (v) =>
-                                    current.name = v,
-                              ),
-                              const SizedBox(height: 8),
-                              TextField(
-                                controller: descController,
-                                decoration: const InputDecoration(
-                                    labelText: 'Description'),
-                                style: const TextStyle(
-                                    color: Colors.white),
-                                onChanged: (v) =>
-                                    current.description = v,
-                              ),
-                              const SizedBox(height: 8),
-                              Expanded(
-                                child: DecoratedBox(
-                                  decoration: BoxDecoration(
-                                    color: Colors.black,
-                                    borderRadius:
-                                        BorderRadius.circular(8),
-                                    border: Border.all(
-                                        color: Colors.white10),
-                                  ),
-                                  child: TextField(
-                                    controller: schemaController,
-                                    expands: true,
-                                    maxLines: null,
-                                    minLines: null,
-                                    style: const TextStyle(
-                                      color: Colors.greenAccent,
-                                      fontFamily: 'monospace',
-                                      fontSize: 13,
-                                    ),
-                                    decoration:
-                                        const InputDecoration(
-                                      contentPadding:
-                                          EdgeInsets.all(8),
-                                      border: InputBorder.none,
-                                      hintText:
-                                          '{  // form schema JSON }',
-                                      hintStyle: TextStyle(
-                                          color: Colors.grey),
-                                    ),
-                                    onChanged: (v) =>
-                                        current.rawJsonSchema = v,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          );
-                        },
-                      ),
+                      child: _buildFormEditor(_forms[_selectedIndex]),
                     ),
                   ],
                 )
@@ -325,6 +409,124 @@ class _FormSchemaTabState extends State<FormSchemaTab> {
                     style: TextStyle(color: Colors.white70),
                   ),
                 ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFormEditor(FormSchemaMeta form) {
+    final nameController = TextEditingController(text: form.name);
+    final descController =
+        TextEditingController(text: form.description);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Editing form: ${form.formId}',
+          style: const TextStyle(color: Colors.white, fontSize: 16),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: nameController,
+          decoration: const InputDecoration(labelText: 'Name'),
+          style: const TextStyle(color: Colors.white),
+          onChanged: (v) => form.name = v,
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: descController,
+          decoration: const InputDecoration(labelText: 'Description'),
+          style: const TextStyle(color: Colors.white),
+          onChanged: (v) => form.description = v,
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            const Text(
+              'Fields',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const Spacer(),
+            OutlinedButton.icon(
+              onPressed: () => _openFieldDialog(form),
+              icon: const Icon(Icons.add),
+              label: const Text('Add Field'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Expanded(
+          child: SingleChildScrollView(
+            scrollDirection: Axis.vertical,
+            child: DataTable(
+              headingTextStyle: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
+              dataTextStyle: const TextStyle(color: Colors.white),
+              columns: const [
+                DataColumn(label: Text('ID')),
+                DataColumn(label: Text('Label')),
+                DataColumn(label: Text('Type')),
+                DataColumn(label: Text('Required')),
+                DataColumn(label: Text('Options')),
+                DataColumn(label: Text('Actions')),
+              ],
+              rows: form.fields.map((f) {
+                return DataRow(
+                  cells: [
+                    DataCell(Text(f.id)),
+                    DataCell(Text(f.label)),
+                    DataCell(Text(f.type)),
+                    DataCell(
+                      Icon(
+                        f.required
+                            ? Icons.check_circle
+                            : Icons.cancel,
+                        color: f.required
+                            ? Colors.orange
+                            : Colors.grey,
+                        size: 18,
+                      ),
+                    ),
+                    DataCell(
+                      Text(
+                        f.options.isEmpty
+                            ? '—'
+                            : f.options.join(', '),
+                      ),
+                    ),
+                    DataCell(
+                      Row(
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.edit,
+                                size: 18, color: Colors.cyan),
+                            onPressed: () =>
+                                _openFieldDialog(form, existing: f),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.delete,
+                                size: 18, color: Colors.redAccent),
+                            onPressed: () {
+                              setState(() {
+                                form.fields
+                                    .removeWhere((x) => x.id == f.id);
+                              });
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                );
+              }).toList(),
+            ),
+          ),
         ),
       ],
     );

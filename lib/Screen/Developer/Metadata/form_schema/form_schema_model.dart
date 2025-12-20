@@ -1,62 +1,111 @@
 import 'dart:convert';
 
+/* High-level form definition */
+
 class FormSchemaMeta {
   String formId;
   String name;
   String description;
-  String rawJsonSchema; // pretty JSON string for the schema part only
+  List<FormFieldMeta> fields;
 
   FormSchemaMeta({
     required this.formId,
     required this.name,
     required this.description,
-    required this.rawJsonSchema,
+    required this.fields,
   });
 
   factory FormSchemaMeta.fromFirestore(
       String id, Map<String, dynamic> map) {
     final schema = map['schema'] ?? {};
+    final fieldsJson = (schema['fields'] ?? []) as List<dynamic>;
+
     return FormSchemaMeta(
       formId: id,
       name: map['name'] ?? id,
       description: map['description'] ?? '',
-      rawJsonSchema:
-          const JsonEncoder.withIndent('  ').convert(schema),
+      fields: fieldsJson
+          .map((e) => FormFieldMeta.fromMap(e as Map<String, dynamic>))
+          .toList(),
     );
   }
 
+  /// Convert back to Firestore document structure:
+  /// { name, description, schema: { formId, version, fields: [...] } }
   Map<String, dynamic> toFirestore() {
-    dynamic decoded;
-    try {
-      decoded = jsonDecode(rawJsonSchema);
-    } catch (_) {
-      decoded = {};
-    }
+    final schema = {
+      'formId': formId,
+      'version': 1,
+      'fields': fields.map((f) => f.toMap()).toList(),
+    };
+
     return {
       'name': name,
       'description': description,
-      'schema': decoded,
+      'schema': schema,
     };
   }
 
-  static String defaultUserRegistrationSchema() {
-    return const JsonEncoder.withIndent('  ').convert({
-      'formId': 'user_registration',
-      'version': 1,
-      'fields': [
-        {
-          'id': 'fullName',
-          'type': 'text',
-          'label': 'Full Name',
-          'required': true,
-        },
-        {
-          'id': 'email',
-          'type': 'email',
-          'label': 'Email Address',
-          'required': true,
-        },
+  static FormSchemaMeta defaultUserRegistration() {
+    return FormSchemaMeta(
+      formId: 'user_registration',
+      name: 'User Registration Form',
+      description: 'New user signup with designation + department',
+      fields: [
+        FormFieldMeta(
+          id: 'fullName',
+          type: 'text',
+          label: 'Full Name',
+          required: true,
+        ),
+        FormFieldMeta(
+          id: 'email',
+          type: 'email',
+          label: 'Email Address',
+          required: true,
+        ),
       ],
-    });
+    );
+  }
+}
+
+/* Per-field metadata – this is what the UI edits */
+
+class FormFieldMeta {
+  String id;
+  String type; // text, email, password, dropdown, checkbox, date, etc.[file:2]
+  String label;
+  bool required;
+  List<String> options; // used when type == dropdown (static options)
+
+  FormFieldMeta({
+    required this.id,
+    required this.type,
+    required this.label,
+    this.required = false,
+    List<String>? options,
+  }) : options = options ?? [];
+
+  factory FormFieldMeta.fromMap(Map<String, dynamic> map) {
+    return FormFieldMeta(
+      id: map['id'] ?? '',
+      type: map['type'] ?? 'text',
+      label: map['label'] ?? '',
+      required: map['required'] ?? false,
+      options: List<String>.from(map['options'] ?? const []),
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    final data = <String, dynamic>{
+      'id': id,
+      'type': type,
+      'label': label,
+      'required': required,
+    };
+    if (options.isNotEmpty) {
+      data['options'] = options;
+    }
+    return data;
   }
 }
