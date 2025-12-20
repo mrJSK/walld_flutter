@@ -1,0 +1,40 @@
+{
+  "project_info": {
+    "project_number": "272745497278",
+    "firebase_url": "https://wall-d-fcc76-default-rtdb.asia-southeast1.firebasedatabase.app",
+    "project_id": "wall-d-fcc76",
+    "storage_bucket": "wall-d-fcc76.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:272745497278:android:538512854c58fbab7794ef",
+        "android_client_info": {
+          "package_name": "com.example.walld_flutter"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "272745497278-ulchps75m23mv0joqc3b8g18ucmf12m5.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAW4qdIw0JxmgZJzo9lWLKP62N4i-_9Eqc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "272745497278-ulchps75m23mv0joqc3b8g18ucmf12m5.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
