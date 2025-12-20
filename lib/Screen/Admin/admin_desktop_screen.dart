@@ -205,13 +205,22 @@ class _GlassCard extends StatelessWidget {
 
 /* ------------------------- Main widgets/cards ------------------------ */
 
-class _TaskOverviewCard extends StatelessWidget {
+class _TaskOverviewCard extends StatefulWidget {
   final double scale;
 
   const _TaskOverviewCard({required this.scale});
 
   @override
+  State<_TaskOverviewCard> createState() => _TaskOverviewCardState();
+}
+
+class _TaskOverviewCardState extends State<_TaskOverviewCard> {
+  String _activeTab = 'pending';
+
+  @override
   Widget build(BuildContext context) {
+    final scale = widget.scale;
+
     final stats = [
       _TaskStat('Pending', 12, Colors.orangeAccent),
       _TaskStat('In Progress', 34, Colors.cyanAccent),
@@ -219,6 +228,46 @@ class _TaskOverviewCard extends StatelessWidget {
       _TaskStat('Awaiting Approval', 7, Colors.purpleAccent),
       _TaskStat('Completed (Today)', 21, Colors.greenAccent),
     ];
+
+    // Mock data; later bind to Firestore queries.[file:2]
+    final pendingTasks = [
+      _RecentTask(
+        title: 'Task #1050 – Prepare Sales Report',
+        status: 'PENDING',
+        statusColor: Colors.orangeAccent,
+      ),
+      _RecentTask(
+        title: 'Task #1049 – Vendor Follow-up',
+        status: 'PENDING',
+        statusColor: Colors.orangeAccent,
+      ),
+      _RecentTask(
+        title: 'Task #1048 – Draft SLA Document',
+        status: 'PENDING',
+        statusColor: Colors.orangeAccent,
+      ),
+    ];
+
+    final completedTasks = [
+      _RecentTask(
+        title: 'Task #1047 – Client Demo',
+        status: 'COMPLETED',
+        statusColor: Colors.greenAccent,
+      ),
+      _RecentTask(
+        title: 'Task #1046 – Code Review',
+        status: 'COMPLETED',
+        statusColor: Colors.greenAccent,
+      ),
+      _RecentTask(
+        title: 'Task #1043 – Server Patch',
+        status: 'COMPLETED',
+        statusColor: Colors.greenAccent,
+      ),
+    ];
+
+    final activeList =
+        _activeTab == 'pending' ? pendingTasks : completedTasks;
 
     return _GlassCard(
       scale: scale,
@@ -235,10 +284,12 @@ class _TaskOverviewCard extends StatelessWidget {
           ),
           SizedBox(height: 4 * scale),
           Text(
-            'Live snapshot of your organizations tasks by status.',
+            'Live snapshot of your organization\'s tasks by status.',
             style: TextStyle(color: Colors.white70, fontSize: 13 * scale),
           ),
           SizedBox(height: 18 * scale),
+
+          // Top stats
           Wrap(
             spacing: 16 * scale,
             runSpacing: 16 * scale,
@@ -275,11 +326,162 @@ class _TaskOverviewCard extends StatelessWidget {
                 )
                 .toList(),
           ),
+
+          SizedBox(height: 24 * scale),
+
+          // Tabs + horizontal task list
+          Row(
+            children: [
+              Text(
+                'Recent Tasks',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 14 * scale,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const Spacer(),
+              _TabChip(
+                label: 'Pending',
+                selected: _activeTab == 'pending',
+                scale: scale,
+                onTap: () => setState(() => _activeTab = 'pending'),
+              ),
+              SizedBox(width: 8 * scale),
+              _TabChip(
+                label: 'Completed',
+                selected: _activeTab == 'completed',
+                scale: scale,
+                onTap: () => setState(() => _activeTab = 'completed'),
+              ),
+            ],
+          ),
+          SizedBox(height: 8 * scale),
+
+          SizedBox(
+            height: 120 * scale,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: activeList.length,
+              separatorBuilder: (_, __) => SizedBox(width: 12 * scale),
+              itemBuilder: (context, index) {
+                final t = activeList[index];
+                return SizedBox(
+                  width: 260 * scale,
+                  child: _GlassCard(
+                    scale: scale,
+                    padding: EdgeInsets.symmetric(
+                      horizontal: 16 * scale,
+                      vertical: 12 * scale,
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          t.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 13 * scale,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        SizedBox(height: 8 * scale),
+                        Row(
+                          children: [
+                            Container(
+                              padding: EdgeInsets.symmetric(
+                                horizontal: 8 * scale,
+                                vertical: 4 * scale,
+                              ),
+                              decoration: BoxDecoration(
+                                color: t.statusColor.withOpacity(0.15),
+                                borderRadius:
+                                    BorderRadius.circular(12 * scale),
+                              ),
+                              child: Text(
+                                t.status,
+                                style: TextStyle(
+                                  color: t.statusColor,
+                                  fontSize: 11 * scale,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
         ],
       ),
     );
   }
 }
+
+class _TabChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final double scale;
+  final VoidCallback onTap;
+
+  const _TabChip({
+    required this.label,
+    required this.selected,
+    required this.scale,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(16 * scale),
+      onTap: onTap,
+      child: Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: 12 * scale,
+          vertical: 6 * scale,
+        ),
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFF26263A) : Colors.transparent,
+          borderRadius: BorderRadius.circular(16 * scale),
+          border: Border.all(
+            color: selected
+                ? Colors.cyanAccent.withOpacity(0.6)
+                : Colors.white24,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: selected ? Colors.cyanAccent : Colors.white70,
+            fontSize: 12 * scale,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RecentTask {
+  final String title;
+  final String status;
+  final Color statusColor;
+
+  _RecentTask({
+    required this.title,
+    required this.status,
+    required this.statusColor,
+  });
+}
+
+
 
 class _TaskStat {
   final String label;
