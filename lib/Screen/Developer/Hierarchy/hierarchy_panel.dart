@@ -11,19 +11,25 @@ class HierarchyPanel extends StatefulWidget {
 }
 
 class _HierarchyPanelState extends State<HierarchyPanel> {
-  // Line 14:
-  static const String tenantId = 'default_tenant'; // Fixed
-
+  static const String tenantId = 'default_tenant';
 
   final HierarchyRepository _repo = HierarchyRepository();
-
   final List<OrgNodeMeta> _nodes = [];
+
   bool _loading = false;
   bool _saving = false;
   String? _status;
   Color _statusColor = Colors.greenAccent;
 
   String? _selectedNodeId;
+
+  OrgNodeMeta? get _selectedNode {
+    try {
+      return _nodes.firstWhere((n) => n.id == _selectedNodeId);
+    } catch (_) {
+      return null;
+    }
+  }
 
   @override
   void initState() {
@@ -48,7 +54,7 @@ class _HierarchyPanelState extends State<HierarchyPanel> {
           ..addAll(list);
         _selectedNodeId = _nodes.isEmpty ? null : _nodes.first.id;
       });
-      _setStatus('Hierarchy loaded');
+      _setStatus('Hierarchy loaded (${_nodes.length} nodes)');
     } catch (e) {
       _setStatus('Failed to load hierarchy: $e', error: true);
     } finally {
@@ -68,8 +74,13 @@ class _HierarchyPanelState extends State<HierarchyPanel> {
     }
   }
 
-  OrgNodeMeta? get _selectedNode =>
-      _nodes.firstWhere((n) => n.id == _selectedNodeId, orElse: () => null as OrgNodeMeta);
+  List<String> _splitCsv(String input) {
+    return input
+        .split(',')
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+  }
 
   void _addNode({String? parentId}) {
     final idController = TextEditingController();
@@ -128,9 +139,14 @@ class _HierarchyPanelState extends State<HierarchyPanel> {
               final id = idController.text.trim();
               if (id.isEmpty) return;
 
-              final parent = parentId == null
-                  ? null
-                  : _nodes.firstWhere((n) => n.id == parentId);
+              OrgNodeMeta? parent;
+              if (parentId != null) {
+                try {
+                  parent = _nodes.firstWhere((n) => n.id == parentId);
+                } catch (_) {
+                  parent = null;
+                }
+              }
               final level = parent == null ? 0 : parent.level + 1;
 
               final node = OrgNodeMeta(
@@ -140,8 +156,7 @@ class _HierarchyPanelState extends State<HierarchyPanel> {
                     : nameController.text.trim(),
                 parentId: parentId,
                 level: level,
-                designationIds:
-                    _splitCsv(designationsController.text),
+                designationIds: _splitCsv(designationsController.text),
                 isActive: true,
               );
 
@@ -244,9 +259,69 @@ class _HierarchyPanelState extends State<HierarchyPanel> {
     final node = _selectedNode;
     if (node == null) return;
 
-    // simple: remove node and its children
-    Set<String> toRemove = {node.id};
+    final roots = _nodes.where((n) => n.parentId == null).toList();
+    if (roots.length == 1 && node.parentId == null) {
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          backgroundColor: const Color(0xFF111118),
+          title: const Text(
+            'Cannot Delete Last Root Node',
+            style: TextStyle(color: Colors.redAccent),
+          ),
+          content: const Text(
+            'The hierarchy must have at least one root node. '
+            'Please add another root node before deleting this one.',
+            style: TextStyle(color: Colors.white70),
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF111118),
+        title: const Text(
+          'Delete Node?',
+          style: TextStyle(color: Colors.orange),
+        ),
+        content: Text(
+          'Delete "${node.name}" and all its children? '
+          'This action cannot be undone.',
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.redAccent,
+            ),
+            onPressed: () {
+              Navigator.pop(context);
+              _performDelete(node);
+            },
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _performDelete(OrgNodeMeta node) {
+    final toRemove = <String>{node.id};
     bool changed;
+
     do {
       changed = false;
       for (final n in _nodes.toList()) {
@@ -258,23 +333,14 @@ class _HierarchyPanelState extends State<HierarchyPanel> {
 
     setState(() {
       _nodes.removeWhere((n) => toRemove.contains(n.id));
-      if (_nodes.isEmpty) {
-        _selectedNodeId = null;
-      } else {
-        _selectedNodeId = _nodes.first.id;
+
+      if (_nodes.isEmpty || toRemove.contains(_selectedNodeId)) {
+        _selectedNodeId = _nodes.isEmpty ? null : _nodes.first.id;
       }
     });
-  }
 
-  List<String> _splitCsv(String input) {
-    return input
-        .split(',')
-        .map((e) => e.trim())
-        .where((e) => e.isNotEmpty)
-        .toList();
+    _setStatus('Deleted ${toRemove.length} node(s)');
   }
-
-  /* ---------------------------- UI BUILDING ---------------------------- */
 
   @override
   Widget build(BuildContext context) {
@@ -291,7 +357,7 @@ class _HierarchyPanelState extends State<HierarchyPanel> {
         ),
         const SizedBox(height: 8),
         Text(
-          'Define org tree used for approvals, reporting, and dynamic queries (My Team\'s Tasks etc.).',
+          'Define org tree used for approvals, reporting, and dynamic queries.',
           style: TextStyle(color: Colors.grey[400]),
         ),
         const SizedBox(height: 16),
@@ -338,7 +404,6 @@ class _HierarchyPanelState extends State<HierarchyPanel> {
         Expanded(
           child: Row(
             children: [
-              // LEFT: Tree list
               SizedBox(
                 width: 280,
                 child: Card(
@@ -350,7 +415,6 @@ class _HierarchyPanelState extends State<HierarchyPanel> {
                 ),
               ),
               const SizedBox(width: 12),
-              // RIGHT: Node details
               Expanded(
                 child: Card(
                   color: const Color(0xFF111118),
@@ -369,45 +433,54 @@ class _HierarchyPanelState extends State<HierarchyPanel> {
 
   Widget _buildTreeView() {
     if (_nodes.isEmpty) {
-      return const Center(
-        child: Text(
-          'No nodes yet.\nCreate a root node.',
-          style: TextStyle(color: Colors.white70),
-          textAlign: TextAlign.center,
-        ),
+      return Column(
+        children: [
+          OutlinedButton.icon(
+            onPressed: () => _addNode(parentId: null),
+            icon: const Icon(Icons.add_box_outlined),
+            label: const Text('Add Root'),
+          ),
+          const Expanded(
+            child: Center(
+              child: Text(
+                'No nodes yet.\nCreate a root node.',
+                style: TextStyle(color: Colors.white70),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ),
+        ],
       );
     }
 
-    final roots = _nodes.where((n) => n.parentId == null).toList();
+    final roots = _nodes.where((n) => n.parentId == null).toList()
+      ..sort((a, b) => a.name.compareTo(b.name));
 
     List<Widget> buildChildren(String parentId, int indent) {
       final children =
-          _nodes.where((n) => n.parentId == parentId).toList();
-      children.sort((a, b) => a.name.compareTo(b.name));
-      return children.map((child) {
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _treeTile(child, indent.toDouble()),
-            ...buildChildren(child.id, indent + 16),
-          ],
-        );
-      }).toList();
-    }
+          _nodes.where((n) => n.parentId == parentId).toList()
+            ..sort((a, b) => a.name.compareTo(b.name));
 
-    roots.sort((a, b) => a.name.compareTo(b.name));
+      return children
+          .map(
+            (child) => Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _treeTile(child, indent.toDouble()),
+                ...buildChildren(child.id, indent + 16),
+              ],
+            ),
+          )
+          .toList();
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            OutlinedButton.icon(
-              onPressed: () => _addNode(parentId: null),
-              icon: const Icon(Icons.add_box_outlined),
-              label: const Text('Add Root'),
-            ),
-          ],
+        OutlinedButton.icon(
+          onPressed: () => _addNode(parentId: null),
+          icon: const Icon(Icons.add_box_outlined),
+          label: const Text('Add Root'),
         ),
         const SizedBox(height: 8),
         Expanded(
@@ -415,13 +488,15 @@ class _HierarchyPanelState extends State<HierarchyPanel> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: roots
-                  .map((root) => Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _treeTile(root, 0),
-                          ...buildChildren(root.id, 16),
-                        ],
-                      ))
+                  .map(
+                    (root) => Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _treeTile(root, 0),
+                        ...buildChildren(root.id, 16),
+                      ],
+                    ),
+                  )
                   .toList(),
             ),
           ),
@@ -436,7 +511,8 @@ class _HierarchyPanelState extends State<HierarchyPanel> {
       onTap: () => setState(() => _selectedNodeId = node.id),
       child: Container(
         margin: const EdgeInsets.symmetric(vertical: 2),
-        padding: EdgeInsets.only(left: indent, right: 8, top: 4, bottom: 4),
+        padding:
+            EdgeInsets.only(left: indent, right: 8, top: 4, bottom: 4),
         decoration: BoxDecoration(
           color: selected ? const Color(0xFF1A1A25) : Colors.transparent,
           borderRadius: BorderRadius.circular(6),
@@ -456,7 +532,8 @@ class _HierarchyPanelState extends State<HierarchyPanel> {
                 node.name,
                 style: TextStyle(
                   color: node.isActive ? Colors.white : Colors.grey,
-                  fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+                  fontWeight:
+                      selected ? FontWeight.bold : FontWeight.normal,
                 ),
               ),
             ),
@@ -468,87 +545,139 @@ class _HierarchyPanelState extends State<HierarchyPanel> {
 
   Widget _buildDetails() {
     final node = _selectedNode;
+
     if (node == null) {
-      return const Center(
-        child: Text(
-          'Select a node to view or edit details.',
-          style: TextStyle(color: Colors.white70),
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.info_outline, size: 64, color: Colors.grey[600]),
+            const SizedBox(height: 16),
+            const Text(
+              'Select a node to view or edit details.',
+              style: TextStyle(color: Colors.white70, fontSize: 16),
+            ),
+          ],
         ),
       );
     }
 
-    final parent =
-        node.parentId == null ? null : _nodes.firstWhere((n) => n.id == node.parentId);
+    final nameController = TextEditingController(text: node.name);
+    final designationsController =
+        TextEditingController(text: node.designationIds.join(', '));
+    bool isActive = node.isActive;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          node.name,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          'ID: ${node.id}',
-          style: const TextStyle(color: Colors.grey, fontSize: 12),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          'Level: ${node.level}'
-          '${parent != null ? ' • Parent: ${parent.name}' : ''}',
-          style: const TextStyle(color: Colors.white70),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          'Allowed designations: '
-          '${node.designationIds.isEmpty ? 'Any' : node.designationIds.join(', ')}',
-          style: const TextStyle(color: Colors.white70),
-        ),
-        const SizedBox(height: 16),
-        Row(
-          children: [
-            FilledButton.icon(
-              onPressed: _editSelectedNode,
-              icon: const Icon(Icons.edit),
-              label: const Text('Edit Node'),
-            ),
-            const SizedBox(width: 8),
-            OutlinedButton.icon(
-              onPressed: () => _addNode(parentId: node.id),
-              icon: const Icon(Icons.add),
-              label: const Text('Add Child'),
-            ),
-            const SizedBox(width: 8),
-            TextButton.icon(
-              onPressed: _deleteSelectedNode,
-              icon: const Icon(Icons.delete, color: Colors.redAccent),
-              label: const Text(
-                'Delete (with children)',
-                style: TextStyle(color: Colors.redAccent),
+    return StatefulBuilder(
+      builder: (context, setDetailsState) {
+        return SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Text(
+                    'Node Details',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    icon: const Icon(Icons.edit, color: Colors.cyan),
+                    onPressed: _editSelectedNode,
+                    tooltip: 'Edit Node',
+                  ),
+                  IconButton(
+                    icon:
+                        const Icon(Icons.delete, color: Colors.redAccent),
+                    onPressed: _deleteSelectedNode,
+                    tooltip: 'Delete Node',
+                  ),
+                ],
               ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        const Text(
-          'How this hierarchy is used',
-          style: TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
+              const SizedBox(height: 16),
+              TextField(
+                controller: nameController,
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                  labelText: 'Node Name',
+                  floatingLabelBehavior: FloatingLabelBehavior.auto,
+                ),
+                onChanged: (val) {
+                  setState(() {
+                    node.name = val.trim().isEmpty ? node.id : val.trim();
+                  });
+                  setDetailsState(() {});
+                },
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: designationsController,
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                  labelText: 'Allowed Designation IDs (comma-separated)',
+                  floatingLabelBehavior: FloatingLabelBehavior.auto,
+                ),
+                onChanged: (val) {
+                  setState(() {
+                    node.designationIds = _splitCsv(val);
+                  });
+                  setDetailsState(() {});
+                },
+              ),
+              const SizedBox(height: 16),
+              SwitchListTile(
+                value: isActive,
+                onChanged: (val) {
+                  setDetailsState(() => isActive = val);
+                  setState(() {
+                    node.isActive = val;
+                  });
+                },
+                title: const Text(
+                  'Active',
+                  style: TextStyle(color: Colors.white),
+                ),
+                contentPadding: EdgeInsets.zero,
+              ),
+              const SizedBox(height: 24),
+              const Divider(color: Colors.white24),
+              const SizedBox(height: 8),
+              Text(
+                'Node ID: ${node.id}',
+                style: TextStyle(color: Colors.grey[600], fontSize: 12),
+              ),
+              Text(
+                'Level: ${node.level}',
+                style: TextStyle(color: Colors.grey[600], fontSize: 12),
+              ),
+              if (node.parentId != null)
+                Text(
+                  'Parent ID: ${node.parentId}',
+                  style:
+                      TextStyle(color: Colors.grey[600], fontSize: 12),
+                ),
+              const SizedBox(height: 16),
+              const Text(
+                'Add Child Node',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: () => _addNode(parentId: node.id),
+                icon: const Icon(Icons.add),
+                label: const Text('Add Child'),
+              ),
+            ],
           ),
-        ),
-        const SizedBox(height: 4),
-        const Text(
-          '• Approvals escalate up the tree (child → parent → root).\n'
-          '• Reports aggregate down the tree (manager sees all children).\n'
-          '• "My Team\'s Tasks" queries all descendants of the manager\'s node.',
-          style: TextStyle(color: Colors.white70),
-        ),
-      ],
+        );
+      },
     );
   }
 }

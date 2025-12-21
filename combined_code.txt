@@ -150,39 +150,57 @@ class DefaultFirebaseOptions {
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:window_manager/window_manager.dart';
+import 'dart:io' show Platform;
+import 'package:flutter/services.dart';
 import 'Screen/Admin/admin_desktop_screen.dart';
+import 'Screen/Auth_screen.dart';
 import 'Screen/Developer/developer_dashboard_screen.dart';
 import 'firebase_options.dart';
-import 'Screen/Auth_screen.dart'; // ← Add this import
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
+  
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
+  if (Platform.isWindows) {
+    await _setupWindowsWallpaper();
+  }
 
+  runApp(const WallDApp());
+}
+
+Future<void> _setupWindowsWallpaper() async {
   await windowManager.ensureInitialized();
 
+  // Get screen dimensions (excluding taskbar)
   const windowOptions = WindowOptions(
     backgroundColor: Colors.black,
     titleBarStyle: TitleBarStyle.hidden,
     skipTaskbar: false,
   );
 
-  windowManager.waitUntilReadyToShow(windowOptions, () async {
+  await windowManager.waitUntilReadyToShow(windowOptions, () async {
     await windowManager.show();
-    await windowManager.focus();
-    await windowManager.maximize();
-    await windowManager.setAlwaysOnTop(false);
+    
+    // Make it fullscreen but preserve taskbar
+    await windowManager.setFullScreen(false); // Not true fullscreen
+    await windowManager.maximize(); // Maximize respects taskbar
+    
+    // Lock it
     await windowManager.setMovable(false);
     await windowManager.setResizable(false);
     await windowManager.setMinimizable(false);
     await windowManager.setClosable(false);
+    
+    // Set as background (wallpaper level)
+    try {
+      await windowManager.setAlwaysOnBottom(true);
+    } catch (e) {
+      debugPrint('Could not set window to bottom: $e');
+    }
   });
-
-  runApp(const WallDApp());
 }
 
 class WallDApp extends StatelessWidget {
@@ -192,24 +210,14 @@ class WallDApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Wall-D',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData.dark().copyWith(
-        scaffoldBackgroundColor: Colors.black,
-        inputDecorationTheme: InputDecorationTheme(
-          filled: true,
-          fillColor: Colors.grey[900],
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: Colors.grey[800]!),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: Colors.cyan[400]!, width: 2),
-          ),
-        ),
+        scaffoldBackgroundColor: const Color(0xFF05040A),
       ),
-      //home: const AuthScreen(), // ← Now imports from Screen/developer_dashboard_screen.dart
-      home: const DeveloperDashboardScreen(), // ← Now imports from Screen/developer_dashboard_screen.dart
-      //home: const AdminDesktopScreen(), // ← Now imports from Screen/developer_dashboard_screen.dart
+      home: const DeveloperDashboardScreen(),
+      //home: const AuthScreen(),
+      //home: const AdminDesktopScreen(),
+
     );
   }
 }

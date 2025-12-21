@@ -2,7 +2,7 @@ class OrgNodeMeta {
   String id;
   String name;
   String? parentId;
-  int level; // depth in tree (0=root)
+  int level; // depth in tree (0 = root)
   List<String> designationIds; // allowed designations at this node
   bool isActive;
 
@@ -34,5 +34,24 @@ class OrgNodeMeta {
       'designationIds': designationIds,
       'isActive': isActive,
     };
+  }
+
+  // Optional helper for easier updates in the panel
+  OrgNodeMeta copyWith({
+    String? id,
+    String? name,
+    String? parentId,
+    int? level,
+    List<String>? designationIds,
+    bool? isActive,
+  }) {
+    return OrgNodeMeta(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      parentId: parentId ?? this.parentId,
+      level: level ?? this.level,
+      designationIds: designationIds ?? this.designationIds,
+      isActive: isActive ?? this.isActive,
+    );
   }
 }
