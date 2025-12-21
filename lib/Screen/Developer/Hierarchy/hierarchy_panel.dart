@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import 'hierarchy_repository.dart';
 import 'org_node_model.dart';
 
@@ -20,10 +21,16 @@ class _HierarchyPanelState extends State<HierarchyPanel> {
   bool _saving = false;
   String? _status;
   Color _statusColor = Colors.greenAccent;
+
   String? _selectedNodeId;
 
-  OrgNodeMeta? get _selectedNode =>
-      _nodes.where((n) => n.id == _selectedNodeId).cast<OrgNodeMeta?>().firstOrNull;
+  OrgNodeMeta? get _selectedNode {
+    try {
+      return _nodes.firstWhere((n) => n.id == _selectedNodeId);
+    } catch (_) {
+      return null;
+    }
+  }
 
   @override
   void initState() {
@@ -48,12 +55,13 @@ class _HierarchyPanelState extends State<HierarchyPanel> {
       setState(() => _loading = false);
     }
   }
-void _setStatus(String msg, {bool error = false}) {
-  setState(() {
-    _status = msg;
-    _statusColor = error ? Colors.redAccent : Colors.greenAccent;
-  });
-}
+
+  void _setStatus(String msg, {bool error = false}) {
+    setState(() {
+      _status = msg;
+      _statusColor = error ? Colors.redAccent : Colors.greenAccent;
+    });
+  }
 
   Future<void> _save() async {
     setState(() => _saving = true);
@@ -75,8 +83,48 @@ void _setStatus(String msg, {bool error = false}) {
         .toList();
   }
 
+  /// Generate node id from name:
+  /// 1. lowercase
+  /// 2. only letters / digits / space / - / _
+  /// 3. spaces and - to _
+  String _generateIdFromName(String rawName) {
+    final lower = rawName.toLowerCase();
+    final buffer = StringBuffer();
+    for (final ch in lower.runes) {
+      final c = String.fromCharCode(ch);
+      final isAlphaNum =
+          (c.codeUnitAt(0) >= 97 && c.codeUnitAt(0) <= 122) || // a-z
+          (c.codeUnitAt(0) >= 48 && c.codeUnitAt(0) <= 57); // 0-9
+      if (isAlphaNum) {
+        buffer.write(c);
+      } else if (c == ' ' || c == '-' || c == '_') {
+        buffer.write('_');
+      }
+      // other characters are skipped (not allowed)
+    }
+    var id = buffer.toString();
+    id = id.replaceAll(RegExp('_+'), '_').trim();
+    if (id.startsWith('_')) id = id.substring(1);
+    if (id.endsWith('_')) id = id.substring(0, id.length - 1);
+    if (id.isEmpty) {
+      id = 'node_${DateTime.now().millisecondsSinceEpoch}';
+    }
+    return id;
+  }
+
+  /// Name validation: only letters, digits, space, - and _.
+  String? _validateName(String value) {
+    if (value.trim().isEmpty) {
+      return 'Name is required';
+    }
+    final regex = RegExp(r'^[a-zA-Z0-9 _-]+$');
+    if (!regex.hasMatch(value)) {
+      return 'Only letters, numbers, space, - and _ are allowed';
+    }
+    return null;
+  }
+
   void _addNode({String? parentId}) {
-    final idController = TextEditingController();
     final nameController = TextEditingController();
     final typeController = TextEditingController(text: 'organization');
     final levelController = TextEditingController();
@@ -84,16 +132,15 @@ void _setStatus(String msg, {bool error = false}) {
     final designationController = TextEditingController();
     bool isActive = true;
 
-    // Pre-fill level if parent known
+    // compute default level from parent
     int computedLevel = 0;
-    if (parentId != null) {
-      final parent = _nodes.firstWhere(
-        (n) => n.id == parentId,
-        orElse: () => _nodes.first,
-      );
+    if (parentId != null && _nodes.isNotEmpty) {
+      final parent = _nodes.firstWhere((n) => n.id == parentId);
       computedLevel = parent.level + 1;
     }
     levelController.text = computedLevel.toString();
+
+    final formKey = GlobalKey<FormState>();
 
     showDialog(
       context: context,
@@ -107,101 +154,96 @@ void _setStatus(String msg, {bool error = false}) {
             ),
             content: SizedBox(
               width: 460,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // Node ID
-                  TextField(
-                    controller: idController,
-                    decoration: const InputDecoration(
-                      labelText: 'Node ID (auto or e.g. root_techvision)',
-                      floatingLabelBehavior: FloatingLabelBehavior.auto,
+              child: Form(
+                key: formKey,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Name (only editable field for id generation)
+                    TextFormField(
+                      controller: nameController,
+                      decoration: const InputDecoration(
+                        labelText: 'Name (e.g. Automation Testing Team)',
+                        floatingLabelBehavior: FloatingLabelBehavior.auto,
+                      ),
+                      style: const TextStyle(color: Colors.white),
+                      validator: (v) => _validateName(v ?? ''),
                     ),
-                    style: const TextStyle(color: Colors.white),
-                  ),
-                  const SizedBox(height: 12),
+                    const SizedBox(height: 12),
 
-                  // Name
-                  TextField(
-                    controller: nameController,
-                    decoration: const InputDecoration(
-                      labelText: 'Name (e.g. TechVision Inc.)',
-                      floatingLabelBehavior: FloatingLabelBehavior.auto,
-                    ),
-                    style: const TextStyle(color: Colors.white),
-                  ),
-                  const SizedBox(height: 12),
-
-                  // Parent (read-only info)
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      'Parent: ${parentId ?? '(root node)'}',
-                      style: const TextStyle(
-                        color: Colors.white70,
-                        fontSize: 12,
+                    // Parent info (read-only)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Parent: ${parentId ?? '(root node)'}',
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 12,
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 12),
+                    const SizedBox(height: 12),
 
-                  // Type
-                  TextField(
-                    controller: typeController,
-                    decoration: const InputDecoration(
-                      labelText: 'Type (e.g. organization, department, team)',
-                      floatingLabelBehavior: FloatingLabelBehavior.auto,
+                    // Type
+                    TextFormField(
+                      controller: typeController,
+                      decoration: const InputDecoration(
+                        labelText:
+                            'Type (e.g. organization, department, team)',
+                        floatingLabelBehavior: FloatingLabelBehavior.auto,
+                      ),
+                      style: const TextStyle(color: Colors.white),
                     ),
-                    style: const TextStyle(color: Colors.white),
-                  ),
-                  const SizedBox(height: 12),
+                    const SizedBox(height: 12),
 
-                  // Level
-                  TextField(
-                    controller: levelController,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Level (0 = root)',
-                      floatingLabelBehavior: FloatingLabelBehavior.auto,
+                    // Level
+                    TextFormField(
+                      controller: levelController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Level (0 = root)',
+                        floatingLabelBehavior: FloatingLabelBehavior.auto,
+                      ),
+                      style: const TextStyle(color: Colors.white),
                     ),
-                    style: const TextStyle(color: Colors.white),
-                  ),
-                  const SizedBox(height: 12),
+                    const SizedBox(height: 12),
 
-                  // Manager ID
-                  TextField(
-                    controller: managerIdController,
-                    decoration: const InputDecoration(
-                      labelText: 'Manager ID (optional)',
-                      floatingLabelBehavior: FloatingLabelBehavior.auto,
+                    // Manager ID
+                    TextFormField(
+                      controller: managerIdController,
+                      decoration: const InputDecoration(
+                        labelText: 'Manager ID (optional)',
+                        floatingLabelBehavior: FloatingLabelBehavior.auto,
+                      ),
+                      style: const TextStyle(color: Colors.white),
                     ),
-                    style: const TextStyle(color: Colors.white),
-                  ),
-                  const SizedBox(height: 12),
+                    const SizedBox(height: 12),
 
-                  // Designation IDs
-                  TextField(
-                    controller: designationController,
-                    decoration: const InputDecoration(
-                      labelText: 'Designation IDs (comma-separated, e.g. ceo,cto)',
-                      floatingLabelBehavior: FloatingLabelBehavior.auto,
+                    // Designation IDs
+                    TextFormField(
+                      controller: designationController,
+                      decoration: const InputDecoration(
+                        labelText:
+                            'Designation IDs (comma-separated, e.g. ceo,cto)',
+                        floatingLabelBehavior: FloatingLabelBehavior.auto,
+                      ),
+                      style: const TextStyle(color: Colors.white),
                     ),
-                    style: const TextStyle(color: Colors.white),
-                  ),
-                  const SizedBox(height: 12),
+                    const SizedBox(height: 12),
 
-                  // Active
-                  SwitchListTile(
-                    value: isActive,
-                    onChanged: (v) =>
-                        setDialogState(() => isActive = v),
-                    title: const Text(
-                      'Active',
-                      style: TextStyle(color: Colors.white),
+                    // Active
+                    SwitchListTile(
+                      value: isActive,
+                      onChanged: (v) =>
+                          setDialogState(() => isActive = v),
+                      title: const Text(
+                        'Active',
+                        style: TextStyle(color: Colors.white),
+                      ),
+                      contentPadding: EdgeInsets.zero,
                     ),
-                    contentPadding: EdgeInsets.zero,
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
             actions: [
@@ -211,28 +253,29 @@ void _setStatus(String msg, {bool error = false}) {
               ),
               FilledButton(
                 onPressed: () {
-                  final id = (idController.text.trim().isEmpty)
-                      ? 'node_${DateTime.now().millisecondsSinceEpoch}'
-                      : idController.text.trim();
+                  if (!formKey.currentState!.validate()) return;
 
-                  final int level =
+                  final rawName = nameController.text.trim();
+                  final id = _generateIdFromName(rawName);
+
+                  final level =
                       int.tryParse(levelController.text.trim()) ??
                           computedLevel;
 
                   final node = OrgNodeMeta(
                     id: id,
-                    name: nameController.text.trim().isEmpty
-                        ? id
-                        : nameController.text.trim(),
+                    name: rawName,
                     parentId: parentId,
                     type: typeController.text.trim().isEmpty
                         ? 'organization'
                         : typeController.text.trim(),
                     level: level,
-                    managerId: managerIdController.text.trim().isEmpty
-                        ? null
-                        : managerIdController.text.trim(),
-                    designationIds: _splitCsv(designationController.text),
+                    managerId:
+                        managerIdController.text.trim().isEmpty
+                            ? null
+                            : managerIdController.text.trim(),
+                    designationIds:
+                        _splitCsv(designationController.text),
                     isActive: isActive,
                   );
 
@@ -252,15 +295,20 @@ void _setStatus(String msg, {bool error = false}) {
     );
   }
 
-
   void _editSelectedNode() {
     final node = _selectedNode;
     if (node == null) return;
 
-    final nameController = TextEditingController(text: node.name);
-    final designationsController =
-        TextEditingController(text: node.designationIds.join(', '));
+  final nameController = TextEditingController(text: node.name);
+  final typeController = TextEditingController(text: node.type);
+  final managerIdController =
+      TextEditingController(text: node.managerId ?? '');
+  final designationController =
+      TextEditingController(text: node.designationIds.join(', '));
+
     bool isActive = node.isActive;
+
+    final formKey = GlobalKey<FormState>();
 
     showDialog(
       context: context,
@@ -274,38 +322,61 @@ void _setStatus(String msg, {bool error = false}) {
             ),
             content: SizedBox(
               width: 420,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: nameController,
-                    decoration: const InputDecoration(
-                      labelText: 'Name',
-                      floatingLabelBehavior: FloatingLabelBehavior.auto,
+              child: Form(
+                key: formKey,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextFormField(
+                      controller: nameController,
+                      decoration: const InputDecoration(
+                        labelText: 'Name',
+                        floatingLabelBehavior: FloatingLabelBehavior.auto,
+                      ),
+                      style: const TextStyle(color: Colors.white),
+                      validator: (v) => _validateName(v ?? ''),
                     ),
-                    style: const TextStyle(color: Colors.white),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: designationsController,
-                    decoration: const InputDecoration(
-                      labelText: 'Allowed Designations (comma-separated)',
-                      floatingLabelBehavior: FloatingLabelBehavior.auto,
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: typeController,
+                      decoration: const InputDecoration(
+                        labelText: 'Type',
+                        floatingLabelBehavior: FloatingLabelBehavior.auto,
+                      ),
+                      style: const TextStyle(color: Colors.white),
                     ),
-                    style: const TextStyle(color: Colors.white),
-                  ),
-                  const SizedBox(height: 12),
-                  SwitchListTile(
-                    value: isActive,
-                    onChanged: (v) =>
-                        setDialogState(() => isActive = v),
-                    title: const Text(
-                      'Active',
-                      style: TextStyle(color: Colors.white),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: managerIdController,
+                      decoration: const InputDecoration(
+                        labelText: 'Manager ID',
+                        floatingLabelBehavior: FloatingLabelBehavior.auto,
+                      ),
+                      style: const TextStyle(color: Colors.white),
                     ),
-                    contentPadding: EdgeInsets.zero,
-                  ),
-                ],
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: designationController,
+                      decoration: const InputDecoration(
+                        labelText:
+                            'Designation IDs (comma-separated)',
+                        floatingLabelBehavior: FloatingLabelBehavior.auto,
+                      ),
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                    const SizedBox(height: 12),
+                    SwitchListTile(
+                      value: isActive,
+                      onChanged: (v) =>
+                          setDialogState(() => isActive = v),
+                      title: const Text(
+                        'Active',
+                        style: TextStyle(color: Colors.white),
+                      ),
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ],
+                ),
               ),
             ),
             actions: [
@@ -315,12 +386,19 @@ void _setStatus(String msg, {bool error = false}) {
               ),
               FilledButton(
                 onPressed: () {
+                  if (!formKey.currentState!.validate()) return;
+
                   setState(() {
-                    node.name = nameController.text.trim().isEmpty
-                        ? node.id
-                        : nameController.text.trim();
+                    node.name = nameController.text.trim();
+                    node.type = typeController.text.trim().isEmpty
+                        ? 'organization'
+                        : typeController.text.trim();
+                    node.managerId =
+                        managerIdController.text.trim().isEmpty
+                            ? null
+                            : managerIdController.text.trim();
                     node.designationIds =
-                        _splitCsv(designationsController.text);
+                        _splitCsv(designationController.text);
                     node.isActive = isActive;
                   });
                   Navigator.pop(context);
@@ -412,7 +490,6 @@ void _setStatus(String msg, {bool error = false}) {
 
     setState(() {
       _nodes.removeWhere((n) => toRemove.contains(n.id));
-
       if (_nodes.isEmpty || toRemove.contains(_selectedNodeId)) {
         _selectedNodeId = _nodes.isEmpty ? null : _nodes.first.id;
       }
@@ -585,42 +662,63 @@ void _setStatus(String msg, {bool error = false}) {
   }
 
   Widget _treeTile(OrgNodeMeta node, double indent) {
-    final selected = node.id == _selectedNodeId;
-    return GestureDetector(
-      onTap: () => setState(() => _selectedNodeId = node.id),
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 2),
-        padding:
-            EdgeInsets.only(left: indent, right: 8, top: 4, bottom: 4),
-        decoration: BoxDecoration(
-          color: selected ? const Color(0xFF1A1A25) : Colors.transparent,
-          borderRadius: BorderRadius.circular(6),
-        ),
-        child: Row(
-          children: [
-            Icon(
-              node.parentId == null
-                  ? Icons.account_tree_rounded
-                  : Icons.subdirectory_arrow_right_rounded,
-              size: 18,
-              color: node.isActive ? Colors.cyan : Colors.grey,
-            ),
-            const SizedBox(width: 6),
-            Expanded(
-              child: Text(
-                node.name,
-                style: TextStyle(
-                  color: node.isActive ? Colors.white : Colors.grey,
-                  fontWeight:
-                      selected ? FontWeight.bold : FontWeight.normal,
-                ),
+  final selected = node.id == _selectedNodeId;
+  final Color connectorColor =
+      node.isActive ? Colors.cyan : Colors.grey; // same as icon
+
+  return GestureDetector(
+    onTap: () => setState(() => _selectedNodeId = node.id),
+    child: Container(
+      margin: const EdgeInsets.symmetric(vertical: 2),
+      padding: const EdgeInsets.only(right: 8, top: 2, bottom: 2),
+      decoration: BoxDecoration(
+        color: selected ? const Color(0xFF1A1A25) : Colors.transparent,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // connector column
+          SizedBox(
+            width: indent,
+            child: Align(
+              alignment: Alignment.topRight,
+              child: Container(
+                width: 1.5,
+                height: 26, // length of the vertical line
+                color: node.parentId == null
+                    ? Colors.transparent // no line for root
+                    : connectorColor.withOpacity(0.7),
               ),
             ),
-          ],
-        ),
+          ),
+          const SizedBox(width: 4),
+
+          // icon + label
+          Icon(
+            node.parentId == null
+                ? Icons.account_tree_rounded
+                : Icons.subdirectory_arrow_right_rounded,
+            size: 18,
+            color: connectorColor,
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              node.name,
+              style: TextStyle(
+                color: node.isActive ? Colors.white : Colors.grey,
+                fontWeight:
+                    selected ? FontWeight.bold : FontWeight.normal,
+              ),
+            ),
+          ),
+        ],
       ),
-    );
-  }
+    ),
+  );
+}
+
 
   Widget _buildDetails() {
     final node = _selectedNode;
@@ -641,122 +739,139 @@ void _setStatus(String msg, {bool error = false}) {
       );
     }
 
-    final nameController = TextEditingController(text: node.name);
-    final designationsController =
-        TextEditingController(text: node.designationIds.join(', '));
-    bool isActive = node.isActive;
-
-    return StatefulBuilder(
-      builder: (context, setDetailsState) {
-        return SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+    // READ-ONLY view; editing only via dialog button
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             children: [
-              Row(
-                children: [
-                  const Text(
-                    'Node Details',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const Spacer(),
-                  IconButton(
-                    icon: const Icon(Icons.edit, color: Colors.cyan),
-                    onPressed: _editSelectedNode,
-                    tooltip: 'Edit Node',
-                  ),
-                  IconButton(
-                    icon:
-                        const Icon(Icons.delete, color: Colors.redAccent),
-                    onPressed: _deleteSelectedNode,
-                    tooltip: 'Delete Node',
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: nameController,
-                style: const TextStyle(color: Colors.white),
-                decoration: const InputDecoration(
-                  labelText: 'Node Name',
-                  floatingLabelBehavior: FloatingLabelBehavior.auto,
-                ),
-                onChanged: (val) {
-                  setState(() {
-                    node.name = val.trim().isEmpty ? node.id : val.trim();
-                  });
-                  setDetailsState(() {});
-                },
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: designationsController,
-                style: const TextStyle(color: Colors.white),
-                decoration: const InputDecoration(
-                  labelText: 'Allowed Designation IDs (comma-separated)',
-                  floatingLabelBehavior: FloatingLabelBehavior.auto,
-                ),
-                onChanged: (val) {
-                  setState(() {
-                    node.designationIds = _splitCsv(val);
-                  });
-                  setDetailsState(() {});
-                },
-              ),
-              const SizedBox(height: 16),
-              SwitchListTile(
-                value: isActive,
-                onChanged: (val) {
-                  setDetailsState(() => isActive = val);
-                  setState(() {
-                    node.isActive = val;
-                  });
-                },
-                title: const Text(
-                  'Active',
-                  style: TextStyle(color: Colors.white),
-                ),
-                contentPadding: EdgeInsets.zero,
-              ),
-              const SizedBox(height: 24),
-              const Divider(color: Colors.white24),
-              const SizedBox(height: 8),
-              Text(
-                'Node ID: ${node.id}',
-                style: TextStyle(color: Colors.grey[600], fontSize: 12),
-              ),
-              Text(
-                'Level: ${node.level}',
-                style: TextStyle(color: Colors.grey[600], fontSize: 12),
-              ),
-              if (node.parentId != null)
-                Text(
-                  'Parent ID: ${node.parentId}',
-                  style:
-                      TextStyle(color: Colors.grey[600], fontSize: 12),
-                ),
-              const SizedBox(height: 16),
               const Text(
-                'Add Child Node',
+                'Node Details',
                 style: TextStyle(
                   color: Colors.white,
-                  fontSize: 16,
+                  fontSize: 18,
                   fontWeight: FontWeight.bold,
                 ),
               ),
-              const SizedBox(height: 8),
-              OutlinedButton.icon(
-                onPressed: () => _addNode(parentId: node.id),
-                icon: const Icon(Icons.add),
-                label: const Text('Add Child'),
+              const Spacer(),
+              IconButton(
+                icon: const Icon(Icons.edit, color: Colors.cyan),
+                onPressed: _editSelectedNode,
+                tooltip: 'Edit Node',
+              ),
+              IconButton(
+                icon: const Icon(Icons.delete, color: Colors.redAccent),
+                onPressed: _deleteSelectedNode,
+                tooltip: 'Delete Node',
               ),
             ],
           ),
-        );
-      },
+          const SizedBox(height: 16),
+
+          // Name
+          Text(
+            'Name',
+            style: TextStyle(color: Colors.grey[500], fontSize: 12),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            node.name,
+            style: const TextStyle(color: Colors.white, fontSize: 14),
+          ),
+          const SizedBox(height: 16),
+
+          // Type
+          Text(
+            'Type',
+            style: TextStyle(color: Colors.grey[500], fontSize: 12),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            node.type,
+            style: const TextStyle(color: Colors.white, fontSize: 14),
+          ),
+          const SizedBox(height: 16),
+
+          // Manager ID
+          Text(
+            'Manager ID',
+            style: TextStyle(color: Colors.grey[500], fontSize: 12),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            node.managerId ?? '-',
+            style: const TextStyle(color: Colors.white, fontSize: 14),
+          ),
+          const SizedBox(height: 16),
+
+          // Designation IDs
+          Text(
+            'Designation IDs',
+            style: TextStyle(color: Colors.grey[500], fontSize: 12),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            node.designationIds.join(', '),
+            style: const TextStyle(color: Colors.white, fontSize: 14),
+          ),
+          const SizedBox(height: 16),
+
+          // Active
+          Text(
+            'Active',
+            style: TextStyle(color: Colors.grey[500], fontSize: 12),
+          ),
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              Icon(
+                node.isActive ? Icons.check_circle : Icons.cancel,
+                color: node.isActive ? Colors.greenAccent : Colors.redAccent,
+                size: 18,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                node.isActive ? 'Yes' : 'No',
+                style:
+                    const TextStyle(color: Colors.white, fontSize: 14),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+
+          const Divider(color: Colors.white24),
+          const SizedBox(height: 8),
+          Text(
+            'Node ID: ${node.id}',
+            style: TextStyle(color: Colors.grey[600], fontSize: 12),
+          ),
+          Text(
+            'Level: ${node.level}',
+            style: TextStyle(color: Colors.grey[600], fontSize: 12),
+          ),
+          if (node.parentId != null)
+            Text(
+              'Parent ID: ${node.parentId}',
+              style: TextStyle(color: Colors.grey[600], fontSize: 12),
+            ),
+          const SizedBox(height: 16),
+          const Text(
+            'Add Child Node',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: () => _addNode(parentId: node.id),
+            icon: const Icon(Icons.add),
+            label: const Text('Add Child'),
+          ),
+        ],
+      ),
     );
   }
 }
