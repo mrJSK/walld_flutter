@@ -15,7 +15,9 @@ dependencies:
   firebase_storage: ^12.3.3  # Attachments
   window_manager: ^0.3.7 # Window positioning/sizing control
   screen_retriever: ^0.1.9  # or latest compatible
-
+  file_picker: ^6.1.1
+  csv: ^5.1.1
+  
 dev_dependencies:
   flutter_test:
     sdk: flutter

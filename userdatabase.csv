@@ -1,0 +1,21 @@
+email,password,fullName,nodeId,level
+mrbeast@WallD.com,Beast@10093,Mrbeast,root_techvision,0
+sanjay@WallD.com,Sanjay@10093,Sanjay Singh,cto_office,1
+alice@WallD.com,Alice@10093,Alice Johnson,engineering_division,2
+Scott@WallD.com,Scott@10093,Scott,engineering_division,2
+bob@WallD.com,Bob@10093,Bob Brown,backend_engineering_department,3
+pool@WallD.com,Paula@10093,Pool Black,backend_engineering_department,3
+charlie@WallD.com,Charlie@10093,Charlie Davis,backend_api_squad,4
+david@WallD.com,David@10093,David Wilson,api_junior_group,5
+eva@WallD.com,Eva@10093,Eva Martinez,api_senior_group,5
+frank@WallD.com,Frank@10093,Frank Garcia,backend_core_team,4
+grace@WallD.com,Grace@10093,Grace Lee,core_junior_group,5
+henry@WallD.com,Henry@10093,Henry Walker,core_senior_group,5
+isabella@WallD.com,Isabella@10093,Isabella Hall,backend_database_team,4
+jack@WallD.com,Jack@10093,Jack Allen,db_junior_group,5    
+kate@WallD.com,Kate@10093,Kate Young,db_senior_group,5
+linda@WallD.com,Linda@10093,Linda Hernandez,QA_Department,3
+mike@WallD.com,Mike@10093,Mike King,automation_testing_team,4
+nina@WallD.com,Nina@10093,Nina Wright,at_engineers_group,5
+oliver@WallD.com,Oliver@10093,Oliver Scott,functional_testing_team,4
+paula@WallD.com,Paula@10093,Paula Green,ft_engineers_group,5
