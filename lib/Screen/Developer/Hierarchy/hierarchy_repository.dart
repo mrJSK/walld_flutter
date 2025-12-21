@@ -1,5 +1,4 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
-
 import 'org_node_model.dart';
 
 class HierarchyRepository {
@@ -8,51 +7,39 @@ class HierarchyRepository {
   HierarchyRepository({FirebaseFirestore? db})
       : _db = db ?? FirebaseFirestore.instance;
 
-  Future<List<OrgNodeMeta>> loadHierarchy(String tenantId) async {
+  // FIXED: single tenant id
+  static const String tenantId = 'default_tenant';
+
+  Future<List<OrgNodeMeta>> loadHierarchy() async {
     final snap = await _db
         .collection('tenants/$tenantId/organizations')
         .doc('hierarchy')
         .collection('nodes')
+        .orderBy('level')
+        .orderBy('name')
         .get();
 
-    final List<OrgNodeMeta> result = [];
-
-    for (final doc in snap.docs) {
-      result.add(OrgNodeMeta.fromMap(doc.id, doc.data()));
-    }
-
-    if (result.isEmpty) {
-      // seed one root node
-      result.add(
-        OrgNodeMeta(
-          id: 'root',
-          name: 'Head Office',
-          parentId: null,
-          level: 0,
-          designationIds: const [],
-          isActive: true,
-        ),
-      );
-      await saveHierarchy(tenantId, result);
-    }
+    final result = snap.docs
+        .map((doc) => OrgNodeMeta.fromMap(doc.id, doc.data()))
+        .toList();
 
     return result;
   }
 
-  Future<void> saveHierarchy(
-      String tenantId, List<OrgNodeMeta> nodes) async {
+  Future<void> saveHierarchy(List<OrgNodeMeta> nodes) async {
     final batch = _db.batch();
     final coll = _db
         .collection('tenants/$tenantId/organizations')
         .doc('hierarchy')
         .collection('nodes');
 
-    // Clear existing (simple approach for now)
+    // Clear existing nodes
     final existing = await coll.get();
     for (final doc in existing.docs) {
       batch.delete(doc.reference);
     }
 
+    // Write new nodes
     for (final node in nodes) {
       final ref = coll.doc(node.id);
       batch.set(ref, node.toMap());

@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-
 import 'hierarchy_repository.dart';
 import 'org_node_model.dart';
 
@@ -11,7 +10,8 @@ class HierarchyPanel extends StatefulWidget {
 }
 
 class _HierarchyPanelState extends State<HierarchyPanel> {
-  static const String tenantId = 'default_tenant';
+  // Single fixed tenant
+  static const String tenantId = HierarchyRepository.tenantId;
 
   final HierarchyRepository _repo = HierarchyRepository();
   final List<OrgNodeMeta> _nodes = [];
@@ -20,16 +20,10 @@ class _HierarchyPanelState extends State<HierarchyPanel> {
   bool _saving = false;
   String? _status;
   Color _statusColor = Colors.greenAccent;
-
   String? _selectedNodeId;
 
-  OrgNodeMeta? get _selectedNode {
-    try {
-      return _nodes.firstWhere((n) => n.id == _selectedNodeId);
-    } catch (_) {
-      return null;
-    }
-  }
+  OrgNodeMeta? get _selectedNode =>
+      _nodes.where((n) => n.id == _selectedNodeId).cast<OrgNodeMeta?>().firstOrNull;
 
   @override
   void initState() {
@@ -37,17 +31,10 @@ class _HierarchyPanelState extends State<HierarchyPanel> {
     _reload();
   }
 
-  void _setStatus(String msg, {bool error = false}) {
-    setState(() {
-      _status = msg;
-      _statusColor = error ? Colors.redAccent : Colors.greenAccent;
-    });
-  }
-
   Future<void> _reload() async {
     setState(() => _loading = true);
     try {
-      final list = await _repo.loadHierarchy(tenantId);
+      final list = await _repo.loadHierarchy();
       setState(() {
         _nodes
           ..clear()
@@ -61,12 +48,18 @@ class _HierarchyPanelState extends State<HierarchyPanel> {
       setState(() => _loading = false);
     }
   }
+void _setStatus(String msg, {bool error = false}) {
+  setState(() {
+    _status = msg;
+    _statusColor = error ? Colors.redAccent : Colors.greenAccent;
+  });
+}
 
   Future<void> _save() async {
     setState(() => _saving = true);
     try {
-      await _repo.saveHierarchy(tenantId, _nodes);
-      _setStatus('Hierarchy saved');
+      await _repo.saveHierarchy(_nodes);
+      _setStatus('Hierarchy saved for tenant $tenantId');
     } catch (e) {
       _setStatus('Failed to save hierarchy: $e', error: true);
     } finally {
@@ -85,94 +78,180 @@ class _HierarchyPanelState extends State<HierarchyPanel> {
   void _addNode({String? parentId}) {
     final idController = TextEditingController();
     final nameController = TextEditingController();
-    final designationsController = TextEditingController();
+    final typeController = TextEditingController(text: 'organization');
+    final levelController = TextEditingController();
+    final managerIdController = TextEditingController();
+    final designationController = TextEditingController();
+    bool isActive = true;
+
+    // Pre-fill level if parent known
+    int computedLevel = 0;
+    if (parentId != null) {
+      final parent = _nodes.firstWhere(
+        (n) => n.id == parentId,
+        orElse: () => _nodes.first,
+      );
+      computedLevel = parent.level + 1;
+    }
+    levelController.text = computedLevel.toString();
 
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF111118),
-        title: const Text(
-          'Add Node',
-          style: TextStyle(color: Colors.white),
-        ),
-        content: SizedBox(
-          width: 420,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: idController,
-                decoration: const InputDecoration(
-                  labelText: 'Node ID (e.g. delhi_hq)',
-                  floatingLabelBehavior: FloatingLabelBehavior.auto,
-                ),
-                style: const TextStyle(color: Colors.white),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            backgroundColor: const Color(0xFF111118),
+            title: const Text(
+              'Add Node',
+              style: TextStyle(color: Colors.white),
+            ),
+            content: SizedBox(
+              width: 460,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Node ID
+                  TextField(
+                    controller: idController,
+                    decoration: const InputDecoration(
+                      labelText: 'Node ID (auto or e.g. root_techvision)',
+                      floatingLabelBehavior: FloatingLabelBehavior.auto,
+                    ),
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Name
+                  TextField(
+                    controller: nameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Name (e.g. TechVision Inc.)',
+                      floatingLabelBehavior: FloatingLabelBehavior.auto,
+                    ),
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Parent (read-only info)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Parent: ${parentId ?? '(root node)'}',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Type
+                  TextField(
+                    controller: typeController,
+                    decoration: const InputDecoration(
+                      labelText: 'Type (e.g. organization, department, team)',
+                      floatingLabelBehavior: FloatingLabelBehavior.auto,
+                    ),
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Level
+                  TextField(
+                    controller: levelController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Level (0 = root)',
+                      floatingLabelBehavior: FloatingLabelBehavior.auto,
+                    ),
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Manager ID
+                  TextField(
+                    controller: managerIdController,
+                    decoration: const InputDecoration(
+                      labelText: 'Manager ID (optional)',
+                      floatingLabelBehavior: FloatingLabelBehavior.auto,
+                    ),
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Designation IDs
+                  TextField(
+                    controller: designationController,
+                    decoration: const InputDecoration(
+                      labelText: 'Designation IDs (comma-separated, e.g. ceo,cto)',
+                      floatingLabelBehavior: FloatingLabelBehavior.auto,
+                    ),
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Active
+                  SwitchListTile(
+                    value: isActive,
+                    onChanged: (v) =>
+                        setDialogState(() => isActive = v),
+                    title: const Text(
+                      'Active',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ],
               ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: nameController,
-                decoration: const InputDecoration(
-                  labelText: 'Name (e.g. Delhi HQ)',
-                  floatingLabelBehavior: FloatingLabelBehavior.auto,
-                ),
-                style: const TextStyle(color: Colors.white),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
               ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: designationsController,
-                decoration: const InputDecoration(
-                  labelText: 'Allowed Designations (comma-separated IDs)',
-                  floatingLabelBehavior: FloatingLabelBehavior.auto,
-                ),
-                style: const TextStyle(color: Colors.white),
+              FilledButton(
+                onPressed: () {
+                  final id = (idController.text.trim().isEmpty)
+                      ? 'node_${DateTime.now().millisecondsSinceEpoch}'
+                      : idController.text.trim();
+
+                  final int level =
+                      int.tryParse(levelController.text.trim()) ??
+                          computedLevel;
+
+                  final node = OrgNodeMeta(
+                    id: id,
+                    name: nameController.text.trim().isEmpty
+                        ? id
+                        : nameController.text.trim(),
+                    parentId: parentId,
+                    type: typeController.text.trim().isEmpty
+                        ? 'organization'
+                        : typeController.text.trim(),
+                    level: level,
+                    managerId: managerIdController.text.trim().isEmpty
+                        ? null
+                        : managerIdController.text.trim(),
+                    designationIds: _splitCsv(designationController.text),
+                    isActive: isActive,
+                  );
+
+                  setState(() {
+                    _nodes.add(node);
+                    _selectedNodeId = id;
+                  });
+
+                  Navigator.pop(context);
+                },
+                child: const Text('Add'),
               ),
             ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () {
-              final id = idController.text.trim();
-              if (id.isEmpty) return;
-
-              OrgNodeMeta? parent;
-              if (parentId != null) {
-                try {
-                  parent = _nodes.firstWhere((n) => n.id == parentId);
-                } catch (_) {
-                  parent = null;
-                }
-              }
-              final level = parent == null ? 0 : parent.level + 1;
-
-              final node = OrgNodeMeta(
-                id: id,
-                name: nameController.text.trim().isEmpty
-                    ? id
-                    : nameController.text.trim(),
-                parentId: parentId,
-                level: level,
-                designationIds: _splitCsv(designationsController.text),
-                isActive: true,
-              );
-
-              setState(() {
-                _nodes.add(node);
-                _selectedNodeId = id;
-              });
-
-              Navigator.pop(context);
-            },
-            child: const Text('Add'),
-          ),
-        ],
+          );
+        },
       ),
     );
   }
+
 
   void _editSelectedNode() {
     final node = _selectedNode;
