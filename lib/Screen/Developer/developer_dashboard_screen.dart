@@ -47,8 +47,7 @@ class _DeveloperDashboardScreenState
                 const Spacer(),
                 const Padding(
                   padding: EdgeInsets.all(12.0),
-                  child: Text(
-                    'Tenant: default_tenant\nStatus: Synced',
+                  child: Text('Tenant: default_tenant • Synced', // Fixed
                     style: TextStyle(color: Colors.grey, fontSize: 12),
                   ),
                 ),

@@ -15,7 +15,9 @@ class MetadataPanel extends StatefulWidget {
 }
 
 class _MetadataPanelState extends State<MetadataPanel> {
-  static const String tenantId = 'default_tenant';
+  // Line 13:
+  static const String tenantId = 'default_tenant'; // Fixed
+
 
   final MetadataRepository _repo = MetadataRepository(); // ← no const
 

@@ -31,21 +31,34 @@ class _DesignationTabState extends State<DesignationTab> {
   }
 
   Future<void> _reload() async {
-    setState(() => _loading = true);
-    try {
-      final list = await widget.repo.loadDesignations(widget.tenantId);
-      setState(() {
-        _designations
-          ..clear()
-          ..addAll(list);
-      });
-      widget.setStatus('Designations loaded');
-    } catch (e) {
-      widget.setStatus('Failed to load designations: $e', error: true);
-    } finally {
-      setState(() => _loading = false);
+  setState(() => _loading = true);
+  
+  try {
+    debugPrint('🔄 Loading designations for tenant: ${widget.tenantId}');
+    
+    final list = await widget.repo.loadDesignations(widget.tenantId);
+    
+    debugPrint('✅ Loaded ${list.length} designations:');
+    for (final d in list) {
+      debugPrint('   - ${d.id}: ${d.name} (level ${d.hierarchyLevel})');
     }
+    
+    setState(() {
+      _designations
+        ..clear()
+        ..addAll(list);
+    });
+    
+    widget.setStatus('${list.length} Designations loaded', error: false);
+  } catch (e, stackTrace) {
+    debugPrint('❌ Error loading designations: $e');
+    debugPrint('Stack trace: $stackTrace');
+    widget.setStatus('Failed to load designations: $e', error: true);
+  } finally {
+    setState(() => _loading = false);
   }
+}
+
 
   Future<void> _save() async {
     setState(() => _saving = true);

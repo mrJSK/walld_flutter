@@ -12,7 +12,9 @@ class DynamicFormsPanel extends StatefulWidget {
 }
 
 class _DynamicFormsPanelState extends State<DynamicFormsPanel> {
-  static const String tenantId = 'default_tenant';
+  // Line 11:
+  static const String tenantId = 'default_tenant'; // Fixed
+
 
   final DynamicFormsRepository _repo = DynamicFormsRepository();
 

@@ -1,769 +1,128 @@
 import 'package:flutter/material.dart';
+import 'Dashboard/dashboard_panel.dart';
+import 'TaskManagement/task_management_panel.dart';
+import 'UserManagement/user_management_panel.dart';
 
-class AdminDesktopScreen extends StatelessWidget {
-  const AdminDesktopScreen({super.key});
+class AdminDesktopScreen extends StatefulWidget {
+  final String tenantId;
+
+  const AdminDesktopScreen({
+    super.key,
+    this.tenantId = 'default_tenant',
+  });
+
+  @override
+  State<AdminDesktopScreen> createState() => _AdminDesktopScreenState();
+}
+
+class _AdminDesktopScreenState extends State<AdminDesktopScreen> {
+  int _selectedIndex = 0;
 
   @override
   Widget build(BuildContext context) {
-    final now = DateTime.now();
-    final size = MediaQuery.of(context).size;
-    final shortest = size.shortestSide;
-
-    // Scale factor: compact < 900, normal 900-1400, large > 1400
-    final double scale = shortest < 900 ? 0.85 : (shortest > 1400 ? 1.15 : 1.0);
-
     return Scaffold(
-      backgroundColor: const Color(0xFF05040A),
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Color(0xFF05040A), Color(0xFF151827)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-        ),
-        child: SafeArea(
-          child: Padding(
-            padding: EdgeInsets.symmetric(
-              horizontal: 32 * scale,
-              vertical: 16 * scale,
-            ),
+      backgroundColor: const Color(0xFF05040A), // ADDED: Background color
+      body: Row(
+        children: [
+          // LEFT NAVIGATION
+          Container(
+            width: 260,
+            color: const Color(0xFF0B0B10),
             child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _TopBar(now: now, scale: scale),
-                SizedBox(height: 24 * scale),
-                Expanded(
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final isNarrow = constraints.maxWidth < 1200;
-
-                      if (isNarrow) {
-                        return SingleChildScrollView(
-                          child: Column(
-                            children: [
-                              _TaskOverviewCard(scale: scale),
-                              SizedBox(height: 16 * scale),
-                              _ApprovalQueueCard(scale: scale),
-                              SizedBox(height: 16 * scale),
-                              Row(
-                                children: [
-                                  Expanded(
-                                      child: _OrgHealthCard(scale: scale)),
-                                  SizedBox(width: 16 * scale),
-                                  Expanded(
-                                      child: _QuickActionsCard(scale: scale)),
-                                ],
-                              ),
-                            ],
-                          ),
-                        );
-                      }
-
-                      return Column(
+                const SizedBox(height: 32),
+                const ListTile(
+                  leading: Icon(Icons.admin_panel_settings, color: Colors.cyan),
+                  title: Text(
+                    'Admin Console',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16, // ADDED: Explicit size
+                    ),
+                  ),
+                ),
+                const Divider(color: Colors.white24),
+                _navItem(0, Icons.dashboard_rounded, 'Dashboard'),
+                _navItem(1, Icons.task_alt, 'Task Management'),
+                _navItem(2, Icons.people_rounded, 'User Management'),
+                const Spacer(),
+                Padding(
+                  padding: const EdgeInsets.all(12.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Tenant: ${widget.tenantId}',
+                        style: const TextStyle(color: Colors.grey, fontSize: 12),
+                      ),
+                      const SizedBox(height: 4),
+                      const Row(
                         children: [
-                          Expanded(
-                            flex: 3,
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  flex: 3,
-                                  child: _TaskOverviewCard(scale: scale),
-                                ),
-                                SizedBox(width: 24 * scale),
-                                Expanded(
-                                  flex: 2,
-                                  child: _ApprovalQueueCard(scale: scale),
-                                ),
-                              ],
-                            ),
-                          ),
-                          SizedBox(height: 24 * scale),
-                          Expanded(
-                            flex: 2,
-                            child: Row(
-                              children: [
-                                Expanded(
-                                    child: _OrgHealthCard(scale: scale)),
-                                SizedBox(width: 24 * scale),
-                                Expanded(
-                                    child: _QuickActionsCard(scale: scale)),
-                              ],
-                            ),
+                          Icon(Icons.cloud_done, size: 12, color: Colors.greenAccent),
+                          SizedBox(width: 4),
+                          Text(
+                            'Synced',
+                            style: TextStyle(color: Colors.grey, fontSize: 11),
                           ),
                         ],
-                      );
-                    },
+                      ),
+                    ],
                   ),
                 ),
               ],
             ),
           ),
-        ),
-      ),
-    );
-  }
-}
 
-/* ------------------------------ Top bar ------------------------------ */
-
-class _TopBar extends StatelessWidget {
-  final DateTime now;
-  final double scale;
-
-  const _TopBar({required this.now, required this.scale});
-
-  @override
-  Widget build(BuildContext context) {
-    final dateStr =
-        '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-    final timeStr =
-        '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
-
-    return Container(
-      height: 36 * scale,
-      decoration: BoxDecoration(
-        color: const Color(0x660A0A12),
-        borderRadius: BorderRadius.circular(18 * scale),
-        border: Border.all(color: const Color(0x33FFFFFF)),
-      ),
-      child: Row(
-        children: [
-          SizedBox(width: 12 * scale),
-          Icon(Icons.blur_on_rounded,
-              size: 18 * scale, color: Colors.cyan),
-          SizedBox(width: 6 * scale),
-          Text(
-            'Wall-D • Admin',
-            style: TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w600,
-              fontSize: 14 * scale,
-            ),
-          ),
-          const Spacer(),
-          Text(
-            '$dateStr   $timeStr',
-            style: TextStyle(color: Colors.white70, fontSize: 13 * scale),
-          ),
-          const Spacer(),
-          Icon(Icons.cloud_done,
-              size: 16 * scale, color: Colors.greenAccent),
-          SizedBox(width: 6 * scale),
-          Text(
-            'default_tenant',
-            style: TextStyle(color: Colors.white70, fontSize: 13 * scale),
-          ),
-          SizedBox(width: 12 * scale),
-          CircleAvatar(
-            radius: 12 * scale,
-            backgroundColor: Colors.deepPurple,
-            child: Text(
-              'A',
-              style: TextStyle(fontSize: 12 * scale, color: Colors.white),
-            ),
-          ),
-          SizedBox(width: 8 * scale),
-        ],
-      ),
-    );
-  }
-}
-
-/* --------------------------- Reusable card --------------------------- */
-
-class _GlassCard extends StatelessWidget {
-  final Widget child;
-  final EdgeInsets padding;
-  final double scale;
-
-  const _GlassCard({
-    required this.child,
-    required this.scale,
-    EdgeInsets? padding,
-  }) : padding = padding ?? const EdgeInsets.all(20);
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: EdgeInsets.all(padding.top * scale),
-      decoration: BoxDecoration(
-        color: const Color(0x6611111C),
-        borderRadius: BorderRadius.circular(24 * scale),
-        border: Border.all(color: const Color(0x22FFFFFF)),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0x33000000),
-            blurRadius: 18 * scale,
-            offset: Offset(0, 10 * scale),
-          ),
-        ],
-      ),
-      child: child,
-    );
-  }
-}
-
-/* ------------------------- Main widgets/cards ------------------------ */
-
-class _TaskOverviewCard extends StatefulWidget {
-  final double scale;
-
-  const _TaskOverviewCard({required this.scale});
-
-  @override
-  State<_TaskOverviewCard> createState() => _TaskOverviewCardState();
-}
-
-class _TaskOverviewCardState extends State<_TaskOverviewCard> {
-  String _activeTab = 'pending';
-
-  @override
-  Widget build(BuildContext context) {
-    final scale = widget.scale;
-
-    final stats = [
-      _TaskStat('Pending', 12, Colors.orangeAccent),
-      _TaskStat('In Progress', 34, Colors.cyanAccent),
-      _TaskStat('Blocked', 5, Colors.redAccent),
-      _TaskStat('Awaiting Approval', 7, Colors.purpleAccent),
-      _TaskStat('Completed (Today)', 21, Colors.greenAccent),
-    ];
-
-    // Mock data; later bind to Firestore queries.[file:2]
-    final pendingTasks = [
-      _RecentTask(
-        title: 'Task #1050 – Prepare Sales Report',
-        status: 'PENDING',
-        statusColor: Colors.orangeAccent,
-      ),
-      _RecentTask(
-        title: 'Task #1049 – Vendor Follow-up',
-        status: 'PENDING',
-        statusColor: Colors.orangeAccent,
-      ),
-      _RecentTask(
-        title: 'Task #1048 – Draft SLA Document',
-        status: 'PENDING',
-        statusColor: Colors.orangeAccent,
-      ),
-    ];
-
-    final completedTasks = [
-      _RecentTask(
-        title: 'Task #1047 – Client Demo',
-        status: 'COMPLETED',
-        statusColor: Colors.greenAccent,
-      ),
-      _RecentTask(
-        title: 'Task #1046 – Code Review',
-        status: 'COMPLETED',
-        statusColor: Colors.greenAccent,
-      ),
-      _RecentTask(
-        title: 'Task #1043 – Server Patch',
-        status: 'COMPLETED',
-        statusColor: Colors.greenAccent,
-      ),
-    ];
-
-    final activeList =
-        _activeTab == 'pending' ? pendingTasks : completedTasks;
-
-    return _GlassCard(
-      scale: scale,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Task Overview',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 18 * scale,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          SizedBox(height: 4 * scale),
-          Text(
-            'Live snapshot of your organization\'s tasks by status.',
-            style: TextStyle(color: Colors.white70, fontSize: 13 * scale),
-          ),
-          SizedBox(height: 18 * scale),
-
-          // Top stats
-          Wrap(
-            spacing: 16 * scale,
-            runSpacing: 16 * scale,
-            children: stats
-                .map(
-                  (s) => _GlassCard(
-                    scale: scale,
-                    padding: EdgeInsets.symmetric(
-                      horizontal: 16 * scale,
-                      vertical: 14 * scale,
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          s.label,
-                          style: TextStyle(
-                            color: Colors.white70,
-                            fontSize: 13 * scale,
-                          ),
-                        ),
-                        SizedBox(height: 6 * scale),
-                        Text(
-                          s.count.toString(),
-                          style: TextStyle(
-                            color: s.color,
-                            fontSize: 24 * scale,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                )
-                .toList(),
-          ),
-
-          SizedBox(height: 24 * scale),
-
-          // Tabs + horizontal task list
-          Row(
-            children: [
-              Text(
-                'Recent Tasks',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 14 * scale,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const Spacer(),
-              _TabChip(
-                label: 'Pending',
-                selected: _activeTab == 'pending',
-                scale: scale,
-                onTap: () => setState(() => _activeTab = 'pending'),
-              ),
-              SizedBox(width: 8 * scale),
-              _TabChip(
-                label: 'Completed',
-                selected: _activeTab == 'completed',
-                scale: scale,
-                onTap: () => setState(() => _activeTab = 'completed'),
-              ),
-            ],
-          ),
-          SizedBox(height: 8 * scale),
-
-          SizedBox(
-            height: 120 * scale,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              itemCount: activeList.length,
-              separatorBuilder: (_, __) => SizedBox(width: 12 * scale),
-              itemBuilder: (context, index) {
-                final t = activeList[index];
-                return SizedBox(
-                  width: 260 * scale,
-                  child: _GlassCard(
-                    scale: scale,
-                    padding: EdgeInsets.symmetric(
-                      horizontal: 16 * scale,
-                      vertical: 12 * scale,
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          t.title,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 13 * scale,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        SizedBox(height: 8 * scale),
-                        Row(
-                          children: [
-                            Container(
-                              padding: EdgeInsets.symmetric(
-                                horizontal: 8 * scale,
-                                vertical: 4 * scale,
-                              ),
-                              decoration: BoxDecoration(
-                                color: t.statusColor.withOpacity(0.15),
-                                borderRadius:
-                                    BorderRadius.circular(12 * scale),
-                              ),
-                              child: Text(
-                                t.status,
-                                style: TextStyle(
-                                  color: t.statusColor,
-                                  fontSize: 11 * scale,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _TabChip extends StatelessWidget {
-  final String label;
-  final bool selected;
-  final double scale;
-  final VoidCallback onTap;
-
-  const _TabChip({
-    required this.label,
-    required this.selected,
-    required this.scale,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(16 * scale),
-      onTap: onTap,
-      child: Container(
-        padding: EdgeInsets.symmetric(
-          horizontal: 12 * scale,
-          vertical: 6 * scale,
-        ),
-        decoration: BoxDecoration(
-          color: selected ? const Color(0xFF26263A) : Colors.transparent,
-          borderRadius: BorderRadius.circular(16 * scale),
-          border: Border.all(
-            color: selected
-                ? Colors.cyanAccent.withOpacity(0.6)
-                : Colors.white24,
-          ),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: selected ? Colors.cyanAccent : Colors.white70,
-            fontSize: 12 * scale,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _RecentTask {
-  final String title;
-  final String status;
-  final Color statusColor;
-
-  _RecentTask({
-    required this.title,
-    required this.status,
-    required this.statusColor,
-  });
-}
-
-
-
-class _TaskStat {
-  final String label;
-  final int count;
-  final Color color;
-  _TaskStat(this.label, this.count, this.color);
-}
-
-class _ApprovalQueueCard extends StatelessWidget {
-  final double scale;
-
-  const _ApprovalQueueCard({required this.scale});
-
-  @override
-  Widget build(BuildContext context) {
-    final approvals = [
-      _ApprovalItem('Task #1042 – Client Onboarding', 'Rahul', '2h ago'),
-      _ApprovalItem('Expense – Travel Reimbursement', 'Anita', '5h ago'),
-      _ApprovalItem('Task #1031 – Server Upgrade', 'DevOps', '1d ago'),
-    ];
-
-    return _GlassCard(
-      scale: scale,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Approval Queue',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 18 * scale,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          SizedBox(height: 4 * scale),
-          Text(
-            'Requests waiting for manager/admin decision.',
-            style: TextStyle(color: Colors.white70, fontSize: 13 * scale),
-          ),
-          SizedBox(height: 12 * scale),
+          // MAIN CONTENT - FIXED
           Expanded(
-            child: ListView.separated(
-              itemCount: approvals.length,
-              separatorBuilder: (_, __) => SizedBox(height: 8 * scale),
-              itemBuilder: (context, index) {
-                final item = approvals[index];
-                return _GlassCard(
-                  scale: scale,
-                  padding: EdgeInsets.symmetric(
-                    horizontal: 12 * scale,
-                    vertical: 10 * scale,
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              item.title,
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 13 * scale,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            SizedBox(height: 2 * scale),
-                            Text(
-                              'From ${item.requester} • ${item.age}',
-                              style: TextStyle(
-                                color: Colors.white70,
-                                fontSize: 11 * scale,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      SizedBox(width: 8 * scale),
-                      TextButton(
-                        onPressed: () {},
-                        child: Text(
-                          'Approve',
-                          style: TextStyle(
-                            color: Colors.greenAccent,
-                            fontSize: 12 * scale,
-                          ),
-                        ),
-                      ),
-                      TextButton(
-                        onPressed: () {},
-                        child: Text(
-                          'Reject',
-                          style: TextStyle(
-                            color: Colors.redAccent,
-                            fontSize: 12 * scale,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              },
+            child: Container(
+              color: const Color(0xFF05040A), // Dark background
+              child: _buildSelectedPanel(), // CHANGED: Direct widget builder
             ),
           ),
         ],
       ),
     );
   }
-}
 
-class _ApprovalItem {
-  final String title;
-  final String requester;
-  final String age;
-  _ApprovalItem(this.title, this.requester, this.age);
-}
-
-class _OrgHealthCard extends StatelessWidget {
-  final double scale;
-
-  const _OrgHealthCard({required this.scale});
-
-  @override
-  Widget build(BuildContext context) {
-    return _GlassCard(
-      scale: scale,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Org Health',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 16 * scale,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          SizedBox(height: 8 * scale),
-          _HealthRow(label: 'Active Users', value: '142', scale: scale),
-          _HealthRow(label: 'Org Nodes', value: '18', scale: scale),
-          _HealthRow(
-              label: 'Pending Registrations', value: '3', scale: scale),
-        ],
-      ),
-    );
+  // ADDED: Direct panel builder instead of IndexedStack
+  Widget _buildSelectedPanel() {
+    switch (_selectedIndex) {
+      case 0:
+        return DashboardPanel(tenantId: widget.tenantId);
+      case 1:
+        return TaskManagementPanel(tenantId: widget.tenantId);
+      case 2:
+        return UserManagementPanel(tenantId: widget.tenantId);
+      default:
+        return DashboardPanel(tenantId: widget.tenantId);
+    }
   }
-}
 
-class _HealthRow extends StatelessWidget {
-  final String label;
-  final String value;
-  final double scale;
-
-  const _HealthRow({
-    required this.label,
-    required this.value,
-    required this.scale,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.symmetric(vertical: 4 * scale),
-      child: Row(
-        children: [
-          Text(
-            label,
-            style: TextStyle(color: Colors.white70, fontSize: 12 * scale),
-          ),
-          const Spacer(),
-          Text(
-            value,
-            style: TextStyle(
-              color: Colors.cyanAccent,
-              fontWeight: FontWeight.w600,
-              fontSize: 13 * scale,
-            ),
-          ),
-        ],
+  Widget _navItem(int index, IconData icon, String label) {
+    final selected = _selectedIndex == index;
+    return ListTile(
+      leading: Icon(
+        icon,
+        color: selected ? Colors.cyan : Colors.grey,
       ),
-    );
-  }
-}
-
-class _QuickActionsCard extends StatelessWidget {
-  final double scale;
-
-  const _QuickActionsCard({required this.scale});
-
-  @override
-  Widget build(BuildContext context) {
-    return _GlassCard(
-      scale: scale,
-      child: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Quick Actions',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 16 * scale,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            SizedBox(height: 8 * scale),
-            _QuickActionButton(
-              icon: Icons.account_tree_rounded,
-              label: 'Organization Structure',
-              scale: scale,
-              onTap: () {},
-            ),
-            _QuickActionButton(
-              icon: Icons.description_outlined,
-              label: 'Form Configuration',
-              scale: scale,
-              onTap: () {},
-            ),
-            _QuickActionButton(
-              icon: Icons.security_outlined,
-              label: 'Role & Permission Management',
-              scale: scale,
-              onTap: () {},
-            ),
-            _QuickActionButton(
-              icon: Icons.rule_folder_outlined,
-              label: 'Workflow Configuration',
-              scale: scale,
-              onTap: () {},
-            ),
-          ],
+      title: Text(
+        label,
+        style: TextStyle(
+          color: selected ? Colors.cyan : Colors.grey.shade300,
+          fontWeight: selected ? FontWeight.bold : FontWeight.normal,
         ),
       ),
-    );
-  }
-}
-
-class _QuickActionButton extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final double scale;
-  final VoidCallback onTap;
-
-  const _QuickActionButton({
-    required this.icon,
-    required this.label,
-    required this.scale,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.symmetric(vertical: 4 * scale),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16 * scale),
-        onTap: onTap,
-        child: Container(
-          padding: EdgeInsets.symmetric(
-            horizontal: 12 * scale,
-            vertical: 10 * scale,
-          ),
-          decoration: BoxDecoration(
-            color: const Color(0x331A1A28),
-            borderRadius: BorderRadius.circular(16 * scale),
-          ),
-          child: Row(
-            children: [
-              Icon(icon, size: 18 * scale, color: Colors.cyanAccent),
-              SizedBox(width: 10 * scale),
-              Expanded(
-                child: Text(
-                  label,
-                  style: TextStyle(color: Colors.white, fontSize: 13 * scale),
-                ),
-              ),
-              Icon(Icons.arrow_forward_ios,
-                  size: 12 * scale, color: Colors.white54),
-            ],
-          ),
-        ),
+      selected: selected,
+      selectedTileColor: const Color(0xFF1A1A25), // ADDED: Selected highlight
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
       ),
+      onTap: () {
+        setState(() => _selectedIndex = index);
+      },
     );
   }
 }

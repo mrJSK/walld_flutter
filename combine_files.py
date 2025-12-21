@@ -27,20 +27,20 @@ NON_RECURSIVE_FOLDERS = [
 
 # Specific individual files to include (full file paths)
 # Use forward slashes / or raw strings r"..."
-INCLUDE_FILES = [
-    "pubspec.yaml",
-    "lib/firebase_options.dart",
-    "firebase.json",
-    "windows/runner/CMakeLists.txt",
-    "windows/flutter/CMakeLists.txt",
-    "windows/runner/main.cpp",
-    "windows/runner/flutter_window.cpp",
-    "windows/runner/flutter_window.h",
-    "windows/runner/win32_window.cpp",
-    "windows/runner/utils.cpp",
-    "windows/runner/utils.h",
-]
-
+# INCLUDE_FILES = [
+#     "pubspec.yaml",
+#     "lib/firebase_options.dart",
+#     "firebase.json",
+#     "windows/runner/CMakeLists.txt",
+#     "windows/flutter/CMakeLists.txt",
+#     "windows/runner/main.cpp",
+#     "windows/runner/flutter_window.cpp",
+#     "windows/runner/flutter_window.h",
+#     "windows/runner/win32_window.cpp",
+#     "windows/runner/utils.cpp",
+#     "windows/runner/utils.h",
+# ]
+INCLUDE_FILES = []
 # File filtering --------------------------------------------------------------
  
 # File extensions to include (empty list = include ALL files)

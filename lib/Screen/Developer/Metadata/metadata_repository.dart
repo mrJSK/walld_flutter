@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
 
 import 'designation/designation_model.dart';
 import 'role_permission/role_permission_model.dart';
@@ -12,8 +13,12 @@ class MetadataRepository {
   /* ------------------------------ Designations ----------------------------- */
 
   Future<List<DesignationMeta>> loadDesignations(String tenantId) async {
+  try {
+    // FIXED: Correct path structure
     final snap = await _db
-        .collection('tenants/$tenantId/metadata')
+        .collection('tenants')
+        .doc(tenantId)
+        .collection('metadata')
         .doc('designations')
         .get();
 
@@ -21,10 +26,14 @@ class MetadataRepository {
 
     if (snap.exists && snap.data() != null) {
       final data = snap.data() as Map<String, dynamic>;
-      final map =
-          (data['designations'] ?? <String, dynamic>{}) as Map<String, dynamic>;
-      for (final entry in map.entries) {
-        result.add(DesignationMeta.fromMap(entry.key, entry.value));
+      
+      // FIXED: Check if 'designations' key exists
+      if (data.containsKey('designations')) {
+        final map = data['designations'] as Map<String, dynamic>;
+        
+        for (final entry in map.entries) {
+          result.add(DesignationMeta.fromMap(entry.key, entry.value as Map<String, dynamic>));
+        }
       }
     }
 
@@ -42,10 +51,18 @@ class MetadataRepository {
           isRoot: true,
         ),
       );
+      
+      // AUTO-SAVE the seeded designation
+      await saveDesignations(tenantId, result);
     }
 
     return result;
+  } catch (e) {
+    debugPrint('❌ Error loading designations: $e');
+    return [];
   }
+}
+  
 
   Future<void> saveDesignations(
       String tenantId, List<DesignationMeta> list) async {

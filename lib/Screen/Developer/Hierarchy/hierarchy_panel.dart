@@ -11,7 +11,9 @@ class HierarchyPanel extends StatefulWidget {
 }
 
 class _HierarchyPanelState extends State<HierarchyPanel> {
-  static const String tenantId = 'default_tenant';
+  // Line 14:
+  static const String tenantId = 'default_tenant'; // Fixed
+
 
   final HierarchyRepository _repo = HierarchyRepository();
 
