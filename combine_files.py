@@ -17,7 +17,7 @@ INCLUDE_FILE_STRUCTURE = True
 # Folders to scan FULLY RECURSIVELY (includes all subfolders and all files)
 # Each file's path will be shown relative to the folder's parent
 FULLY_RECURSIVE_FOLDERS = [
-   "lib/Screen/Developer/UserDatabase",
+   "lib/dynamic_screen",
 ]
 
 # Folders to scan NON-RECURSIVELY (only files directly in these folders)

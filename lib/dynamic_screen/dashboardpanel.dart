@@ -2,15 +2,17 @@
 import 'dart:io';
 import 'dart:ui';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as p;
 
 import 'model/screen_grid.dart';
 import 'widget_factory.dart';
 import 'widget_manifest.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:path/path.dart' as p;
 
 class GlassContainer extends StatelessWidget {
   final double blur; // sigma
@@ -101,13 +103,26 @@ class _DashboardPanelState extends State<DashboardPanel> {
   // Global "glass" settings (applied to ALL widgets + top bar)
   double _globalGlassOpacity = 0.12; // 0..1 (glass tint strength)
   double _globalGlassBlur = 16.0; // 0..30 (sigma)
-  final Color _globalGlassTint = const Color(0xFFFFFFFF); // white tint => macOS-like
+  final Color _globalGlassTint =
+      const Color(0xFFFFFFFF); // white tint => macOS-like
+
+  // Auth + permissions
+  User? _currentUser;
+  Set<String> _allowedWidgetIds = {'login'};
 
   @override
   void initState() {
     super.initState();
 
     _items = [
+      // Centered login widget
+      ScreenGridWidgetSpan(
+        widgetId: 'login',
+        col: 7,
+        row: 3,
+        colSpan: 10,
+        rowSpan: 8,
+      ),
       ScreenGridWidgetSpan(
         widgetId: 'create_task',
         col: 1,
@@ -139,6 +154,100 @@ class _DashboardPanelState extends State<DashboardPanel> {
     ];
 
     _loadSettings();
+    _listenAuthState();
+  }
+
+  void _listenAuthState() {
+    FirebaseAuth.instance.authStateChanges().listen((user) {
+      if (!mounted) return;
+
+      if (user == null) {
+        setState(() {
+          _currentUser = null;
+          _allowedWidgetIds = {'login'};
+        });
+      } else {
+        setState(() => _currentUser = user);
+        _loadUserPermissions(user.uid);
+      }
+    });
+  }
+
+  Future<void> _loadUserPermissions(String userId) async {
+    const tenantId = 'default_tenant';
+
+    try {
+      final userDoc = await FirebaseFirestore.instance
+          .collection('tenants')
+          .doc(tenantId)
+          .collection('users')
+          .doc(userId)
+          .get();
+
+      if (!userDoc.exists) {
+        await FirebaseAuth.instance.signOut();
+        return;
+      }
+
+      final data = userDoc.data() as Map<String, dynamic>;
+      final designation = data['designation'] as String?;
+
+      if (designation == null) {
+        await FirebaseAuth.instance.signOut();
+        setState(() => _allowedWidgetIds = {'login'});
+        return;
+      }
+
+      final metaDoc = await FirebaseFirestore.instance
+          .collection('tenants')
+          .doc(tenantId)
+          .collection('metadata')
+          .doc('designations.json')
+          .get();
+
+      if (!metaDoc.exists) {
+        setState(() => _allowedWidgetIds = {'login'});
+        return;
+      }
+
+      final meta = metaDoc.data() as Map<String, dynamic>;
+      final allDesignations =
+          meta['designations'] as Map<String, dynamic>?;
+
+      final designationData =
+          allDesignations != null ? allDesignations[designation] : null;
+
+      final List<dynamic> permissionsRaw =
+          (designationData?['permissions'] as List<dynamic>?) ?? [];
+
+      final permissions =
+          permissionsRaw.map((e) => e.toString()).toSet();
+
+      final allowed = <String>{};
+
+      if (permissions.contains('create_task')) {
+        allowed.add('create_task');
+      }
+      if (permissions.contains('view_assigned_tasks')) {
+        allowed.add('view_assigned_tasks');
+      }
+      if (permissions.contains('view_all_tasks')) {
+        allowed.add('view_all_tasks');
+      }
+      if (permissions.contains('complete_task')) {
+        allowed.add('complete_task');
+      }
+
+      // When logged in, hide login widget.
+      setState(() => _allowedWidgetIds = allowed);
+    } catch (e) {
+      debugPrint('Permission load error: $e');
+      setState(() => _allowedWidgetIds = {'login'});
+    }
+  }
+
+  Future<void> _signOut() async {
+    await FirebaseAuth.instance.signOut();
   }
 
   Future<void> _loadSettings() async {
@@ -147,8 +256,9 @@ class _DashboardPanelState extends State<DashboardPanel> {
     _wallpaperPath = prefs.getString(_prefsWallpaperKey);
     _globalGlassOpacity = prefs.getDouble(_prefsGlobalOpacityKey) ?? 0.12;
     _globalGlassBlur = prefs.getDouble(_prefsGlobalBlurKey) ?? 16.0;
-    debugPrint('LOADED wallpaper=$_wallpaperPath blur=$_globalGlassBlur opacity=$_globalGlassOpacity');
-    
+    debugPrint(
+        'LOADED wallpaper=$_wallpaperPath blur=$_globalGlassBlur opacity=$_globalGlassOpacity');
+
     if (mounted) setState(() {});
   }
 
@@ -163,7 +273,8 @@ class _DashboardPanelState extends State<DashboardPanel> {
 
     await prefs.setDouble(_prefsGlobalOpacityKey, _globalGlassOpacity);
     await prefs.setDouble(_prefsGlobalBlurKey, _globalGlassBlur);
-    debugPrint('SAVED wallpaper=$_wallpaperPath blur=$_globalGlassBlur opacity=$_globalGlassOpacity');
+    debugPrint(
+        'SAVED wallpaper=$_wallpaperPath blur=$_globalGlassBlur opacity=$_globalGlassOpacity');
   }
 
   void toggleWidget(String widgetId) {
@@ -185,30 +296,29 @@ class _DashboardPanelState extends State<DashboardPanel> {
     }
   }
 
-  
-Future<void> _pickWallpaperFromWindows() async {
-  final result = await FilePicker.platform.pickFiles(
-    type: FileType.image,
-    allowMultiple: false,
-  );
-  final pickedPath = result?.files.single.path;
-  if (pickedPath == null) return;
+  Future<void> _pickWallpaperFromWindows() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      allowMultiple: false,
+    );
+    final pickedPath = result?.files.single.path;
+    if (pickedPath == null) return;
 
-  // Copy selected image into app storage so it persists
-  final appDir = await getApplicationSupportDirectory();
-  final wpDir = Directory(p.join(appDir.path, 'wallpapers'));
-  if (!await wpDir.exists()) {
-    await wpDir.create(recursive: true);
+    final appDir = await getApplicationSupportDirectory();
+    final wpDir = Directory(p.join(appDir.path, 'wallpapers'));
+    if (!await wpDir.exists()) {
+      await wpDir.create(recursive: true);
+    }
+
+    final ext =
+        p.extension(pickedPath).isNotEmpty ? p.extension(pickedPath) : '.jpg';
+    final cachedPath = p.join(wpDir.path, 'current_wallpaper$ext');
+
+    await File(pickedPath).copy(cachedPath);
+
+    setState(() => _wallpaperPath = cachedPath);
+    await _saveSettings();
   }
-
-  final ext = p.extension(pickedPath).isNotEmpty ? p.extension(pickedPath) : '.jpg';
-  final cachedPath = p.join(wpDir.path, 'current_wallpaper$ext');
-
-  await File(pickedPath).copy(cachedPath);
-
-  setState(() => _wallpaperPath = cachedPath);
-  await _saveSettings();
-}
 
   Future<void> _resetWallpaper() async {
     setState(() => _wallpaperPath = null);
@@ -283,7 +393,6 @@ Future<void> _pickWallpaperFromWindows() async {
                       ],
                     ),
                     const SizedBox(height: 12),
-
                     Row(
                       children: [
                         const SizedBox(
@@ -307,7 +416,6 @@ Future<void> _pickWallpaperFromWindows() async {
                         ),
                       ],
                     ),
-
                     Row(
                       children: [
                         const SizedBox(
@@ -325,12 +433,12 @@ Future<void> _pickWallpaperFromWindows() async {
                             divisions: 30,
                             value: tempBlur.clamp(0, 30),
                             label: tempBlur.toStringAsFixed(0),
-                            onChanged: (v) => setModalState(() => tempBlur = v),
+                            onChanged: (v) =>
+                                setModalState(() => tempBlur = v),
                           ),
                         ),
                       ],
                     ),
-
                     const SizedBox(height: 8),
                     Align(
                       alignment: Alignment.centerRight,
@@ -375,6 +483,10 @@ Future<void> _pickWallpaperFromWindows() async {
         final topBarHeight = 32.0 * scale;
         final chipHeight = 32.0 * scale;
 
+        final visibleItems = _items
+            .where((item) => _allowedWidgetIds.contains(item.widgetId))
+            .toList();
+
         return Scaffold(
           backgroundColor: Colors.transparent,
           body: Container(
@@ -387,7 +499,7 @@ Future<void> _pickWallpaperFromWindows() async {
                 ),
                 child: Column(
                   children: [
-                    // TOP BAR (NOW GLASS)
+                    // TOP BAR
                     SizedBox(
                       height: topBarHeight,
                       child: GlassContainer(
@@ -421,6 +533,16 @@ Future<void> _pickWallpaperFromWindows() async {
                               ),
                             ),
                             const Spacer(),
+                            if (_currentUser != null)
+                              IconButton(
+                                tooltip: 'Sign out',
+                                icon: Icon(
+                                  Icons.logout,
+                                  size: 16 * scale,
+                                  color: Colors.white70,
+                                ),
+                                onPressed: _signOut,
+                              ),
                             Icon(Icons.cloud_done,
                                 size: 13 * scale,
                                 color: Colors.greenAccent),
@@ -433,7 +555,6 @@ Future<void> _pickWallpaperFromWindows() async {
                               ),
                             ),
                             SizedBox(width: 6 * scale),
-
                             PopupMenuButton<_SettingsAction>(
                               tooltip: 'Settings',
                               padding: EdgeInsets.zero,
@@ -441,7 +562,8 @@ Future<void> _pickWallpaperFromWindows() async {
                               color: const Color(0xFF0B0B12),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(12),
-                                side: const BorderSide(color: Color(0x33FFFFFF)),
+                                side: const BorderSide(
+                                    color: Color(0x33FFFFFF)),
                               ),
                               onSelected: (action) async {
                                 switch (action) {
@@ -494,46 +616,55 @@ Future<void> _pickWallpaperFromWindows() async {
                     ),
                     SizedBox(height: mainSpacing),
 
-                    // TOGGLE CHIPS
-                    SizedBox(
-                      height: chipHeight,
-                      child: ListView.separated(
-                        scrollDirection: Axis.horizontal,
-                        itemCount: widgetManifest.length,
-                        separatorBuilder: (_, __) =>
-                            SizedBox(width: 6 * scale),
-                        itemBuilder: (context, index) {
-                          final w = widgetManifest[index];
-                          final id = w['id'] as String;
-                          final name = w['name'] as String;
-                          final selected = _items.any((i) => i.widgetId == id);
+                    // TOGGLE CHIPS (hide when not logged in)
+                    if (_currentUser != null) ...[
+                      SizedBox(
+                        height: chipHeight,
+                        child: ListView.separated(
+                          scrollDirection: Axis.horizontal,
+                          itemCount: widgetManifest.length,
+                          separatorBuilder: (_, __) =>
+                              SizedBox(width: 6 * scale),
+                          itemBuilder: (context, index) {
+                            final w = widgetManifest[index];
+                            final id = w['id'] as String;
+                            final name = w['name'] as String;
+                            final selected =
+                                _items.any((i) => i.widgetId == id);
 
-                          return ChoiceChip(
-                            label: Text(name),
-                            selected: selected,
-                            onSelected: (_) => toggleWidget(id),
-                            selectedColor: Colors.cyan.withOpacity(0.15),
-                            labelStyle: TextStyle(
-                              color:
-                                  selected ? Colors.cyanAccent : Colors.white70,
-                              fontWeight: selected
-                                  ? FontWeight.w600
-                                  : FontWeight.w400,
-                              fontSize: 11 * scale,
-                            ),
-                            shape: StadiumBorder(
-                              side: BorderSide(
+                            // login widget should not be toggled when logged in
+                            if (id == 'login') {
+                              return const SizedBox.shrink();
+                            }
+
+                            return ChoiceChip(
+                              label: Text(name),
+                              selected: selected,
+                              onSelected: (_) => toggleWidget(id),
+                              selectedColor: Colors.cyan.withOpacity(0.15),
+                              labelStyle: TextStyle(
                                 color: selected
-                                    ? Colors.cyanAccent.withOpacity(0.6)
-                                    : Colors.white24,
+                                    ? Colors.cyanAccent
+                                    : Colors.white70,
+                                fontWeight: selected
+                                    ? FontWeight.w600
+                                    : FontWeight.w400,
+                                fontSize: 11 * scale,
                               ),
-                            ),
-                            backgroundColor: const Color(0xFF11111C),
-                          );
-                        },
+                              shape: StadiumBorder(
+                                side: BorderSide(
+                                  color: selected
+                                      ? Colors.cyanAccent.withOpacity(0.6)
+                                      : Colors.white24,
+                                ),
+                              ),
+                              backgroundColor: const Color(0xFF11111C),
+                            );
+                          },
+                        ),
                       ),
-                    ),
-                    SizedBox(height: mainSpacing),
+                      SizedBox(height: mainSpacing),
+                    ],
 
                     // MAIN AREA
                     Expanded(
@@ -546,7 +677,7 @@ Future<void> _pickWallpaperFromWindows() async {
                           final cellH = maxH / _grid.rows;
 
                           return Stack(
-                            children: _items
+                            children: visibleItems
                                 .map(
                                   (item) => _buildGridWidget(
                                     item: item,
@@ -755,7 +886,7 @@ class _FreeDragResizeItemState extends State<_FreeDragResizeItem> {
           final local = details.localPosition;
           final isResize =
               local.dx > (widthPx - hitHandleSize) &&
-              local.dy > (heightPx - hitHandleSize);
+                  local.dy > (heightPx - hitHandleSize);
 
           if (isResize) {
             resizeLastGlobal = details.globalPosition;
@@ -774,8 +905,10 @@ class _FreeDragResizeItemState extends State<_FreeDragResizeItem> {
               resizeLastGlobal = details.globalPosition;
             } else if (dragLastGlobal != null) {
               final delta = details.globalPosition - dragLastGlobal!;
-              left = (left + delta.dx).clamp(0.0, widget.maxW - widthPx);
-              top = (top + delta.dy).clamp(0.0, widget.maxH - heightPx);
+              left = (left + delta.dx)
+                  .clamp(0.0, widget.maxW - widthPx);
+              top =
+                  (top + delta.dy).clamp(0.0, widget.maxH - heightPx);
               dragLastGlobal = details.globalPosition;
             }
           });

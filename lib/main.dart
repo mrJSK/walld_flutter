@@ -1,17 +1,15 @@
+// lib/main.dart
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:window_manager/window_manager.dart';
 import 'dart:io' show Platform;
 import 'package:flutter/services.dart';
-import 'Screen/Auth_screen.dart';
-import 'Screen/Developer/developer_dashboard_screen.dart';
+
 import 'firebase_options.dart';
 import 'dynamic_screen/dashboardpanel.dart';
 
-
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
@@ -25,8 +23,6 @@ Future<void> main() async {
 
 Future<void> _setupWindowsWallpaper() async {
   await windowManager.ensureInitialized();
-
-  // Get screen dimensions (excluding taskbar)
   const windowOptions = WindowOptions(
     backgroundColor: Colors.black,
     titleBarStyle: TitleBarStyle.hidden,
@@ -35,18 +31,13 @@ Future<void> _setupWindowsWallpaper() async {
 
   await windowManager.waitUntilReadyToShow(windowOptions, () async {
     await windowManager.show();
-    
-    // Make it fullscreen but preserve taskbar
-    await windowManager.setFullScreen(false); // Not true fullscreen
-    await windowManager.maximize(); // Maximize respects taskbar
-    
-    // Lock it
+    await windowManager.setFullScreen(false);
+    await windowManager.maximize();
     await windowManager.setMovable(false);
     await windowManager.setResizable(false);
     await windowManager.setMinimizable(false);
     await windowManager.setClosable(false);
-    
-    // Set as background (wallpaper level)
+
     try {
       await windowManager.setAlwaysOnBottom(true);
     } catch (e) {
@@ -66,10 +57,7 @@ class WallDApp extends StatelessWidget {
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF05040A),
       ),
-      home: const DeveloperDashboardScreen(),
-      //home: const AuthScreen(),
-      //home: const DashboardPanel(),
-
+      home: const DashboardPanel(),
     );
   }
 }
