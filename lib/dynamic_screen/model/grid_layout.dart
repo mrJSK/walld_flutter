@@ -3,8 +3,8 @@ class GridLayoutConfig {
   final double rowHeight; // logical pixels per grid row
 
   const GridLayoutConfig({
-    this.columns = 12,
-    this.rowHeight = 70,
+    this.columns = 120,
+    this.rowHeight = 700,
   });
 }
 

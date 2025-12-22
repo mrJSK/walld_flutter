@@ -29,7 +29,7 @@ class _DashboardPanelState extends State<DashboardPanel> {
         widgetId: 'create_task',
         col: 1,
         row: 2,
-        colSpan: 10, // uses 10 out of 24 columns
+        colSpan: 10,
         rowSpan: 4,
       ),
       ScreenGridWidgetSpan(
@@ -119,8 +119,7 @@ class _DashboardPanelState extends State<DashboardPanel> {
                           color: const Color(0x660A0A12),
                           borderRadius:
                               BorderRadius.circular(topBarHeight / 2),
-                          border:
-                              Border.all(color: const Color(0x33FFFFFF)),
+                          border: Border.all(color: const Color(0x33FFFFFF)),
                         ),
                         padding:
                             EdgeInsets.symmetric(horizontal: 14.0 * scale),
@@ -161,14 +160,12 @@ class _DashboardPanelState extends State<DashboardPanel> {
                       child: ListView.separated(
                         scrollDirection: Axis.horizontal,
                         itemCount: widgetManifest.length,
-                        separatorBuilder: (_, __) =>
-                            SizedBox(width: 6 * scale),
+                        separatorBuilder: (_, __) => SizedBox(width: 6 * scale),
                         itemBuilder: (context, index) {
                           final w = widgetManifest[index];
                           final id = w['id'] as String;
                           final name = w['name'] as String;
-                          final selected =
-                              _items.any((i) => i.widgetId == id);
+                          final selected = _items.any((i) => i.widgetId == id);
 
                           return ChoiceChip(
                             label: Text(name),
@@ -176,9 +173,8 @@ class _DashboardPanelState extends State<DashboardPanel> {
                             onSelected: (_) => toggleWidget(id),
                             selectedColor: Colors.cyan.withOpacity(0.15),
                             labelStyle: TextStyle(
-                              color: selected
-                                  ? Colors.cyanAccent
-                                  : Colors.white70,
+                              color:
+                                  selected ? Colors.cyanAccent : Colors.white70,
                               fontWeight: selected
                                   ? FontWeight.w600
                                   : FontWeight.w400,
@@ -198,7 +194,7 @@ class _DashboardPanelState extends State<DashboardPanel> {
                     ),
                     SizedBox(height: mainSpacing),
 
-                    // MAIN AREA: screen grid driven layout
+                    // MAIN AREA
                     Expanded(
                       child: LayoutBuilder(
                         builder: (context, constraints) {
@@ -210,13 +206,15 @@ class _DashboardPanelState extends State<DashboardPanel> {
 
                           return Stack(
                             children: _items
-                                .map((item) => _buildGridWidget(
-                                      item,
-                                      cellW,
-                                      cellH,
-                                      maxW,
-                                      maxH,
-                                    ))
+                                .map(
+                                  (item) => _buildGridWidget(
+                                    item: item,
+                                    cellW: cellW,
+                                    cellH: cellH,
+                                    maxW: maxW,
+                                    maxH: maxH,
+                                  ),
+                                )
                                 .toList(),
                           );
                         },
@@ -232,121 +230,230 @@ class _DashboardPanelState extends State<DashboardPanel> {
     );
   }
 
-  Widget _buildGridWidget(
-    ScreenGridWidgetSpan item,
-    double cellW,
-    double cellH,
-    double maxW,
-    double maxH,
-  ) {
-    // Convert screen-grid coordinates to pixels
-    final left = (item.col * cellW)
-        .clamp(0.0, maxW - cellW); // simple clamping to keep on screen
-    final top = (item.row * cellH)
-        .clamp(0.0, maxH - cellH);
+  Widget _buildGridWidget({
+    required ScreenGridWidgetSpan item,
+    required double cellW,
+    required double cellH,
+    required double maxW,
+    required double maxH,
+  }) {
+    final left = (item.col * cellW).clamp(0.0, maxW - cellW);
+    final top = (item.row * cellH).clamp(0.0, maxH - cellH);
 
-    final widthPx = (item.colSpan * cellW)
-        .clamp(cellW * 2, maxW); // at least 2 cols
-    final heightPx = (item.rowSpan * cellH)
-        .clamp(cellH * 2, maxH); // at least 2 rows
+    final widthPx = (item.colSpan * cellW).clamp(cellW * 2, maxW);
+    final heightPx = (item.rowSpan * cellH).clamp(cellH * 2, maxH);
 
-    return Positioned(
-      left: left,
-      top: top,
-      width: widthPx,
-      height: heightPx,
-      child: _draggableResizableGridItem(
-        item,
-        cellW,
-        cellH,
-        maxW,
-        maxH,
-      ),
+    return _FreeDragResizeItem(
+      key: ValueKey(item.widgetId),
+      item: item,
+      gridColumns: _grid.columns,
+      gridRows: _grid.rows,
+      cellW: cellW,
+      cellH: cellH,
+      maxW: maxW,
+      maxH: maxH,
+      initialLeft: left,
+      initialTop: top,
+      initialWidthPx: widthPx,
+      initialHeightPx: heightPx,
     );
   }
+}
 
-  Widget _draggableResizableGridItem(
-    ScreenGridWidgetSpan item,
-    double cellW,
-    double cellH,
-    double maxW,
-    double maxH,
-  ) {
-    Offset? dragStart;
-    int startCol = item.col;
-    int startRow = item.row;
+class _FreeDragResizeItem extends StatefulWidget {
+  final ScreenGridWidgetSpan item;
 
-    Offset? resizeStart;
-    int startColSpan = item.colSpan;
-    int startRowSpan = item.rowSpan;
+  final int gridColumns;
+  final int gridRows;
 
-    final child = WidgetFactory.createWidget(item.widgetId);
+  final double cellW;
+  final double cellH;
 
-    return GestureDetector(
-      // DRAG by grid cells
-      onPanStart: (details) {
-        final local = details.localPosition;
-        const handleSize = 20.0;
-        if (local.dx > cellW * item.colSpan - handleSize &&
-            local.dy > cellH * item.rowSpan - handleSize) {
-          // resizing, not dragging
-          resizeStart = details.globalPosition;
-          startColSpan = item.colSpan;
-          startRowSpan = item.rowSpan;
-        } else {
-          dragStart = details.globalPosition;
-          startCol = item.col;
-          startRow = item.row;
-        }
-      },
-      onPanUpdate: (details) {
-        if (resizeStart != null) {
-          // resize in grid units
-          final delta = details.globalPosition - resizeStart!;
-          final dCols = (delta.dx / cellW).round();
-          final dRows = (delta.dy / cellH).round();
+  final double maxW;
+  final double maxH;
 
+  final double initialLeft;
+  final double initialTop;
+  final double initialWidthPx;
+  final double initialHeightPx;
+
+  const _FreeDragResizeItem({
+    super.key,
+    required this.item,
+    required this.gridColumns,
+    required this.gridRows,
+    required this.cellW,
+    required this.cellH,
+    required this.maxW,
+    required this.maxH,
+    required this.initialLeft,
+    required this.initialTop,
+    required this.initialWidthPx,
+    required this.initialHeightPx,
+  });
+
+  @override
+  State<_FreeDragResizeItem> createState() => _FreeDragResizeItemState();
+}
+
+class _FreeDragResizeItemState extends State<_FreeDragResizeItem> {
+  // live (pixel) rect during interaction
+  late double left;
+  late double top;
+  late double widthPx;
+  late double heightPx;
+
+  Offset? dragLastGlobal;
+  Offset? resizeLastGlobal;
+
+  bool get isInteracting => dragLastGlobal != null || resizeLastGlobal != null;
+
+  @override
+  void initState() {
+    super.initState();
+    left = widget.initialLeft;
+    top = widget.initialTop;
+    widthPx = widget.initialWidthPx;
+    heightPx = widget.initialHeightPx;
+  }
+
+  @override
+  void didUpdateWidget(covariant _FreeDragResizeItem oldWidget) {
+    super.didUpdateWidget(oldWidget);
+
+    // If parent updates the grid model (e.g., external load), sync pixels
+    // (but don't fight while user is dragging/resizing).
+    if (!isInteracting) {
+      final newLeft = (widget.item.col * widget.cellW)
+          .clamp(0.0, widget.maxW - widget.cellW);
+      final newTop = (widget.item.row * widget.cellH)
+          .clamp(0.0, widget.maxH - widget.cellH);
+
+      final newW =
+          (widget.item.colSpan * widget.cellW).clamp(widget.cellW * 2, widget.maxW);
+      final newH =
+          (widget.item.rowSpan * widget.cellH).clamp(widget.cellH * 2, widget.maxH);
+
+      left = newLeft;
+      top = newTop;
+      widthPx = newW;
+      heightPx = newH;
+    }
+  }
+
+  void _snapToGridAndPersist() {
+    // snap pixels -> grid units
+    int col = (left / widget.cellW).round();
+    int row = (top / widget.cellH).round();
+    int colSpan = (widthPx / widget.cellW).round();
+    int rowSpan = (heightPx / widget.cellH).round();
+
+    // enforce minimum size
+    colSpan = colSpan.clamp(2, widget.gridColumns) as int;
+    rowSpan = rowSpan.clamp(2, widget.gridRows) as int;
+
+    // keep inside grid bounds
+    col = col.clamp(0, widget.gridColumns - colSpan) as int;
+    row = row.clamp(0, widget.gridRows - rowSpan) as int;
+
+    // persist into the original model
+    widget.item
+      ..col = col
+      ..row = row
+      ..colSpan = colSpan
+      ..rowSpan = rowSpan;
+
+    // snap pixels exactly to grid
+    setState(() {
+      left = col * widget.cellW;
+      top = row * widget.cellH;
+      widthPx = colSpan * widget.cellW;
+      heightPx = rowSpan * widget.cellH;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final child = WidgetFactory.createWidget(widget.item.widgetId);
+
+    const hitHandleSize = 24.0;
+
+    return Positioned(
+      left: left.clamp(0.0, widget.maxW - widthPx),
+      top: top.clamp(0.0, widget.maxH - heightPx),
+      width: widthPx.clamp(widget.cellW * 2, widget.maxW),
+      height: heightPx.clamp(widget.cellH * 2, widget.maxH),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onPanStart: (details) {
+          final local = details.localPosition;
+
+          final isResize =
+              local.dx > (widthPx - hitHandleSize) &&
+              local.dy > (heightPx - hitHandleSize);
+
+          if (isResize) {
+            resizeLastGlobal = details.globalPosition;
+          } else {
+            dragLastGlobal = details.globalPosition;
+          }
+        },
+        onPanUpdate: (details) {
           setState(() {
-            item.colSpan = (startColSpan + dCols)
-                .clamp(2, _grid.columns - item.col);
-            item.rowSpan =
-                (startRowSpan + dRows).clamp(2, _grid.rows - item.row);
-          });
-        } else if (dragStart != null) {
-          // drag in grid units
-          final delta = details.globalPosition - dragStart!;
-          final dCols = (delta.dx / cellW).round();
-          final dRows = (delta.dy / cellH).round();
+            if (resizeLastGlobal != null) {
+              final delta = details.globalPosition - resizeLastGlobal!;
 
-          setState(() {
-            item.col = (startCol + dCols)
-                .clamp(0, _grid.columns - item.colSpan);
-            item.row =
-                (startRow + dRows).clamp(0, _grid.rows - item.rowSpan);
+              // resize freely in pixels
+              widthPx = (widthPx + delta.dx)
+                  .clamp(widget.cellW * 2, widget.maxW - left);
+              heightPx = (heightPx + delta.dy)
+                  .clamp(widget.cellH * 2, widget.maxH - top);
+
+              resizeLastGlobal = details.globalPosition;
+              return;
+            }
+
+            if (dragLastGlobal != null) {
+              final delta = details.globalPosition - dragLastGlobal!;
+
+              // drag freely in pixels
+              left = (left + delta.dx).clamp(0.0, widget.maxW - widthPx);
+              top = (top + delta.dy).clamp(0.0, widget.maxH - heightPx);
+
+              dragLastGlobal = details.globalPosition;
+              return;
+            }
           });
-        }
-      },
-      onPanEnd: (_) {
-        dragStart = null;
-        resizeStart = null;
-      },
-      child: Stack(
-        children: [
-          Positioned.fill(child: child),
-          // Resize handle
-          Positioned(
-            right: 4,
-            bottom: 4,
-            child: Container(
-              width: 14,
-              height: 14,
-              decoration: BoxDecoration(
-                color: Colors.cyanAccent,
-                borderRadius: BorderRadius.circular(4),
+        },
+        onPanEnd: (_) {
+          dragLastGlobal = null;
+          resizeLastGlobal = null;
+          _snapToGridAndPersist();
+        },
+        onPanCancel: () {
+          dragLastGlobal = null;
+          resizeLastGlobal = null;
+          _snapToGridAndPersist();
+        },
+        child: Stack(
+          children: [
+            Positioned.fill(child: child),
+
+            // resize handle (visual)
+            Positioned(
+              right: 4,
+              bottom: 4,
+              child: Container(
+                width: 14,
+                height: 14,
+                decoration: BoxDecoration(
+                  color: Colors.cyanAccent,
+                  borderRadius: BorderRadius.circular(4),
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

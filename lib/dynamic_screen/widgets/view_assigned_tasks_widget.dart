@@ -1,4 +1,4 @@
-// lib/dynamic_screen/widgets/view_assigned_tasks_widget.dart
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 class ViewAssignedTasksWidget extends StatelessWidget {
@@ -8,28 +8,26 @@ class ViewAssignedTasksWidget extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        // This is the boundary decided by the screen grid (colSpan × rowSpan)
         final maxW = constraints.maxWidth;
         final maxH = constraints.maxHeight;
+        final shortest = math.min(maxW, maxH);
 
-        // Use the smaller side as baseline for scaling
-        final shortest = maxW < maxH ? maxW : maxH;
+        final double unit = (shortest / 9.0).clamp(10.0, 48.0);
 
-        // Derive a "unit" from the boundary; tweak divisor to taste
-        final double unit = shortest / 9.0;
-
-        final double radius = unit * 0.9;
+        final double radius = (unit * 0.90).clamp(12.0, 44.0);
+        final double margin = (unit * 0.25).clamp(4.0, 12.0);
         final EdgeInsets padding = EdgeInsets.symmetric(
-          horizontal: unit * 0.9,
-          vertical: unit * 0.7,
+          horizontal: (unit * 0.90).clamp(10.0, 30.0),
+          vertical: (unit * 0.70).clamp(8.0, 24.0),
         );
-        final double titleFont = unit * 1.1;
-        final double bodyFont = unit * 0.7;
-        final double smallFont = unit * 0.6;
-        final double gap = unit * 0.6;
+
+        final double titleFont = (unit * 1.10).clamp(12.0, 26.0);
+        final double bodyFont = (unit * 0.72).clamp(10.0, 18.0);
+        final double smallFont = (unit * 0.60).clamp(9.0, 16.0);
+        final double gap = (unit * 0.60).clamp(6.0, 18.0);
 
         return Container(
-          margin: EdgeInsets.all(unit * 0.25),
+          margin: EdgeInsets.all(margin),
           decoration: BoxDecoration(
             color: const Color(0x6611111C),
             borderRadius: BorderRadius.circular(radius),
@@ -45,9 +43,7 @@ class ViewAssignedTasksWidget extends StatelessWidget {
           padding: padding,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.max,
             children: [
-              // TITLE AREA (top of the card)
               Text(
                 'View Assigned Tasks',
                 maxLines: 1,
@@ -59,14 +55,12 @@ class ViewAssignedTasksWidget extends StatelessWidget {
                 ),
               ),
               SizedBox(height: gap),
-
-              // DESCRIPTION AREA (takes all remaining height except footer)
               Expanded(
                 child: Align(
                   alignment: Alignment.topLeft,
                   child: Text(
                     'Tasks currently assigned to you will appear here (demo).',
-                    maxLines: 3,
+                    maxLines: 4,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       color: Colors.white70,
@@ -76,8 +70,6 @@ class ViewAssignedTasksWidget extends StatelessWidget {
                   ),
                 ),
               ),
-
-              // FOOTER AREA (bottom line)
               Align(
                 alignment: Alignment.bottomRight,
                 child: Text(

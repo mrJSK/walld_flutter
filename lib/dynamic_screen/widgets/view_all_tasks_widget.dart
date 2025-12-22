@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 class ViewAllTasksWidget extends StatelessWidget {
@@ -9,19 +10,21 @@ class ViewAllTasksWidget extends StatelessWidget {
       builder: (context, constraints) {
         final maxW = constraints.maxWidth;
         final maxH = constraints.maxHeight;
-        final shortest = maxW < maxH ? maxW : maxH;
+        final shortest = math.min(maxW, maxH);
 
-        final double cell = shortest / 8;
+        final double unit = (shortest / 8.0).clamp(10.0, 48.0);
 
-        final double radius = cell * 0.8;
-        final EdgeInsets padding = EdgeInsets.all(cell * 0.8);
-        final double titleFont = cell * 1.0;
-        final double bodyFont = cell * 0.65;
-        final double smallFont = cell * 0.55;
-        final double gap = cell * 0.6;
+        final double radius = (unit * 0.85).clamp(12.0, 42.0);
+        final double margin = (unit * 0.25).clamp(4.0, 12.0);
+        final EdgeInsets padding = EdgeInsets.all((unit * 0.75).clamp(8.0, 28.0));
+
+        final double titleFont = (unit * 1.00).clamp(12.0, 24.0);
+        final double bodyFont = (unit * 0.66).clamp(10.0, 17.0);
+        final double smallFont = (unit * 0.55).clamp(9.0, 15.0);
+        final double gap = (unit * 0.60).clamp(6.0, 18.0);
 
         return Container(
-          margin: EdgeInsets.all(cell * 0.2),
+          margin: EdgeInsets.all(margin),
           decoration: BoxDecoration(
             color: const Color(0x6611111C),
             borderRadius: BorderRadius.circular(radius),
@@ -37,7 +40,6 @@ class ViewAllTasksWidget extends StatelessWidget {
           padding: padding,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.max,
             children: [
               Text(
                 'View All Tasks',
@@ -53,7 +55,7 @@ class ViewAllTasksWidget extends StatelessWidget {
               Expanded(
                 child: Text(
                   'Summary view of all tasks (demo).',
-                  maxLines: 3,
+                  maxLines: 4,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     color: Colors.white70,

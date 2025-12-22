@@ -3,8 +3,8 @@ class ScreenGridConfig {
   final int rows;
 
   const ScreenGridConfig({
-    this.columns = 24,
-    this.rows = 14,
+    this.columns = 240,
+    this.rows = 140,
   });
 }
 
