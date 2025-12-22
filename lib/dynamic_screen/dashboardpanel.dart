@@ -125,7 +125,7 @@ class _DashboardPanelState extends State<DashboardPanel> {
       ),
       // IMPORTANT: widgetId must match WidgetFactory ids: createtask, viewassignedtasks, ...
       ScreenGridWidgetSpan(
-        widgetId: 'createtask',
+        widgetId: 'create_task',
         col: 1,
         row: 2,
         colSpan: 10,
@@ -244,16 +244,16 @@ class _DashboardPanelState extends State<DashboardPanel> {
       final allowed = <String>{};
 
       if (permissions.contains('create_task')) {
-        allowed.add('createtask');
+        allowed.add('create_task');
       }
       if (permissions.contains('view_assigned_tasks')) {
-        allowed.add('viewassignedtasks');
+        allowed.add('view_assigned_tasks');
       }
       if (permissions.contains('view_all_tasks')) {
-        allowed.add('viewalltasks');
+        allowed.add('view_all_tasks');
       }
       if (permissions.contains('complete_task')) {
-        allowed.add('completetask');
+        allowed.add('complete_task');
       }
 
       debugPrint('[PERM] allowed widget ids = $allowed');
@@ -639,55 +639,52 @@ class _DashboardPanelState extends State<DashboardPanel> {
                     ),
                     SizedBox(height: mainSpacing),
 
-                    // TOGGLE CHIPS (hide when not logged in)
+                    // STATIC CHIPS (cannot hide widgets)
                     if (_currentUser != null) ...[
                       SizedBox(
                         height: chipHeight,
                         child: ListView.separated(
                           scrollDirection: Axis.horizontal,
                           itemCount: widgetManifest.length,
-                          separatorBuilder: (_, __) =>
-                              SizedBox(width: 6 * scale),
+                          separatorBuilder: (_, __) => SizedBox(width: 6 * scale),
                           itemBuilder: (context, index) {
                             final w = widgetManifest[index];
                             final id = w['id'] as String;
                             final name = w['name'] as String;
-                            final selected =
-                                _items.any((i) => i.widgetId == id);
 
-                            // login widget should not be toggled when logged in
                             if (id == 'login') {
                               return const SizedBox.shrink();
                             }
 
-                            return ChoiceChip(
-                              label: Text(name),
-                              selected: selected,
-                              onSelected: (_) => toggleWidget(id),
-                              selectedColor: Colors.cyan.withOpacity(0.15),
-                              labelStyle: TextStyle(
-                                color: selected
-                                    ? Colors.cyanAccent
-                                    : Colors.white70,
-                                fontWeight: selected
-                                    ? FontWeight.w600
-                                    : FontWeight.w400,
-                                fontSize: 11 * scale,
+                            return Container(
+                              padding: EdgeInsets.symmetric(
+                                horizontal: 14 * scale,
                               ),
-                              shape: StadiumBorder(
-                                side: BorderSide(
-                                  color: selected
-                                      ? Colors.cyanAccent.withOpacity(0.6)
-                                      : Colors.white24,
+                              decoration: ShapeDecoration(
+                                color: Colors.cyan.withOpacity(0.15),
+                                shape: StadiumBorder(
+                                  side: BorderSide(
+                                    color: Colors.cyanAccent.withOpacity(0.6),
+                                  ),
                                 ),
                               ),
-                              backgroundColor: const Color(0xFF11111C),
+                              alignment: Alignment.center,
+                              child: Text(
+                                name,
+                                style: TextStyle(
+                                  color: Colors.cyanAccent,
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 11 * scale,
+                                ),
+                              ),
                             );
                           },
                         ),
                       ),
                       SizedBox(height: mainSpacing),
                     ],
+
+
 
                     // MAIN AREA
                     Expanded(
