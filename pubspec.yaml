@@ -12,6 +12,8 @@ dependencies:
   firebase_core: ^3.6.0  # Core Firebase
   firebase_auth: ^5.3.1  # Email/password auth
   cloud_firestore: ^5.4.4  # Metadata, tasks, org data
+  shared_preferences: ^2.3.0
+  flex_color_picker: ^3.5.0
   firebase_storage: ^12.3.3  # Attachments
   window_manager: ^0.3.7 # Window positioning/sizing control
   screen_retriever: ^0.1.9  # or latest compatible

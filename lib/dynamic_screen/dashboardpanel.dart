@@ -1,7 +1,76 @@
+// lib/dynamic_screen/dashboardpanel.dart
+import 'dart:io';
+import 'dart:ui';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'model/screen_grid.dart';
 import 'widget_factory.dart';
 import 'widget_manifest.dart';
-import 'model/screen_grid.dart';
+
+class GlassContainer extends StatelessWidget {
+  final double blur; // sigma
+  final double opacity; // 0..1
+  final Color tint;
+  final BorderRadius borderRadius;
+  final EdgeInsetsGeometry padding;
+  final Widget child;
+
+  // Visual tuning
+  final double borderOpacity;
+  final double borderWidth;
+  final List<BoxShadow> boxShadow;
+
+  const GlassContainer({
+    super.key,
+    required this.blur,
+    required this.opacity,
+    required this.tint,
+    required this.borderRadius,
+    required this.child,
+    this.padding = EdgeInsets.zero,
+    this.borderOpacity = 0.18,
+    this.borderWidth = 1,
+    this.boxShadow = const [
+      BoxShadow(
+        color: Color(0x40000000),
+        blurRadius: 18,
+        offset: Offset(0, 10),
+      ),
+    ],
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final blurSigma = blur.clamp(0.0, 30.0);
+    final a = opacity.clamp(0.0, 1.0);
+    final fill = tint.withOpacity(a);
+
+    return ClipRRect(
+      borderRadius: borderRadius,
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: blurSigma, sigmaY: blurSigma),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: fill,
+            borderRadius: borderRadius,
+            border: Border.all(
+              color: Colors.white.withOpacity(borderOpacity),
+              width: borderWidth,
+            ),
+            boxShadow: boxShadow,
+          ),
+          child: Padding(
+            padding: padding,
+            child: child,
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 class DashboardPanel extends StatefulWidget {
   const DashboardPanel({Key? key}) : super(key: key);
@@ -11,6 +80,11 @@ class DashboardPanel extends StatefulWidget {
 }
 
 class _DashboardPanelState extends State<DashboardPanel> {
+  // Persisted keys
+  static const _prefsWallpaperKey = 'wallpaper_path';
+  static const _prefsGlobalOpacityKey = 'global_widget_opacity';
+  static const _prefsGlobalBlurKey = 'global_widget_blur';
+
   // Global screen grid
   final ScreenGridConfig _grid = const ScreenGridConfig(
     columns: 24,
@@ -19,11 +93,18 @@ class _DashboardPanelState extends State<DashboardPanel> {
 
   late List<ScreenGridWidgetSpan> _items;
 
+  // null => use default gradient
+  String? _wallpaperPath;
+
+  // Global "glass" settings (applied to ALL widgets + top bar)
+  double _globalGlassOpacity = 0.12; // 0..1 (glass tint strength)
+  double _globalGlassBlur = 16.0; // 0..30 (sigma)
+  final Color _globalGlassTint = const Color(0xFFFFFFFF); // white tint => macOS-like
+
   @override
   void initState() {
     super.initState();
 
-    // Initial placement in screen grid units
     _items = [
       ScreenGridWidgetSpan(
         widgetId: 'create_task',
@@ -54,6 +135,31 @@ class _DashboardPanelState extends State<DashboardPanel> {
         rowSpan: 4,
       ),
     ];
+
+    _loadSettings();
+  }
+
+  Future<void> _loadSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    _wallpaperPath = prefs.getString(_prefsWallpaperKey);
+    _globalGlassOpacity = prefs.getDouble(_prefsGlobalOpacityKey) ?? 0.12;
+    _globalGlassBlur = prefs.getDouble(_prefsGlobalBlurKey) ?? 16.0;
+
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _saveSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    if (_wallpaperPath != null) {
+      await prefs.setString(_prefsWallpaperKey, _wallpaperPath!);
+    } else {
+      await prefs.remove(_prefsWallpaperKey);
+    }
+
+    await prefs.setDouble(_prefsGlobalOpacityKey, _globalGlassOpacity);
+    await prefs.setDouble(_prefsGlobalBlurKey, _globalGlassBlur);
   }
 
   void toggleWidget(String widgetId) {
@@ -61,7 +167,6 @@ class _DashboardPanelState extends State<DashboardPanel> {
     if (index != -1) {
       setState(() => _items.removeAt(index));
     } else {
-      // default placement for newly enabled widget
       setState(() {
         _items.add(
           ScreenGridWidgetSpan(
@@ -73,6 +178,167 @@ class _DashboardPanelState extends State<DashboardPanel> {
           ),
         );
       });
+    }
+  }
+
+  Future<void> _pickWallpaperFromWindows() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      allowMultiple: false,
+    );
+
+    final path = result?.files.single.path;
+    if (path == null) return;
+
+    setState(() => _wallpaperPath = path);
+    await _saveSettings();
+  }
+
+  Future<void> _resetWallpaper() async {
+    setState(() => _wallpaperPath = null);
+    await _saveSettings();
+  }
+
+  BoxDecoration _backgroundDecoration() {
+    final path = _wallpaperPath;
+    if (path != null) {
+      final file = File(path);
+      if (file.existsSync()) {
+        return BoxDecoration(
+          image: DecorationImage(
+            image: FileImage(file),
+            fit: BoxFit.cover,
+          ),
+        );
+      }
+    }
+
+    return const BoxDecoration(
+      gradient: LinearGradient(
+        colors: [Color(0xFF05040A), Color(0xFF151827)],
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+      ),
+    );
+  }
+
+  Future<void> _openGlobalGlassSheet() async {
+    double tempOpacity = _globalGlassOpacity;
+    double tempBlur = _globalGlassBlur;
+
+    final applied = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: const Color(0xFF05040A),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 38,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 12),
+                      decoration: BoxDecoration(
+                        color: Colors.white24,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                    ),
+                    Row(
+                      children: const [
+                        Icon(Icons.blur_on_rounded,
+                            color: Colors.cyanAccent, size: 18),
+                        SizedBox(width: 8),
+                        Text(
+                          'Glass settings',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+
+                    Row(
+                      children: [
+                        const SizedBox(
+                          width: 70,
+                          child: Text(
+                            'Opacity',
+                            style:
+                                TextStyle(color: Colors.white70, fontSize: 12),
+                          ),
+                        ),
+                        Expanded(
+                          child: Slider(
+                            min: 0.04,
+                            max: 0.30,
+                            divisions: 26,
+                            value: tempOpacity.clamp(0.04, 0.30),
+                            label: tempOpacity.toStringAsFixed(2),
+                            onChanged: (v) =>
+                                setModalState(() => tempOpacity = v),
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    Row(
+                      children: [
+                        const SizedBox(
+                          width: 70,
+                          child: Text(
+                            'Blur',
+                            style:
+                                TextStyle(color: Colors.white70, fontSize: 12),
+                          ),
+                        ),
+                        Expanded(
+                          child: Slider(
+                            min: 0,
+                            max: 30,
+                            divisions: 30,
+                            value: tempBlur.clamp(0, 30),
+                            label: tempBlur.toStringAsFixed(0),
+                            onChanged: (v) => setModalState(() => tempBlur = v),
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton.icon(
+                        onPressed: () => Navigator.pop(context, true),
+                        icon: const Icon(Icons.check, size: 16),
+                        label: const Text('Apply'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    if (applied == true) {
+      setState(() {
+        _globalGlassOpacity = tempOpacity;
+        _globalGlassBlur = tempBlur;
+      });
+      await _saveSettings();
     }
   }
 
@@ -96,13 +362,7 @@ class _DashboardPanelState extends State<DashboardPanel> {
         return Scaffold(
           backgroundColor: Colors.transparent,
           body: Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Color(0xFF05040A), Color(0xFF151827)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-            ),
+            decoration: _backgroundDecoration(),
             child: SafeArea(
               child: Padding(
                 padding: EdgeInsets.symmetric(
@@ -111,18 +371,26 @@ class _DashboardPanelState extends State<DashboardPanel> {
                 ),
                 child: Column(
                   children: [
-                    // TOP BAR
+                    // TOP BAR (NOW GLASS)
                     SizedBox(
                       height: topBarHeight,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: const Color(0x660A0A12),
-                          borderRadius:
-                              BorderRadius.circular(topBarHeight / 2),
-                          border: Border.all(color: const Color(0x33FFFFFF)),
-                        ),
+                      child: GlassContainer(
+                        blur: _globalGlassBlur,
+                        opacity: _globalGlassOpacity,
+                        tint: _globalGlassTint,
+                        borderRadius:
+                            BorderRadius.circular(topBarHeight / 2),
                         padding:
                             EdgeInsets.symmetric(horizontal: 14.0 * scale),
+                        borderOpacity: 0.16,
+                        borderWidth: 1,
+                        boxShadow: const [
+                          BoxShadow(
+                            color: Color(0x2A000000),
+                            blurRadius: 14,
+                            offset: Offset(0, 8),
+                          ),
+                        ],
                         child: Row(
                           children: [
                             Icon(Icons.blur_on_rounded,
@@ -148,6 +416,62 @@ class _DashboardPanelState extends State<DashboardPanel> {
                                 fontSize: 11 * scale,
                               ),
                             ),
+                            SizedBox(width: 6 * scale),
+
+                            PopupMenuButton<_SettingsAction>(
+                              tooltip: 'Settings',
+                              padding: EdgeInsets.zero,
+                              offset: Offset(0, topBarHeight + 8),
+                              color: const Color(0xFF0B0B12),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                side: const BorderSide(color: Color(0x33FFFFFF)),
+                              ),
+                              onSelected: (action) async {
+                                switch (action) {
+                                  case _SettingsAction.pickWallpaper:
+                                    await _pickWallpaperFromWindows();
+                                    break;
+                                  case _SettingsAction.resetWallpaper:
+                                    await _resetWallpaper();
+                                    break;
+                                  case _SettingsAction.glassSettings:
+                                    await _openGlobalGlassSheet();
+                                    break;
+                                }
+                              },
+                              itemBuilder: (context) => const [
+                                PopupMenuItem(
+                                  value: _SettingsAction.pickWallpaper,
+                                  child: _MenuRow(
+                                    icon: Icons.wallpaper,
+                                    text: 'Change wallpaper…',
+                                  ),
+                                ),
+                                PopupMenuItem(
+                                  value: _SettingsAction.resetWallpaper,
+                                  child: _MenuRow(
+                                    icon: Icons.refresh_rounded,
+                                    text: 'Reset wallpaper',
+                                  ),
+                                ),
+                                PopupMenuItem(
+                                  value: _SettingsAction.glassSettings,
+                                  child: _MenuRow(
+                                    icon: Icons.blur_on_rounded,
+                                    text: 'Glass settings…',
+                                  ),
+                                ),
+                              ],
+                              child: Padding(
+                                padding: EdgeInsets.all(4 * scale),
+                                child: Icon(
+                                  Icons.settings_rounded,
+                                  size: 16 * scale,
+                                  color: Colors.white70,
+                                ),
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -160,7 +484,8 @@ class _DashboardPanelState extends State<DashboardPanel> {
                       child: ListView.separated(
                         scrollDirection: Axis.horizontal,
                         itemCount: widgetManifest.length,
-                        separatorBuilder: (_, __) => SizedBox(width: 6 * scale),
+                        separatorBuilder: (_, __) =>
+                            SizedBox(width: 6 * scale),
                         itemBuilder: (context, index) {
                           final w = widgetManifest[index];
                           final id = w['id'] as String;
@@ -256,6 +581,29 @@ class _DashboardPanelState extends State<DashboardPanel> {
       initialTop: top,
       initialWidthPx: widthPx,
       initialHeightPx: heightPx,
+      globalBlur: _globalGlassBlur,
+      globalOpacity: _globalGlassOpacity,
+      globalTint: _globalGlassTint,
+    );
+  }
+}
+
+enum _SettingsAction { pickWallpaper, resetWallpaper, glassSettings }
+
+class _MenuRow extends StatelessWidget {
+  final IconData icon;
+  final String text;
+
+  const _MenuRow({required this.icon, required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, size: 16, color: Colors.cyanAccent),
+        const SizedBox(width: 10),
+        Text(text, style: const TextStyle(color: Colors.white)),
+      ],
     );
   }
 }
@@ -277,6 +625,10 @@ class _FreeDragResizeItem extends StatefulWidget {
   final double initialWidthPx;
   final double initialHeightPx;
 
+  final double globalBlur;
+  final double globalOpacity;
+  final Color globalTint;
+
   const _FreeDragResizeItem({
     super.key,
     required this.item,
@@ -290,6 +642,9 @@ class _FreeDragResizeItem extends StatefulWidget {
     required this.initialTop,
     required this.initialWidthPx,
     required this.initialHeightPx,
+    required this.globalBlur,
+    required this.globalOpacity,
+    required this.globalTint,
   });
 
   @override
@@ -297,7 +652,6 @@ class _FreeDragResizeItem extends StatefulWidget {
 }
 
 class _FreeDragResizeItemState extends State<_FreeDragResizeItem> {
-  // live (pixel) rect during interaction
   late double left;
   late double top;
   late double widthPx;
@@ -321,49 +675,37 @@ class _FreeDragResizeItemState extends State<_FreeDragResizeItem> {
   void didUpdateWidget(covariant _FreeDragResizeItem oldWidget) {
     super.didUpdateWidget(oldWidget);
 
-    // If parent updates the grid model (e.g., external load), sync pixels
-    // (but don't fight while user is dragging/resizing).
     if (!isInteracting) {
-      final newLeft = (widget.item.col * widget.cellW)
+      left = (widget.item.col * widget.cellW)
           .clamp(0.0, widget.maxW - widget.cellW);
-      final newTop = (widget.item.row * widget.cellH)
+      top = (widget.item.row * widget.cellH)
           .clamp(0.0, widget.maxH - widget.cellH);
 
-      final newW =
-          (widget.item.colSpan * widget.cellW).clamp(widget.cellW * 2, widget.maxW);
-      final newH =
-          (widget.item.rowSpan * widget.cellH).clamp(widget.cellH * 2, widget.maxH);
-
-      left = newLeft;
-      top = newTop;
-      widthPx = newW;
-      heightPx = newH;
+      widthPx = (widget.item.colSpan * widget.cellW)
+          .clamp(widget.cellW * 2, widget.maxW);
+      heightPx = (widget.item.rowSpan * widget.cellH)
+          .clamp(widget.cellH * 2, widget.maxH);
     }
   }
 
   void _snapToGridAndPersist() {
-    // snap pixels -> grid units
     int col = (left / widget.cellW).round();
     int row = (top / widget.cellH).round();
     int colSpan = (widthPx / widget.cellW).round();
     int rowSpan = (heightPx / widget.cellH).round();
 
-    // enforce minimum size
     colSpan = colSpan.clamp(2, widget.gridColumns) as int;
     rowSpan = rowSpan.clamp(2, widget.gridRows) as int;
 
-    // keep inside grid bounds
     col = col.clamp(0, widget.gridColumns - colSpan) as int;
     row = row.clamp(0, widget.gridRows - rowSpan) as int;
 
-    // persist into the original model
     widget.item
       ..col = col
       ..row = row
       ..colSpan = colSpan
       ..rowSpan = rowSpan;
 
-    // snap pixels exactly to grid
     setState(() {
       left = col * widget.cellW;
       top = row * widget.cellH;
@@ -374,7 +716,15 @@ class _FreeDragResizeItemState extends State<_FreeDragResizeItem> {
 
   @override
   Widget build(BuildContext context) {
-    final child = WidgetFactory.createWidget(widget.item.widgetId);
+    final content = WidgetFactory.createWidget(widget.item.widgetId);
+
+    final glassCard = GlassContainer(
+      blur: widget.globalBlur,
+      opacity: widget.globalOpacity,
+      tint: widget.globalTint,
+      borderRadius: BorderRadius.circular(24),
+      child: content,
+    );
 
     const hitHandleSize = 24.0;
 
@@ -387,7 +737,6 @@ class _FreeDragResizeItemState extends State<_FreeDragResizeItem> {
         behavior: HitTestBehavior.opaque,
         onPanStart: (details) {
           final local = details.localPosition;
-
           final isResize =
               local.dx > (widthPx - hitHandleSize) &&
               local.dy > (heightPx - hitHandleSize);
@@ -402,26 +751,16 @@ class _FreeDragResizeItemState extends State<_FreeDragResizeItem> {
           setState(() {
             if (resizeLastGlobal != null) {
               final delta = details.globalPosition - resizeLastGlobal!;
-
-              // resize freely in pixels
               widthPx = (widthPx + delta.dx)
                   .clamp(widget.cellW * 2, widget.maxW - left);
               heightPx = (heightPx + delta.dy)
                   .clamp(widget.cellH * 2, widget.maxH - top);
-
               resizeLastGlobal = details.globalPosition;
-              return;
-            }
-
-            if (dragLastGlobal != null) {
+            } else if (dragLastGlobal != null) {
               final delta = details.globalPosition - dragLastGlobal!;
-
-              // drag freely in pixels
               left = (left + delta.dx).clamp(0.0, widget.maxW - widthPx);
               top = (top + delta.dy).clamp(0.0, widget.maxH - heightPx);
-
               dragLastGlobal = details.globalPosition;
-              return;
             }
           });
         },
@@ -437,9 +776,7 @@ class _FreeDragResizeItemState extends State<_FreeDragResizeItem> {
         },
         child: Stack(
           children: [
-            Positioned.fill(child: child),
-
-            // resize handle (visual)
+            Positioned.fill(child: glassCard),
             Positioned(
               right: 4,
               bottom: 4,
