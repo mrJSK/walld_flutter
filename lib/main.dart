@@ -58,8 +58,8 @@ class WallDApp extends StatelessWidget {
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF05040A),
       ),
-      home: const DashboardPanel(),
-      //home: const DeveloperDashboardScreen(),
+      //home: const DashboardPanel(),
+      home: const DeveloperDashboardScreen(),
     );
   }
 }
