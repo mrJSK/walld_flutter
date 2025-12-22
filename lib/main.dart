@@ -6,6 +6,7 @@ import 'dart:io' show Platform;
 import 'package:flutter/services.dart';
 
 import 'firebase_options.dart';
+import 'Developer/developer_dashboard_screen.dart';
 import 'dynamic_screen/dashboardpanel.dart';
 
 Future<void> main() async {
@@ -58,6 +59,7 @@ class WallDApp extends StatelessWidget {
         scaffoldBackgroundColor: const Color(0xFF05040A),
       ),
       home: const DashboardPanel(),
+      //home: const DeveloperDashboardScreen(),
     );
   }
 }

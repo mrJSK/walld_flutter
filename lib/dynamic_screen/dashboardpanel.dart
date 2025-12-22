@@ -123,29 +123,30 @@ class _DashboardPanelState extends State<DashboardPanel> {
         colSpan: 10,
         rowSpan: 8,
       ),
+      // IMPORTANT: widgetId must match WidgetFactory ids: createtask, viewassignedtasks, ...
       ScreenGridWidgetSpan(
-        widgetId: 'create_task',
+        widgetId: 'createtask',
         col: 1,
         row: 2,
         colSpan: 10,
         rowSpan: 4,
       ),
       ScreenGridWidgetSpan(
-        widgetId: 'view_assigned_tasks',
+        widgetId: 'viewassignedtasks',
         col: 13,
         row: 2,
         colSpan: 10,
         rowSpan: 4,
       ),
       ScreenGridWidgetSpan(
-        widgetId: 'view_all_tasks',
+        widgetId: 'viewalltasks',
         col: 1,
         row: 8,
         colSpan: 10,
         rowSpan: 4,
       ),
       ScreenGridWidgetSpan(
-        widgetId: 'complete_task',
+        widgetId: 'completetask',
         col: 13,
         row: 8,
         colSpan: 10,
@@ -159,24 +160,33 @@ class _DashboardPanelState extends State<DashboardPanel> {
 
   void _listenAuthState() {
     FirebaseAuth.instance.authStateChanges().listen((user) {
-      if (!mounted) return;
+      debugPrint('[AUTH] authStateChanges -> ${user?.uid}');
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
 
-      if (user == null) {
-        setState(() {
-          _currentUser = null;
-          _allowedWidgetIds = {'login'};
-        });
-      } else {
-        setState(() => _currentUser = user);
-        _loadUserPermissions(user.uid);
-      }
+        if (user == null) {
+          debugPrint('[AUTH] User is null → show login only');
+          setState(() {
+            _currentUser = null;
+            _allowedWidgetIds = {'login'};
+          });
+        } else {
+          debugPrint('[AUTH] User logged in → load permissions');
+          setState(() {
+            _currentUser = user;
+          });
+          _loadUserPermissions(user.uid);
+        }
+      });
     });
   }
 
   Future<void> _loadUserPermissions(String userId) async {
     const tenantId = 'default_tenant';
+    debugPrint('[PERM] Loading permissions for user=$userId');
 
     try {
+      // 1) Load user doc
       final userDoc = await FirebaseFirestore.instance
           .collection('tenants')
           .doc(tenantId)
@@ -185,27 +195,32 @@ class _DashboardPanelState extends State<DashboardPanel> {
           .get();
 
       if (!userDoc.exists) {
+        debugPrint('[PERM] user doc missing → signOut');
         await FirebaseAuth.instance.signOut();
         return;
       }
 
       final data = userDoc.data() as Map<String, dynamic>;
       final designation = data['designation'] as String?;
+      debugPrint('[PERM] designation = $designation');
 
       if (designation == null) {
+        debugPrint('[PERM] designation null → signOut + login only');
         await FirebaseAuth.instance.signOut();
         setState(() => _allowedWidgetIds = {'login'});
         return;
       }
 
+      // 2) Load designation metadata
       final metaDoc = await FirebaseFirestore.instance
           .collection('tenants')
           .doc(tenantId)
           .collection('metadata')
-          .doc('designations.json')
+          .doc('designations')
           .get();
 
       if (!metaDoc.exists) {
+        debugPrint('[PERM] designations.json missing → login only');
         setState(() => _allowedWidgetIds = {'login'});
         return;
       }
@@ -216,32 +231,37 @@ class _DashboardPanelState extends State<DashboardPanel> {
 
       final designationData =
           allDesignations != null ? allDesignations[designation] : null;
+      debugPrint('[PERM] designationData = $designationData');
 
       final List<dynamic> permissionsRaw =
           (designationData?['permissions'] as List<dynamic>?) ?? [];
 
       final permissions =
           permissionsRaw.map((e) => e.toString()).toSet();
+      debugPrint('[PERM] permissions = $permissions');
 
+      // 3) Map permissions → widget ids used in DashboardPanel
       final allowed = <String>{};
 
       if (permissions.contains('create_task')) {
-        allowed.add('create_task');
+        allowed.add('createtask');
       }
       if (permissions.contains('view_assigned_tasks')) {
-        allowed.add('view_assigned_tasks');
+        allowed.add('viewassignedtasks');
       }
       if (permissions.contains('view_all_tasks')) {
-        allowed.add('view_all_tasks');
+        allowed.add('viewalltasks');
       }
       if (permissions.contains('complete_task')) {
-        allowed.add('complete_task');
+        allowed.add('completetask');
       }
 
-      // When logged in, hide login widget.
+      debugPrint('[PERM] allowed widget ids = $allowed');
+
+      // 4) Logged-in view: DO NOT include 'login'
       setState(() => _allowedWidgetIds = allowed);
     } catch (e) {
-      debugPrint('Permission load error: $e');
+      debugPrint('[PERM] Permission load error: $e');
       setState(() => _allowedWidgetIds = {'login'});
     }
   }
@@ -486,6 +506,9 @@ class _DashboardPanelState extends State<DashboardPanel> {
         final visibleItems = _items
             .where((item) => _allowedWidgetIds.contains(item.widgetId))
             .toList();
+
+        debugPrint(
+            '[UI] currentUser=${_currentUser?.uid} allowed=$_allowedWidgetIds visible=${visibleItems.map((e) => e.widgetId).toList()}');
 
         return Scaffold(
           backgroundColor: Colors.transparent,
@@ -933,7 +956,7 @@ class _FreeDragResizeItemState extends State<_FreeDragResizeItem> {
                 width: 14,
                 height: 14,
                 decoration: BoxDecoration(
-                  color: Colors.cyanAccent,
+                  //color: Colors.cyanAccent,
                   borderRadius: BorderRadius.circular(4),
                 ),
               ),
