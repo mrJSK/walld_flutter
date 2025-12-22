@@ -1,3 +1,5 @@
+// lib/Screen/Developer/UserDatabase/userdatabaserepository.dart
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'userdatabasemodel.dart';
@@ -150,7 +152,7 @@ class UserDatabaseRepository {
     );
   }
 
-  /// IMPORT USERS – SKIPS existing Auth accounts instead of failing
+  /// IMPORT USERS – single collection: tenants/{tenantId}/users
   Future<Map<String, dynamic>> importUsers(
     String tenantId,
     List<CSVUserData> users,
@@ -173,7 +175,7 @@ class UserDatabaseRepository {
           );
         }
 
-        // --- NEW: check in Firebase Auth and SKIP if already registered ---
+        // Skip if already registered in Auth
         final methods = await FirebaseAuth.instance
             .fetchSignInMethodsForEmail(user.email.trim());
         if (methods.isNotEmpty) {
@@ -190,28 +192,7 @@ class UserDatabaseRepository {
 
         final userId = userCredential.user!.uid;
 
-        // Node-level user doc
-        await db
-            .collection('tenants/$tenantId/organizations')
-            .doc('hierarchy')
-            .collection('nodes')
-            .doc(user.nodeId)
-            .collection('users')
-            .doc(userId)
-            .set({
-          'profiledata': {
-            'email': user.email,
-            'fullName': user.fullName,
-          },
-          'designation': 'employee',
-          'nodeId': user.nodeId,
-          'level': user.level,
-          'status': 'active',
-          'createdat': FieldValue.serverTimestamp(),
-          'importedFromCSV': true,
-        });
-
-        // Global users collection
+        // SINGLE SOURCE OF TRUTH: tenants/{tenantId}/users/{userId}
         await db
             .collection('tenants/$tenantId/users')
             .doc(userId)
@@ -220,16 +201,17 @@ class UserDatabaseRepository {
             'email': user.email,
             'fullName': user.fullName,
           },
-          'designation': 'employee',
+          'designation': user.designation, // top-level
           'status': 'active',
           'createdat': FieldValue.serverTimestamp(),
-          'nodeId': user.nodeId,
+          'nodeId': user.nodeId,          // top-level
+          'level': user.level,            // top-level
+          'importedFromCSV': true,
         }, SetOptions(merge: true));
 
         successCount++;
       } on FirebaseAuthException catch (e) {
         if (e.code == 'email-already-in-use') {
-          // Extra safety: treat as skipped, not failure
           skippedExistingEmails.add(user.email);
           continue;
         }
@@ -249,22 +231,21 @@ class UserDatabaseRepository {
     };
   }
 
+  /// Load users for a node from tenants/{tenantId}/users
   Future<List<Map<String, dynamic>>> loadUsersByNode(
     String tenantId,
     String nodeId,
   ) async {
     final snap = await db
-        .collection('tenants/$tenantId/organizations')
-        .doc('hierarchy')
-        .collection('nodes')
-        .doc(nodeId)
-        .collection('users')
+        .collection('tenants/$tenantId/users')
+        .where('nodeId', isEqualTo: nodeId)
         .orderBy('createdat', descending: true)
         .get();
 
     return snap.docs.map((d) => {'id': d.id, ...d.data()}).toList();
   }
 
+  /// Load hierarchy nodes with user counts from tenants/{tenantId}/users
   Future<List<Map<String, dynamic>>> loadHierarchyWithUserCounts(
     String tenantId,
   ) async {
@@ -277,10 +258,15 @@ class UserDatabaseRepository {
     List<Map<String, dynamic>> nodesWithCounts = [];
 
     for (final nodeDoc in nodesSnap.docs) {
-      final usersSnap =
-          await nodeDoc.reference.collection('users').count().get();
+      final nodeId = nodeDoc.id;
+      final usersSnap = await db
+          .collection('tenants/$tenantId/users')
+          .where('nodeId', isEqualTo: nodeId)
+          .count()
+          .get();
+
       nodesWithCounts.add({
-        'id': nodeDoc.id,
+        'id': nodeId,
         ...nodeDoc.data(),
         'userCount': usersSnap.count ?? 0,
       });

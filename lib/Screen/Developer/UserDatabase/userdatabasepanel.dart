@@ -1,3 +1,5 @@
+// lib/Screen/Developer/UserDatabase/userdatabasepanel.dart
+
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:csv/csv.dart';
@@ -15,7 +17,7 @@ class UserDatabasePanel extends StatefulWidget {
 class _UserDatabasePanelState extends State<UserDatabasePanel> {
   static const String tenantId = 'default_tenant';
   final UserDatabaseRepository repo = UserDatabaseRepository();
-  
+
   List<Map<String, dynamic>> hierarchyNodes = [];
   String? selectedNodeId;
   List<Map<String, dynamic>> nodeUsers = [];
@@ -251,14 +253,16 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
                 decoration: BoxDecoration(
                   color: const Color(0xFF1A1A28),
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.greenAccent.withOpacity(0.3)),
+                  border:
+                      Border.all(color: Colors.greenAccent.withOpacity(0.3)),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
                       '✓ Total Users: ${users.length}',
-                      style: const TextStyle(color: Colors.white, fontSize: 14),
+                      style:
+                          const TextStyle(color: Colors.white, fontSize: 14),
                     ),
                     const SizedBox(height: 4),
                     Text(
@@ -313,7 +317,9 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
                         child: Text(
                           '• $w',
                           style: const TextStyle(
-                              color: Colors.white70, fontSize: 12),
+                            color: Colors.white70,
+                            fontSize: 12,
+                          ),
                         ),
                       ),
                     ),
@@ -325,7 +331,8 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
           OutlinedButton.icon(
             onPressed: () => Navigator.pop(context),
             icon: const Icon(Icons.cancel, color: Colors.redAccent),
-            label: const Text('Cancel', style: TextStyle(color: Colors.redAccent)),
+            label: const Text('Cancel',
+                style: TextStyle(color: Colors.redAccent)),
             style: OutlinedButton.styleFrom(
               side: const BorderSide(color: Colors.redAccent),
             ),
@@ -370,7 +377,7 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
       status = message;
       statusColor = Colors.redAccent;
     });
-    
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
@@ -420,7 +427,7 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
           ],
         ),
         const SizedBox(height: 16),
-        
+
         // Status bar
         if (status != null)
           Container(
@@ -449,7 +456,7 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
             ),
           ),
         const SizedBox(height: 16),
-        
+
         // Main content
         Expanded(
           child: Row(
@@ -495,7 +502,8 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
                                 ? const Center(
                                     child: Text(
                                       'No nodes found',
-                                      style: TextStyle(color: Colors.white70),
+                                      style:
+                                          TextStyle(color: Colors.white70),
                                     ),
                                   )
                                 : ListView.builder(
@@ -533,7 +541,8 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
                                             fontSize: 11,
                                           ),
                                         ),
-                                        onTap: () => loadNodeUsers(node['id']),
+                                        onTap: () =>
+                                            loadNodeUsers(node['id']),
                                       );
                                     },
                                   ),
@@ -543,7 +552,7 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
                 ),
               ),
               const SizedBox(width: 16),
-              
+
               // Right: Node users
               Expanded(
                 child: Card(
@@ -556,7 +565,10 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
                         child: Text(
                           selectedNodeId == null
                               ? 'Select a node to view users'
-                              : 'Users in ${hierarchyNodes.firstWhere((n) => n['id'] == selectedNodeId, orElse: () => {'name': 'Node'})['name']}',
+                              : 'Users in ${hierarchyNodes.firstWhere(
+                                  (n) => n['id'] == selectedNodeId,
+                                  orElse: () => {'name': 'Node'},
+                                )['name']}',
                           style: const TextStyle(
                             color: Colors.white,
                             fontWeight: FontWeight.bold,
@@ -569,7 +581,8 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
                         child: selectedNodeId == null
                             ? const Center(
                                 child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.center,
                                   children: [
                                     Icon(
                                       Icons.arrow_back,
@@ -579,7 +592,8 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
                                     SizedBox(height: 16),
                                     Text(
                                       'Click a node on the left',
-                                      style: TextStyle(color: Colors.white54),
+                                      style:
+                                          TextStyle(color: Colors.white54),
                                     ),
                                   ],
                                 ),
@@ -594,8 +608,8 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
                                     ? const Center(
                                         child: Text(
                                           'No users in this node',
-                                          style:
-                                              TextStyle(color: Colors.white70),
+                                          style: TextStyle(
+                                              color: Colors.white70),
                                         ),
                                       )
                                     : ListView.separated(
@@ -606,32 +620,65 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
                                         itemBuilder: (context, index) {
                                           final user = nodeUsers[index];
                                           final profile =
-                                              user['profiledata'] as Map? ?? {};
+                                              user['profiledata']
+                                                      as Map? ??
+                                                  {};
+
                                           return ListTile(
                                             leading: CircleAvatar(
-                                              backgroundColor:
-                                                  Colors.cyan.withOpacity(0.2),
+                                              backgroundColor: Colors.cyan
+                                                  .withOpacity(0.2),
                                               child: Text(
-                                                (profile['fullName'] ?? 'U')
+                                                (profile['fullName'] ??
+                                                        'U')
                                                     .toString()[0]
                                                     .toUpperCase(),
                                                 style: const TextStyle(
-                                                    color: Colors.cyan),
+                                                  color: Colors.cyan,
+                                                ),
                                               ),
                                             ),
                                             title: Text(
-                                              profile['fullName'] ?? 'Unknown',
+                                              profile['fullName'] ??
+                                                  'Unknown',
                                               style: const TextStyle(
-                                                  color: Colors.white),
+                                                color: Colors.white,
+                                              ),
                                             ),
-                                            subtitle: Text(
-                                              profile['email'] ?? '',
-                                              style: const TextStyle(
-                                                  color: Colors.white70),
+                                            subtitle: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment
+                                                      .start,
+                                              mainAxisSize:
+                                                  MainAxisSize.min,
+                                              children: [
+                                                if ((user['designation'] ??
+                                                            '')
+                                                        .toString()
+                                                        .isNotEmpty)
+                                                  Text(
+                                                    user['designation'],
+                                                    style:
+                                                        const TextStyle(
+                                                      color:
+                                                          Colors.white70,
+                                                      fontSize: 12,
+                                                    ),
+                                                  ),
+                                                Text(
+                                                  profile['email'] ?? '',
+                                                  style:
+                                                      const TextStyle(
+                                                    color: Colors.white70,
+                                                    fontSize: 12,
+                                                  ),
+                                                ),
+                                              ],
                                             ),
                                             trailing: Container(
                                               padding:
-                                                  const EdgeInsets.symmetric(
+                                                  const EdgeInsets
+                                                      .symmetric(
                                                 horizontal: 8,
                                                 vertical: 4,
                                               ),
@@ -639,12 +686,16 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
                                                 color: Colors.greenAccent
                                                     .withOpacity(0.2),
                                                 borderRadius:
-                                                    BorderRadius.circular(12),
+                                                    BorderRadius.circular(
+                                                        12),
                                               ),
                                               child: Text(
-                                                user['status'] ?? 'active',
-                                                style: const TextStyle(
-                                                  color: Colors.greenAccent,
+                                                user['status'] ??
+                                                    'active',
+                                                style:
+                                                    const TextStyle(
+                                                  color:
+                                                      Colors.greenAccent,
                                                   fontSize: 11,
                                                 ),
                                               ),
@@ -665,7 +716,7 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
   }
 }
 
-// Import progress dialog
+/// Import progress dialog (unchanged from your file)
 class ImportProgressDialog extends StatefulWidget {
   final String tenantId;
   final List<CSVUserData> users;
@@ -761,7 +812,10 @@ class _ImportProgressDialogState extends State<ImportProgressDialog> {
               const SizedBox(height: 8),
               Text(
                 message,
-                style: const TextStyle(color: Colors.white54, fontSize: 12),
+                style: const TextStyle(
+                  color: Colors.white54,
+                  fontSize: 12,
+                ),
               ),
             ] else ...[
               Container(
@@ -805,20 +859,22 @@ class _ImportProgressDialogState extends State<ImportProgressDialog> {
                   child: SingleChildScrollView(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
-                      children: (result!['failedUsers'] as List<String>)
-                          .map(
-                            (e) => Padding(
-                              padding: const EdgeInsets.only(bottom: 4.0),
-                              child: Text(
-                                '• $e',
-                                style: const TextStyle(
-                                  color: Colors.white70,
-                                  fontSize: 11,
-                                ),
+                      children:
+                          (result!['failedUsers'] as List<String>).map(
+                        (e) {
+                          return Padding(
+                            padding:
+                                const EdgeInsets.only(bottom: 4.0),
+                            child: Text(
+                              '• $e',
+                              style: const TextStyle(
+                                color: Colors.white70,
+                                fontSize: 11,
                               ),
                             ),
-                          )
-                          .toList(),
+                          );
+                        },
+                      ).toList(),
                     ),
                   ),
                 ),
