@@ -9,6 +9,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'model/screen_grid.dart';
 import 'widget_factory.dart';
 import 'widget_manifest.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as p;
 
 class GlassContainer extends StatelessWidget {
   final double blur; // sigma
@@ -145,7 +147,8 @@ class _DashboardPanelState extends State<DashboardPanel> {
     _wallpaperPath = prefs.getString(_prefsWallpaperKey);
     _globalGlassOpacity = prefs.getDouble(_prefsGlobalOpacityKey) ?? 0.12;
     _globalGlassBlur = prefs.getDouble(_prefsGlobalBlurKey) ?? 16.0;
-
+    debugPrint('LOADED wallpaper=$_wallpaperPath blur=$_globalGlassBlur opacity=$_globalGlassOpacity');
+    
     if (mounted) setState(() {});
   }
 
@@ -160,6 +163,7 @@ class _DashboardPanelState extends State<DashboardPanel> {
 
     await prefs.setDouble(_prefsGlobalOpacityKey, _globalGlassOpacity);
     await prefs.setDouble(_prefsGlobalBlurKey, _globalGlassBlur);
+    debugPrint('SAVED wallpaper=$_wallpaperPath blur=$_globalGlassBlur opacity=$_globalGlassOpacity');
   }
 
   void toggleWidget(String widgetId) {
@@ -181,18 +185,30 @@ class _DashboardPanelState extends State<DashboardPanel> {
     }
   }
 
-  Future<void> _pickWallpaperFromWindows() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.image,
-      allowMultiple: false,
-    );
+  
+Future<void> _pickWallpaperFromWindows() async {
+  final result = await FilePicker.platform.pickFiles(
+    type: FileType.image,
+    allowMultiple: false,
+  );
+  final pickedPath = result?.files.single.path;
+  if (pickedPath == null) return;
 
-    final path = result?.files.single.path;
-    if (path == null) return;
-
-    setState(() => _wallpaperPath = path);
-    await _saveSettings();
+  // Copy selected image into app storage so it persists
+  final appDir = await getApplicationSupportDirectory();
+  final wpDir = Directory(p.join(appDir.path, 'wallpapers'));
+  if (!await wpDir.exists()) {
+    await wpDir.create(recursive: true);
   }
+
+  final ext = p.extension(pickedPath).isNotEmpty ? p.extension(pickedPath) : '.jpg';
+  final cachedPath = p.join(wpDir.path, 'current_wallpaper$ext');
+
+  await File(pickedPath).copy(cachedPath);
+
+  setState(() => _wallpaperPath = cachedPath);
+  await _saveSettings();
+}
 
   Future<void> _resetWallpaper() async {
     setState(() => _wallpaperPath = null);

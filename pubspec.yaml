@@ -19,6 +19,8 @@ dependencies:
   screen_retriever: ^0.1.9  # or latest compatible
   file_picker: ^6.1.1
   csv: ^5.1.1
+  path_provider: ^2.1.4
+  path: ^1.9.0
   
 dev_dependencies:
   flutter_test:
