@@ -88,6 +88,7 @@ class _DashboardPanelState extends State<DashboardPanel> {
   static const _prefsWallpaperKey = 'wallpaper_path';
   static const _prefsGlobalOpacityKey = 'global_widget_opacity';
   static const _prefsGlobalBlurKey = 'global_widget_blur';
+  static const _prefsLayoutKey = 'screen_grid_layout'; 
 
   // Global screen grid
   final ScreenGridConfig _grid = const ScreenGridConfig(
@@ -132,21 +133,21 @@ class _DashboardPanelState extends State<DashboardPanel> {
         rowSpan: 4,
       ),
       ScreenGridWidgetSpan(
-        widgetId: 'viewassignedtasks',
+        widgetId: 'view_assigned_tasks',
         col: 13,
         row: 2,
         colSpan: 10,
         rowSpan: 4,
       ),
       ScreenGridWidgetSpan(
-        widgetId: 'viewalltasks',
+        widgetId: 'view_all_tasks',
         col: 1,
         row: 8,
         colSpan: 10,
         rowSpan: 4,
       ),
       ScreenGridWidgetSpan(
-        widgetId: 'completetask',
+        widgetId: 'complete_task',
         col: 13,
         row: 8,
         colSpan: 10,
@@ -882,85 +883,97 @@ class _FreeDragResizeItemState extends State<_FreeDragResizeItem> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    final content = WidgetFactory.createWidget(widget.item.widgetId);
+Widget build(BuildContext context) {
+  final content = WidgetFactory.createWidget(widget.item.widgetId);
 
-    final glassCard = GlassContainer(
-      blur: widget.globalBlur,
-      opacity: widget.globalOpacity,
-      tint: widget.globalTint,
-      borderRadius: BorderRadius.circular(24),
-      child: content,
-    );
+  final glassCard = GlassContainer(
+    blur: widget.globalBlur,
+    opacity: widget.globalOpacity,
+    tint: widget.globalTint,
+    borderRadius: BorderRadius.circular(24),
+    child: content,
+  );
 
-    const hitHandleSize = 24.0;
+  const hitHandleSize = 24.0;
 
-    return Positioned(
-      left: left.clamp(0.0, widget.maxW - widthPx),
-      top: top.clamp(0.0, widget.maxH - heightPx),
-      width: widthPx.clamp(widget.cellW * 2, widget.maxW),
-      height: heightPx.clamp(widget.cellH * 2, widget.maxH),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onPanStart: (details) {
-          final local = details.localPosition;
-          final isResize =
-              local.dx > (widthPx - hitHandleSize) &&
-                  local.dy > (heightPx - hitHandleSize);
+  return Positioned(
+    left: left.clamp(0.0, widget.maxW - widthPx),
+    top: top.clamp(0.0, widget.maxH - heightPx),
+    width: widthPx.clamp(widget.cellW * 2, widget.maxW),
+    height: heightPx.clamp(widget.cellH * 2, widget.maxH),
+    child: GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onPanStart: (details) {
+        final local = details.localPosition;
+        final isResize =
+            local.dx > (widthPx - hitHandleSize) &&
+            local.dy > (heightPx - hitHandleSize);
 
-          if (isResize) {
+        if (isResize) {
+          resizeLastGlobal = details.globalPosition;
+        } else {
+          dragLastGlobal = details.globalPosition;
+        }
+      },
+      onPanUpdate: (details) {
+        setState(() {
+          if (resizeLastGlobal != null) {
+            final delta = details.globalPosition - resizeLastGlobal!;
+            widthPx = (widthPx + delta.dx)
+                .clamp(widget.cellW * 2, widget.maxW - left);
+            heightPx = (heightPx + delta.dy)
+                .clamp(widget.cellH * 2, widget.maxH - top);
             resizeLastGlobal = details.globalPosition;
-          } else {
+          } else if (dragLastGlobal != null) {
+            final delta = details.globalPosition - dragLastGlobal!;
+            left = (left + delta.dx)
+                .clamp(0.0, widget.maxW - widthPx);
+            top = (top + delta.dy)
+                .clamp(0.0, widget.maxH - heightPx);
             dragLastGlobal = details.globalPosition;
           }
-        },
-        onPanUpdate: (details) {
-          setState(() {
-            if (resizeLastGlobal != null) {
-              final delta = details.globalPosition - resizeLastGlobal!;
-              widthPx = (widthPx + delta.dx)
-                  .clamp(widget.cellW * 2, widget.maxW - left);
-              heightPx = (heightPx + delta.dy)
-                  .clamp(widget.cellH * 2, widget.maxH - top);
-              resizeLastGlobal = details.globalPosition;
-            } else if (dragLastGlobal != null) {
-              final delta = details.globalPosition - dragLastGlobal!;
-              left = (left + delta.dx)
-                  .clamp(0.0, widget.maxW - widthPx);
-              top =
-                  (top + delta.dy).clamp(0.0, widget.maxH - heightPx);
-              dragLastGlobal = details.globalPosition;
-            }
-          });
-        },
-        onPanEnd: (_) {
-          dragLastGlobal = null;
-          resizeLastGlobal = null;
-          _snapToGridAndPersist();
-        },
-        onPanCancel: () {
-          dragLastGlobal = null;
-          resizeLastGlobal = null;
-          _snapToGridAndPersist();
-        },
-        child: Stack(
-          children: [
-            Positioned.fill(child: glassCard),
-            Positioned(
-              right: 4,
-              bottom: 4,
+        });
+      },
+      onPanEnd: (_) {
+        dragLastGlobal = null;
+        resizeLastGlobal = null;
+        _snapToGridAndPersist();
+      },
+      onPanCancel: () {
+        dragLastGlobal = null;
+        resizeLastGlobal = null;
+        _snapToGridAndPersist();
+      },
+      child: Stack(
+        children: [
+          Positioned.fill(child: glassCard),
+
+          // RESIZE HANDLE WITH RESIZE CURSOR
+          Positioned(
+            right: 4,
+            bottom: 4,
+            child: MouseRegion(
+              cursor: SystemMouseCursors.resizeDownRight,
               child: Container(
-                width: 14,
-                height: 14,
-                decoration: BoxDecoration(
-                  //color: Colors.cyanAccent,
-                  borderRadius: BorderRadius.circular(4),
+                width: hitHandleSize,
+                height: hitHandleSize,
+                alignment: Alignment.bottomRight,
+                color: Colors.transparent, // keeps hit-test area
+                child: Container(
+                  width: 14,
+                  height: 14,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(4),
+                    // color: Colors.cyanAccent, // uncomment if you want visible handle
+                  ),
                 ),
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
-    );
-  }
+    ),
+  );
+}
+
 }

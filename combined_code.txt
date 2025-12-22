@@ -161,6 +161,7 @@ import 'dart:io' show Platform;
 import 'package:flutter/services.dart';
 
 import 'firebase_options.dart';
+import 'Developer/developer_dashboard_screen.dart';
 import 'dynamic_screen/dashboardpanel.dart';
 
 Future<void> main() async {
@@ -213,6 +214,7 @@ class WallDApp extends StatelessWidget {
         scaffoldBackgroundColor: const Color(0xFF05040A),
       ),
       home: const DashboardPanel(),
+      //home: const DeveloperDashboardScreen(),
     );
   }
 }
@@ -5137,6 +5139,7 @@ class _DashboardPanelState extends State<DashboardPanel> {
         colSpan: 10,
         rowSpan: 8,
       ),
+      // IMPORTANT: widgetId must match WidgetFactory ids: createtask, viewassignedtasks, ...
       ScreenGridWidgetSpan(
         widgetId: 'create_task',
         col: 1,
@@ -5145,21 +5148,21 @@ class _DashboardPanelState extends State<DashboardPanel> {
         rowSpan: 4,
       ),
       ScreenGridWidgetSpan(
-        widgetId: 'view_assigned_tasks',
+        widgetId: 'viewassignedtasks',
         col: 13,
         row: 2,
         colSpan: 10,
         rowSpan: 4,
       ),
       ScreenGridWidgetSpan(
-        widgetId: 'view_all_tasks',
+        widgetId: 'viewalltasks',
         col: 1,
         row: 8,
         colSpan: 10,
         rowSpan: 4,
       ),
       ScreenGridWidgetSpan(
-        widgetId: 'complete_task',
+        widgetId: 'completetask',
         col: 13,
         row: 8,
         colSpan: 10,
@@ -5173,24 +5176,33 @@ class _DashboardPanelState extends State<DashboardPanel> {
 
   void _listenAuthState() {
     FirebaseAuth.instance.authStateChanges().listen((user) {
-      if (!mounted) return;
+      debugPrint('[AUTH] authStateChanges -> ${user?.uid}');
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
 
-      if (user == null) {
-        setState(() {
-          _currentUser = null;
-          _allowedWidgetIds = {'login'};
-        });
-      } else {
-        setState(() => _currentUser = user);
-        _loadUserPermissions(user.uid);
-      }
+        if (user == null) {
+          debugPrint('[AUTH] User is null → show login only');
+          setState(() {
+            _currentUser = null;
+            _allowedWidgetIds = {'login'};
+          });
+        } else {
+          debugPrint('[AUTH] User logged in → load permissions');
+          setState(() {
+            _currentUser = user;
+          });
+          _loadUserPermissions(user.uid);
+        }
+      });
     });
   }
 
   Future<void> _loadUserPermissions(String userId) async {
     const tenantId = 'default_tenant';
+    debugPrint('[PERM] Loading permissions for user=$userId');
 
     try {
+      // 1) Load user doc
       final userDoc = await FirebaseFirestore.instance
           .collection('tenants')
           .doc(tenantId)
@@ -5199,27 +5211,32 @@ class _DashboardPanelState extends State<DashboardPanel> {
           .get();
 
       if (!userDoc.exists) {
+        debugPrint('[PERM] user doc missing → signOut');
         await FirebaseAuth.instance.signOut();
         return;
       }
 
       final data = userDoc.data() as Map<String, dynamic>;
       final designation = data['designation'] as String?;
+      debugPrint('[PERM] designation = $designation');
 
       if (designation == null) {
+        debugPrint('[PERM] designation null → signOut + login only');
         await FirebaseAuth.instance.signOut();
         setState(() => _allowedWidgetIds = {'login'});
         return;
       }
 
+      // 2) Load designation metadata
       final metaDoc = await FirebaseFirestore.instance
           .collection('tenants')
           .doc(tenantId)
           .collection('metadata')
-          .doc('designations.json')
+          .doc('designations')
           .get();
 
       if (!metaDoc.exists) {
+        debugPrint('[PERM] designations.json missing → login only');
         setState(() => _allowedWidgetIds = {'login'});
         return;
       }
@@ -5230,13 +5247,16 @@ class _DashboardPanelState extends State<DashboardPanel> {
 
       final designationData =
           allDesignations != null ? allDesignations[designation] : null;
+      debugPrint('[PERM] designationData = $designationData');
 
       final List<dynamic> permissionsRaw =
           (designationData?['permissions'] as List<dynamic>?) ?? [];
 
       final permissions =
           permissionsRaw.map((e) => e.toString()).toSet();
+      debugPrint('[PERM] permissions = $permissions');
 
+      // 3) Map permissions → widget ids used in DashboardPanel
       final allowed = <String>{};
 
       if (permissions.contains('create_task')) {
@@ -5252,10 +5272,12 @@ class _DashboardPanelState extends State<DashboardPanel> {
         allowed.add('complete_task');
       }
 
-      // When logged in, hide login widget.
+      debugPrint('[PERM] allowed widget ids = $allowed');
+
+      // 4) Logged-in view: DO NOT include 'login'
       setState(() => _allowedWidgetIds = allowed);
     } catch (e) {
-      debugPrint('Permission load error: $e');
+      debugPrint('[PERM] Permission load error: $e');
       setState(() => _allowedWidgetIds = {'login'});
     }
   }
@@ -5501,6 +5523,9 @@ class _DashboardPanelState extends State<DashboardPanel> {
             .where((item) => _allowedWidgetIds.contains(item.widgetId))
             .toList();
 
+        debugPrint(
+            '[UI] currentUser=${_currentUser?.uid} allowed=$_allowedWidgetIds visible=${visibleItems.map((e) => e.widgetId).toList()}');
+
         return Scaffold(
           backgroundColor: Colors.transparent,
           body: Container(
@@ -5630,55 +5655,52 @@ class _DashboardPanelState extends State<DashboardPanel> {
                     ),
                     SizedBox(height: mainSpacing),
 
-                    // TOGGLE CHIPS (hide when not logged in)
+                    // STATIC CHIPS (cannot hide widgets)
                     if (_currentUser != null) ...[
                       SizedBox(
                         height: chipHeight,
                         child: ListView.separated(
                           scrollDirection: Axis.horizontal,
                           itemCount: widgetManifest.length,
-                          separatorBuilder: (_, __) =>
-                              SizedBox(width: 6 * scale),
+                          separatorBuilder: (_, __) => SizedBox(width: 6 * scale),
                           itemBuilder: (context, index) {
                             final w = widgetManifest[index];
                             final id = w['id'] as String;
                             final name = w['name'] as String;
-                            final selected =
-                                _items.any((i) => i.widgetId == id);
 
-                            // login widget should not be toggled when logged in
                             if (id == 'login') {
                               return const SizedBox.shrink();
                             }
 
-                            return ChoiceChip(
-                              label: Text(name),
-                              selected: selected,
-                              onSelected: (_) => toggleWidget(id),
-                              selectedColor: Colors.cyan.withOpacity(0.15),
-                              labelStyle: TextStyle(
-                                color: selected
-                                    ? Colors.cyanAccent
-                                    : Colors.white70,
-                                fontWeight: selected
-                                    ? FontWeight.w600
-                                    : FontWeight.w400,
-                                fontSize: 11 * scale,
+                            return Container(
+                              padding: EdgeInsets.symmetric(
+                                horizontal: 14 * scale,
                               ),
-                              shape: StadiumBorder(
-                                side: BorderSide(
-                                  color: selected
-                                      ? Colors.cyanAccent.withOpacity(0.6)
-                                      : Colors.white24,
+                              decoration: ShapeDecoration(
+                                color: Colors.cyan.withOpacity(0.15),
+                                shape: StadiumBorder(
+                                  side: BorderSide(
+                                    color: Colors.cyanAccent.withOpacity(0.6),
+                                  ),
                                 ),
                               ),
-                              backgroundColor: const Color(0xFF11111C),
+                              alignment: Alignment.center,
+                              child: Text(
+                                name,
+                                style: TextStyle(
+                                  color: Colors.cyanAccent,
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 11 * scale,
+                                ),
+                              ),
                             );
                           },
                         ),
                       ),
                       SizedBox(height: mainSpacing),
                     ],
+
+
 
                     // MAIN AREA
                     Expanded(
@@ -5876,87 +5898,99 @@ class _FreeDragResizeItemState extends State<_FreeDragResizeItem> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    final content = WidgetFactory.createWidget(widget.item.widgetId);
+Widget build(BuildContext context) {
+  final content = WidgetFactory.createWidget(widget.item.widgetId);
 
-    final glassCard = GlassContainer(
-      blur: widget.globalBlur,
-      opacity: widget.globalOpacity,
-      tint: widget.globalTint,
-      borderRadius: BorderRadius.circular(24),
-      child: content,
-    );
+  final glassCard = GlassContainer(
+    blur: widget.globalBlur,
+    opacity: widget.globalOpacity,
+    tint: widget.globalTint,
+    borderRadius: BorderRadius.circular(24),
+    child: content,
+  );
 
-    const hitHandleSize = 24.0;
+  const hitHandleSize = 24.0;
 
-    return Positioned(
-      left: left.clamp(0.0, widget.maxW - widthPx),
-      top: top.clamp(0.0, widget.maxH - heightPx),
-      width: widthPx.clamp(widget.cellW * 2, widget.maxW),
-      height: heightPx.clamp(widget.cellH * 2, widget.maxH),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onPanStart: (details) {
-          final local = details.localPosition;
-          final isResize =
-              local.dx > (widthPx - hitHandleSize) &&
-                  local.dy > (heightPx - hitHandleSize);
+  return Positioned(
+    left: left.clamp(0.0, widget.maxW - widthPx),
+    top: top.clamp(0.0, widget.maxH - heightPx),
+    width: widthPx.clamp(widget.cellW * 2, widget.maxW),
+    height: heightPx.clamp(widget.cellH * 2, widget.maxH),
+    child: GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onPanStart: (details) {
+        final local = details.localPosition;
+        final isResize =
+            local.dx > (widthPx - hitHandleSize) &&
+            local.dy > (heightPx - hitHandleSize);
 
-          if (isResize) {
+        if (isResize) {
+          resizeLastGlobal = details.globalPosition;
+        } else {
+          dragLastGlobal = details.globalPosition;
+        }
+      },
+      onPanUpdate: (details) {
+        setState(() {
+          if (resizeLastGlobal != null) {
+            final delta = details.globalPosition - resizeLastGlobal!;
+            widthPx = (widthPx + delta.dx)
+                .clamp(widget.cellW * 2, widget.maxW - left);
+            heightPx = (heightPx + delta.dy)
+                .clamp(widget.cellH * 2, widget.maxH - top);
             resizeLastGlobal = details.globalPosition;
-          } else {
+          } else if (dragLastGlobal != null) {
+            final delta = details.globalPosition - dragLastGlobal!;
+            left = (left + delta.dx)
+                .clamp(0.0, widget.maxW - widthPx);
+            top = (top + delta.dy)
+                .clamp(0.0, widget.maxH - heightPx);
             dragLastGlobal = details.globalPosition;
           }
-        },
-        onPanUpdate: (details) {
-          setState(() {
-            if (resizeLastGlobal != null) {
-              final delta = details.globalPosition - resizeLastGlobal!;
-              widthPx = (widthPx + delta.dx)
-                  .clamp(widget.cellW * 2, widget.maxW - left);
-              heightPx = (heightPx + delta.dy)
-                  .clamp(widget.cellH * 2, widget.maxH - top);
-              resizeLastGlobal = details.globalPosition;
-            } else if (dragLastGlobal != null) {
-              final delta = details.globalPosition - dragLastGlobal!;
-              left = (left + delta.dx)
-                  .clamp(0.0, widget.maxW - widthPx);
-              top =
-                  (top + delta.dy).clamp(0.0, widget.maxH - heightPx);
-              dragLastGlobal = details.globalPosition;
-            }
-          });
-        },
-        onPanEnd: (_) {
-          dragLastGlobal = null;
-          resizeLastGlobal = null;
-          _snapToGridAndPersist();
-        },
-        onPanCancel: () {
-          dragLastGlobal = null;
-          resizeLastGlobal = null;
-          _snapToGridAndPersist();
-        },
-        child: Stack(
-          children: [
-            Positioned.fill(child: glassCard),
-            Positioned(
-              right: 4,
-              bottom: 4,
+        });
+      },
+      onPanEnd: (_) {
+        dragLastGlobal = null;
+        resizeLastGlobal = null;
+        _snapToGridAndPersist();
+      },
+      onPanCancel: () {
+        dragLastGlobal = null;
+        resizeLastGlobal = null;
+        _snapToGridAndPersist();
+      },
+      child: Stack(
+        children: [
+          Positioned.fill(child: glassCard),
+
+          // RESIZE HANDLE WITH RESIZE CURSOR
+          Positioned(
+            right: 4,
+            bottom: 4,
+            child: MouseRegion(
+              cursor: SystemMouseCursors.resizeDownRight,
               child: Container(
-                width: 14,
-                height: 14,
-                decoration: BoxDecoration(
-                  color: Colors.cyanAccent,
-                  borderRadius: BorderRadius.circular(4),
+                width: hitHandleSize,
+                height: hitHandleSize,
+                alignment: Alignment.bottomRight,
+                color: Colors.transparent, // keeps hit-test area
+                child: Container(
+                  width: 14,
+                  height: 14,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(4),
+                    // color: Colors.cyanAccent, // uncomment if you want visible handle
+                  ),
                 ),
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
-    );
-  }
+    ),
+  );
+}
+
 }
 
 ================================================================================
@@ -6325,29 +6359,35 @@ class _LoginWidgetState extends State<LoginWidget> {
   String? _errorMessage;
 
   Future<void> _signIn() async {
-    if (!_formKey.currentState!.validate()) return;
+  if (!_formKey.currentState!.validate()) return;
 
+  setState(() {
+    _isLoading = true;
+    _errorMessage = null;
+  });
+
+  try {
+    // Store result in a variable
+    final UserCredential cred =
+        await FirebaseAuth.instance.signInWithEmailAndPassword(
+      email: _emailController.text.trim(),
+      password: _passwordController.text.trim(),
+    );
+
+    debugPrint('Signed in as ${cred.user?.uid}');
+    // DashboardPanel listens to authStateChanges and will react.
+  } on FirebaseAuthException catch (e) {
+    debugPrint('Sign-in failed: ${e.code}');
     setState(() {
-      _isLoading = true;
-      _errorMessage = null;
+      _errorMessage = _getErrorMessage(e.code);
     });
-
-    try {
-      await FirebaseAuth.instance.signInWithEmailAndPassword(
-        email: _emailController.text.trim(),
-        password: _passwordController.text.trim(),
-      );
-      // DashboardPanel listens to authStateChanges and will react.
-    } on FirebaseAuthException catch (e) {
-      setState(() {
-        _errorMessage = _getErrorMessage(e.code);
-      });
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+  } finally {
+    if (mounted) {
+      setState(() => _isLoading = false);
     }
   }
+}
+
 
   String _getErrorMessage(String code) {
     switch (code) {
