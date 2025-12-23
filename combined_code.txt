@@ -5,7 +5,8 @@ PROJECT FILE STRUCTURE
 Root: lib (lib)
 ├── core/
 │   ├── app_colors.dart
-│   └── glass_container.dart
+│   ├── glass_container.dart
+│   └── wallpaper_service.dart
 ├── Developer/
 │   ├── DynamicForms/
 │   │   ├── dynamic_forms_panel.dart
@@ -46,7 +47,13 @@ Root: lib (lib)
 │   │   ├── create_task_widget.dart
 │   │   ├── login_widget.dart
 │   │   ├── view_all_tasks_widget.dart
-│   │   └── view_assigned_tasks_widget.dart
+│   │   ├── view_assigned_tasks_widget.dart
+│   │   └── widgets.dart
+│   ├── dashboard_drawer.dart
+│   ├── dashboard_grid.dart
+│   ├── dashboard_layout_persistence.dart
+│   ├── dashboard_permissions.dart
+│   ├── dashboard_topbar.dart
 │   ├── dashboardpanel.dart
 │   ├── widget_factory.dart
 │   ├── widget_manifest.dart
@@ -316,6 +323,139 @@ class GlassContainer extends StatelessWidget {
           ),
           child: Padding(padding: padding, child: child),
         ),
+      ),
+    );
+  }
+}
+
+================================================================================
+
+// File: lib\core\wallpaper_service.dart
+import 'dart:io';
+import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:path/path.dart' as p;
+
+/// Singleton service for managing app-wide wallpaper and glass settings
+class WallpaperService extends ChangeNotifier {
+  static final WallpaperService instance = WallpaperService._();
+  WallpaperService._();
+
+  // Keys for SharedPreferences
+  static const _prefsWallpaperKey = 'wallpaper_path';
+  static const _prefsGlobalOpacityKey = 'global_widget_opacity';
+  static const _prefsGlobalBlurKey = 'global_widget_blur';
+
+  // State
+  String? wallpaperPath;
+  double globalGlassOpacity = 0.12;
+  double globalGlassBlur = 16.0;
+
+  bool _isLoaded = false;
+
+  /// Load settings from SharedPreferences
+  Future<void> loadSettings() async {
+    if (_isLoaded) return; // Load only once
+    
+    final prefs = await SharedPreferences.getInstance();
+    wallpaperPath = prefs.getString(_prefsWallpaperKey);
+    globalGlassOpacity = prefs.getDouble(_prefsGlobalOpacityKey) ?? 0.12;
+    globalGlassBlur = prefs.getDouble(_prefsGlobalBlurKey) ?? 16.0;
+    
+    _isLoaded = true;
+    debugPrint('[WallpaperService] LOADED: wallpaper=$wallpaperPath blur=$globalGlassBlur opacity=$globalGlassOpacity');
+    notifyListeners();
+  }
+
+  /// Save current settings to SharedPreferences
+  Future<void> saveSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    
+    if (wallpaperPath != null) {
+      await prefs.setString(_prefsWallpaperKey, wallpaperPath!);
+    } else {
+      await prefs.remove(_prefsWallpaperKey);
+    }
+    
+    await prefs.setDouble(_prefsGlobalOpacityKey, globalGlassOpacity);
+    await prefs.setDouble(_prefsGlobalBlurKey, globalGlassBlur);
+    
+    debugPrint('[WallpaperService] SAVED: wallpaper=$wallpaperPath blur=$globalGlassBlur opacity=$globalGlassOpacity');
+    notifyListeners();
+  }
+
+  /// Pick wallpaper from file system (Windows/Desktop)
+  Future<void> pickWallpaper() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      allowMultiple: false,
+    );
+
+    final pickedPath = result?.files.single.path;
+    if (pickedPath == null) return;
+
+    // Copy to app support directory
+    final appDir = await getApplicationSupportDirectory();
+    final wpDir = Directory(p.join(appDir.path, 'wallpapers'));
+    if (!await wpDir.exists()) {
+      await wpDir.create(recursive: true);
+    }
+
+    final ext = p.extension(pickedPath).isNotEmpty 
+        ? p.extension(pickedPath) 
+        : '.jpg';
+    final cachedPath = p.join(wpDir.path, 'current_wallpaper$ext');
+
+    await File(pickedPath).copy(cachedPath);
+
+    wallpaperPath = cachedPath;
+    await saveSettings();
+  }
+
+  /// Reset wallpaper to default gradient
+  Future<void> resetWallpaper() async {
+    wallpaperPath = null;
+    await saveSettings();
+  }
+
+  /// Update glass blur
+  void setGlassBlur(double blur) {
+    globalGlassBlur = blur.clamp(0.0, 40.0);
+    notifyListeners();
+  }
+
+  /// Update glass opacity
+  void setGlassOpacity(double opacity) {
+    globalGlassOpacity = opacity.clamp(0.02, 0.40);
+    notifyListeners();
+  }
+
+  /// Get background decoration (wallpaper or gradient)
+  BoxDecoration get backgroundDecoration {
+    final path = wallpaperPath;
+    if (path != null) {
+      final file = File(path);
+      if (file.existsSync()) {
+        return BoxDecoration(
+          image: DecorationImage(
+            image: FileImage(file),
+            fit: BoxFit.cover,
+          ),
+        );
+      }
+    }
+
+    // Default gradient
+    return const BoxDecoration(
+      gradient: LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [
+          Color(0xFF050716),
+          Color(0xFF020308),
+        ],
       ),
     );
   }
@@ -5095,87 +5235,20 @@ class UserDatabaseRepository {
 ================================================================================
 
 // File: lib\dynamic_screen\dashboardpanel.dart
-// lib/dynamic_screen/dashboardpanel.dart
-import 'dart:convert';
-import 'dart:io';
-import 'dart:ui';
+import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+
+import '../core/wallpaper_service.dart';
 import '../workspace/workspace_controller.dart';
 import '../workspace/workspace_switcher.dart';
 
-
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:file_picker/file_picker.dart';
-import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:path/path.dart' as p;
-
+import 'dashboard_layout_persistence.dart';
+import 'dashboard_permissions.dart';
 import 'model/screen_grid.dart';
-import 'widget_factory.dart';
-import 'widget_manifest.dart';
-
-class GlassContainer extends StatelessWidget {
-  final double blur; // sigma
-  final double opacity; // 0..1
-  final Color tint;
-  final BorderRadius borderRadius;
-  final EdgeInsetsGeometry padding;
-  final Widget child;
-
-  // Visual tuning
-  final double borderOpacity;
-  final double borderWidth;
-  final List<BoxShadow> boxShadow;
-
-  const GlassContainer({
-    super.key,
-    required this.blur,
-    required this.opacity,
-    required this.tint,
-    required this.borderRadius,
-    required this.child,
-    this.padding = EdgeInsets.zero,
-    this.borderOpacity = 0.18,
-    this.borderWidth = 1,
-    this.boxShadow = const [
-      BoxShadow(
-        color: Color(0x40000000),
-        blurRadius: 18,
-        offset: Offset(0, 10),
-      ),
-    ],
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final blurSigma = blur.clamp(0.0, 30.0);
-    final a = opacity.clamp(0.0, 1.0);
-    final fill = tint.withOpacity(a);
-
-    return ClipRRect(
-      borderRadius: borderRadius,
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: blurSigma, sigmaY: blurSigma),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: fill,
-            borderRadius: borderRadius,
-            border: Border.all(
-              color: Colors.white.withOpacity(borderOpacity),
-              width: borderWidth,
-            ),
-            boxShadow: boxShadow,
-          ),
-          child: Padding(
-            padding: padding,
-            child: child,
-          ),
-        ),
-      ),
-    );
-  }
-}
+import 'model/floating_widget.dart';
+import 'dashboard_grid.dart';
+import 'dashboard_topbar.dart';
+import 'dashboard_drawer.dart';
 
 class DashboardPanel extends StatefulWidget {
   final WorkspaceController? workspaceController;
@@ -5183,49 +5256,111 @@ class DashboardPanel extends StatefulWidget {
   const DashboardPanel({super.key, this.workspaceController});
 
   @override
-  State<DashboardPanel> createState() => _DashboardPanelState();
+  State<DashboardPanel> createState() => DashboardPanelState();
 }
 
-class _DashboardPanelState extends State<DashboardPanel> {
-  // Persisted keys
-  static const _prefsWallpaperKey = 'wallpaper_path';
-  static const _prefsGlobalOpacityKey = 'global_widget_opacity';
-  static const _prefsGlobalBlurKey = 'global_widget_blur';
-  static const _prefsLayoutKey = 'screen_grid_layout';
+class DashboardPanelState extends State<DashboardPanel> {
+  // Layout
+  final ScreenGridConfig grid = const ScreenGridConfig(columns: 24, rows: 14);
+  late List<ScreenGridWidgetSpan> items;
 
-  // Global screen grid
-  final ScreenGridConfig _grid = const ScreenGridConfig(
-    columns: 24,
-    rows: 14,
-  );
+  // Auth / permissions
+  User? currentUser;
+  Set<String> allowedWidgetIds = {'login'};
 
-  late List<ScreenGridWidgetSpan> _items;
-
-  // null => use default gradient
-  String? _wallpaperPath;
-
-  // Global "glass" settings (applied to ALL widgets + top bar)
-  double _globalGlassOpacity = 0.12; // 0..1 (glass tint strength)
-  double _globalGlassBlur = 16.0; // 0..30 (sigma)
-  final Color _globalGlassTint =
-      const Color(0xFFFFFFFF); // white tint => macOS-like
-
-  // Auth + permissions
-  User? _currentUser;
-  Set<String> _allowedWidgetIds = {'login'};
+  // Layout persistence key
+  static const String prefsLayoutKey = 'screen_grid_layout';
 
   @override
   void initState() {
     super.initState();
-
-    _items = _defaultItems(); // start with defaults
-    _loadSettings();
-    _loadLayout(); // load saved layout if any
-    _listenAuthState();
+    items = defaultItems();
+    _initWallpaperService();
+    loadLayout();
+    listenAuthState();
   }
 
-  // default layout used on first run / reset
-  List<ScreenGridWidgetSpan> _defaultItems() {
+  Future<void> _initWallpaperService() async {
+    await WallpaperService.instance.loadSettings();
+    WallpaperService.instance.addListener(_onWallpaperChanged);
+    if (mounted) setState(() {});
+  }
+
+  void _onWallpaperChanged() {
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  @override
+  void dispose() {
+    WallpaperService.instance.removeListener(_onWallpaperChanged);
+    super.dispose();
+  }
+
+  // ---------- AUTH & PERMISSIONS ----------
+
+  void listenAuthState() {
+    FirebaseAuth.instance.authStateChanges().listen((user) {
+      currentUser = user;
+      if (!mounted) return;
+
+      if (user == null) {
+        setState(() {
+          allowedWidgetIds = {'login'};
+        });
+      } else {
+        // Start with all task widgets allowed; will be refined by metadata
+        setState(() {
+          allowedWidgetIds = {
+            'createtask',
+            'viewassignedtasks',
+            'viewalltasks',
+            'completetask',
+          };
+        });
+        loadUserPermissions(user.uid);
+      }
+    });
+  }
+
+  Future<void> loadUserPermissions(String userId) async {
+    await DashboardPermissions.loadUserPermissions(
+      context: context,
+      userId: userId,
+      onAllowedWidgetIds: (ids) {
+        if (!mounted) return;
+        setState(() {
+          allowedWidgetIds = ids;
+        });
+      },
+    );
+  }
+
+  Future<void> signOut() async {
+    await FirebaseAuth.instance.signOut();
+  }
+
+  // ---------- LAYOUT PERSISTENCE ----------
+
+  Future<void> loadLayout() async {
+    await DashboardLayoutPersistence.loadLayout(
+      prefsKey: prefsLayoutKey,
+      onLoaded: (loaded) {
+        if (!mounted) return;
+        setState(() => items = loaded);
+      },
+      defaultItemsBuilder: defaultItems,
+    );
+  }
+
+  Future<void> saveLayout() async {
+    await DashboardLayoutPersistence.saveLayout(
+      prefsKey: prefsLayoutKey,
+      items: items,
+    );
+  }
+
+  List<ScreenGridWidgetSpan> defaultItems() {
     return [
       ScreenGridWidgetSpan(
         widgetId: 'login',
@@ -5235,28 +5370,28 @@ class _DashboardPanelState extends State<DashboardPanel> {
         rowSpan: 8,
       ),
       ScreenGridWidgetSpan(
-        widgetId: 'create_task',
+        widgetId: 'createtask',
         col: 1,
         row: 2,
         colSpan: 10,
         rowSpan: 4,
       ),
       ScreenGridWidgetSpan(
-        widgetId: 'view_assigned_tasks',
+        widgetId: 'viewassignedtasks',
         col: 13,
         row: 2,
         colSpan: 10,
         rowSpan: 4,
       ),
       ScreenGridWidgetSpan(
-        widgetId: 'view_all_tasks',
+        widgetId: 'viewalltasks',
         col: 1,
         row: 8,
         colSpan: 10,
         rowSpan: 4,
       ),
       ScreenGridWidgetSpan(
-        widgetId: 'complete_task',
+        widgetId: 'completetask',
         col: 13,
         row: 8,
         colSpan: 10,
@@ -5265,266 +5400,24 @@ class _DashboardPanelState extends State<DashboardPanel> {
     ];
   }
 
-  Future<void> _loadLayout() async {
-    final prefs = await SharedPreferences.getInstance();
-    final jsonString = prefs.getString(_prefsLayoutKey);
-    if (jsonString == null) {
-      debugPrint('[LAYOUT] No saved layout, using defaults');
-      return;
-    }
+  // ---------- WALLPAPER & GLASS ----------
 
-    try {
-      final List<dynamic> decoded = jsonDecode(jsonString) as List<dynamic>;
-      final loaded = decoded.map((e) {
-        final m = e as Map<String, dynamic>;
-        return ScreenGridWidgetSpan(
-          widgetId: m['id'] as String,
-          col: m['col'] as int,
-          row: m['row'] as int,
-          colSpan: m['colSpan'] as int,
-          rowSpan: m['rowSpan'] as int,
-        );
-      }).toList();
-
-      setState(() {
-        _items = loaded;
-      });
-      debugPrint('[LAYOUT] Loaded ${loaded.length} items');
-    } catch (e) {
-      debugPrint('[LAYOUT] Failed to parse layout: $e');
-    }
+  Future<void> pickWallpaperFromWindows() async {
+    await WallpaperService.instance.pickWallpaper();
   }
 
-  Future<void> _saveLayout() async {
-    final prefs = await SharedPreferences.getInstance();
-    final data = _items.map((w) {
-      return {
-        'id': w.widgetId,
-        'col': w.col,
-        'row': w.row,
-        'colSpan': w.colSpan,
-        'rowSpan': w.rowSpan,
-      };
-    }).toList();
-
-    await prefs.setString(_prefsLayoutKey, jsonEncode(data));
-    debugPrint('[LAYOUT] Saved layout with ${_items.length} items');
+  Future<void> resetWallpaper() async {
+    await WallpaperService.instance.resetWallpaper();
   }
 
-  void _listenAuthState() {
-    FirebaseAuth.instance.authStateChanges().listen((user) {
-      debugPrint('[AUTH] authStateChanges -> ${user?.uid}');
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-
-        if (user == null) {
-          debugPrint('[AUTH] User is null → show login only');
-          setState(() {
-            _currentUser = null;
-            _allowedWidgetIds = {'login'};
-          });
-        } else {
-          debugPrint('[AUTH] User logged in → load permissions');
-          setState(() {
-            _currentUser = user;
-          });
-          _loadUserPermissions(user.uid);
-        }
-      });
-    });
+  BoxDecoration get backgroundDecoration {
+    return WallpaperService.instance.backgroundDecoration;
   }
 
-  Future<void> _loadUserPermissions(String userId) async {
-    const tenantId = 'default_tenant';
-    debugPrint('[PERM] Loading permissions for user=$userId');
-
-    try {
-      // 1) Load user doc
-      final userDoc = await FirebaseFirestore.instance
-          .collection('tenants')
-          .doc(tenantId)
-          .collection('users')
-          .doc(userId)
-          .get();
-
-      if (!userDoc.exists) {
-        debugPrint('[PERM] user doc missing → signOut');
-        await FirebaseAuth.instance.signOut();
-        return;
-      }
-
-      final data = userDoc.data() as Map<String, dynamic>;
-      final designation = data['designation'] as String?;
-      debugPrint('[PERM] designation = $designation');
-
-      if (designation == null) {
-        debugPrint('[PERM] designation null → signOut + login only');
-        await FirebaseAuth.instance.signOut();
-        setState(() => _allowedWidgetIds = {'login'});
-        return;
-      }
-
-      // 2) Load designation metadata
-      final metaDoc = await FirebaseFirestore.instance
-          .collection('tenants')
-          .doc(tenantId)
-          .collection('metadata')
-          .doc('designations')
-          .get();
-
-      if (!metaDoc.exists) {
-        debugPrint('[PERM] designations missing → login only');
-        setState(() => _allowedWidgetIds = {'login'});
-        return;
-      }
-
-      final meta = metaDoc.data() as Map<String, dynamic>;
-      final allDesignations =
-          meta['designations'] as Map<String, dynamic>?;
-
-      final designationData =
-          allDesignations != null ? allDesignations[designation] : null;
-      debugPrint('[PERM] designationData = $designationData');
-
-      final List<dynamic> permissionsRaw =
-          (designationData?['permissions'] as List<dynamic>?) ?? [];
-
-      final permissions =
-          permissionsRaw.map((e) => e.toString()).toSet();
-      debugPrint('[PERM] permissions = $permissions');
-
-      // 3) Map permissions → widget ids used in DashboardPanel
-      final allowed = <String>{};
-
-      if (permissions.contains('create_task')) {
-        allowed.add('create_task');
-      }
-      if (permissions.contains('view_assigned_tasks')) {
-        allowed.add('view_assigned_tasks');
-      }
-      if (permissions.contains('view_all_tasks')) {
-        allowed.add('view_all_tasks');
-      }
-      if (permissions.contains('complete_task')) {
-        allowed.add('complete_task');
-      }
-
-      debugPrint('[PERM] allowed widget ids = $allowed');
-
-      // 4) Logged-in view: DO NOT include 'login'
-      setState(() => _allowedWidgetIds = allowed);
-    } catch (e) {
-      debugPrint('[PERM] Permission load error: $e');
-      setState(() => _allowedWidgetIds = {'login'});
-    }
-  }
-
-  Future<void> _signOut() async {
-    await FirebaseAuth.instance.signOut();
-  }
-
-  Future<void> _loadSettings() async {
-    final prefs = await SharedPreferences.getInstance();
-
-    _wallpaperPath = prefs.getString(_prefsWallpaperKey);
-    _globalGlassOpacity = prefs.getDouble(_prefsGlobalOpacityKey) ?? 0.12;
-    _globalGlassBlur = prefs.getDouble(_prefsGlobalBlurKey) ?? 16.0;
-    debugPrint(
-        'LOADED wallpaper=$_wallpaperPath blur=$_globalGlassBlur opacity=$_globalGlassOpacity');
-
-    if (mounted) setState(() {});
-  }
-
-  Future<void> _saveSettings() async {
-    final prefs = await SharedPreferences.getInstance();
-
-    if (_wallpaperPath != null) {
-      await prefs.setString(_prefsWallpaperKey, _wallpaperPath!);
-    } else {
-      await prefs.remove(_prefsWallpaperKey);
-    }
-
-    await prefs.setDouble(_prefsGlobalOpacityKey, _globalGlassOpacity);
-    await prefs.setDouble(_prefsGlobalBlurKey, _globalGlassBlur);
-    debugPrint(
-        'SAVED wallpaper=$_wallpaperPath blur=$_globalGlassBlur opacity=$_globalGlassOpacity');
-  }
-
-  void toggleWidget(String widgetId) {
-    final index = _items.indexWhere((w) => w.widgetId == widgetId);
-    if (index != -1) {
-      setState(() => _items.removeAt(index));
-    } else {
-      setState(() {
-        _items.add(
-          ScreenGridWidgetSpan(
-            widgetId: widgetId,
-            col: 1,
-            row: 2,
-            colSpan: 8,
-            rowSpan: 4,
-          ),
-        );
-      });
-    }
-    _saveLayout();
-  }
-
-  Future<void> _pickWallpaperFromWindows() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.image,
-      allowMultiple: false,
-    );
-    final pickedPath = result?.files.single.path;
-    if (pickedPath == null) return;
-
-    final appDir = await getApplicationSupportDirectory();
-    final wpDir = Directory(p.join(appDir.path, 'wallpapers'));
-    if (!await wpDir.exists()) {
-      await wpDir.create(recursive: true);
-    }
-
-    final ext =
-        p.extension(pickedPath).isNotEmpty ? p.extension(pickedPath) : '.jpg';
-    final cachedPath = p.join(wpDir.path, 'current_wallpaper$ext');
-
-    await File(pickedPath).copy(cachedPath);
-
-    setState(() => _wallpaperPath = cachedPath);
-    await _saveSettings();
-  }
-
-  Future<void> _resetWallpaper() async {
-    setState(() => _wallpaperPath = null);
-    await _saveSettings();
-  }
-
-  BoxDecoration _backgroundDecoration() {
-    final path = _wallpaperPath;
-    if (path != null) {
-      final file = File(path);
-      if (file.existsSync()) {
-        return BoxDecoration(
-          image: DecorationImage(
-            image: FileImage(file),
-            fit: BoxFit.cover,
-          ),
-        );
-      }
-    }
-
-    return const BoxDecoration(
-      gradient: LinearGradient(
-        colors: [Color(0xFF05040A), Color(0xFF151827)],
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-      ),
-    );
-  }
-
-  Future<void> _openGlobalGlassSheet() async {
-    double tempOpacity = _globalGlassOpacity;
-    double tempBlur = _globalGlassBlur;
+  Future<void> openGlobalGlassSheet() async {
+    final service = WallpaperService.instance;
+    double tempOpacity = service.globalGlassOpacity;
+    double tempBlur = service.globalGlassBlur;
 
     final applied = await showModalBottomSheet<bool>(
       context: context,
@@ -5551,10 +5444,13 @@ class _DashboardPanelState extends State<DashboardPanel> {
                         borderRadius: BorderRadius.circular(999),
                       ),
                     ),
-                    Row(
-                      children: const [
-                        Icon(Icons.blur_on_rounded,
-                            color: Colors.cyanAccent, size: 18),
+                    const Row(
+                      children: [
+                        Icon(
+                          Icons.blur_on_rounded,
+                          color: Colors.cyanAccent,
+                          size: 18,
+                        ),
                         SizedBox(width: 8),
                         Text(
                           'Glass settings',
@@ -5573,8 +5469,10 @@ class _DashboardPanelState extends State<DashboardPanel> {
                           width: 70,
                           child: Text(
                             'Opacity',
-                            style:
-                                TextStyle(color: Colors.white70, fontSize: 12),
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 12,
+                            ),
                           ),
                         ),
                         Expanded(
@@ -5584,8 +5482,11 @@ class _DashboardPanelState extends State<DashboardPanel> {
                             divisions: 26,
                             value: tempOpacity.clamp(0.04, 0.30),
                             label: tempOpacity.toStringAsFixed(2),
-                            onChanged: (v) =>
-                                setModalState(() => tempOpacity = v),
+                            onChanged: (v) {
+                              setModalState(() {
+                                tempOpacity = v;
+                              });
+                            },
                           ),
                         ),
                       ],
@@ -5596,8 +5497,10 @@ class _DashboardPanelState extends State<DashboardPanel> {
                           width: 70,
                           child: Text(
                             'Blur',
-                            style:
-                                TextStyle(color: Colors.white70, fontSize: 12),
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 12,
+                            ),
                           ),
                         ),
                         Expanded(
@@ -5607,8 +5510,11 @@ class _DashboardPanelState extends State<DashboardPanel> {
                             divisions: 30,
                             value: tempBlur.clamp(0, 30),
                             label: tempBlur.toStringAsFixed(0),
-                            onChanged: (v) =>
-                                setModalState(() => tempBlur = v),
+                            onChanged: (v) {
+                              setModalState(() {
+                                tempBlur = v;
+                              });
+                            },
                           ),
                         ),
                       ],
@@ -5632,494 +5538,529 @@ class _DashboardPanelState extends State<DashboardPanel> {
     );
 
     if (applied == true) {
-      setState(() {
-        _globalGlassOpacity = tempOpacity;
-        _globalGlassBlur = tempBlur;
-      });
-      await _saveSettings();
+      service.setGlassOpacity(tempOpacity);
+      service.setGlassBlur(tempBlur);
+      await service.saveSettings();
     }
   }
 
-  @override
-Widget build(BuildContext context) {
-  return LayoutBuilder(
-    builder: (context, root) {
-      final width = root.maxWidth;
-      final height = root.maxHeight;
-      final shortest = width < height ? width : height;
+  // ---------- WIDGET VISIBILITY ----------
 
-      final double scale =
-          shortest < 700 ? 0.7 : (shortest < 1100 ? 0.9 : 1.1);
-
-      final horizontalPadding = 24.0 * scale;
-      final verticalPadding = 12.0 * scale;
-      final mainSpacing = 12.0 * scale;
-      final topBarHeight = 40.0;
-      final chipHeight = 32.0 * scale;
-
-      final visibleItems = _items
-          .where((item) => _allowedWidgetIds.contains(item.widgetId))
-          .toList();
-
-      debugPrint(
-        '[UI] currentUser=${_currentUser?.uid} '
-        'allowed=$_allowedWidgetIds '
-        'visible=${visibleItems.map((e) => e.widgetId).toList()}',
-      );
-
-      return Scaffold(
-        backgroundColor: Colors.transparent,
-        body: Container(
-          decoration: _backgroundDecoration(),
-          child: SafeArea(
-            child: Padding(
-              padding: EdgeInsets.symmetric(
-                horizontal: horizontalPadding,
-                vertical: verticalPadding,
-              ),
-              child: Column(
-                children: [
-                  // TOP BAR (fixed height + centered WorkspaceSwitcher)
-                  SizedBox(
-                    height: topBarHeight,
-                    child: GlassContainer(
-                      blur: _globalGlassBlur,
-                      opacity: _globalGlassOpacity,
-                      tint: _globalGlassTint,
-                      borderRadius: BorderRadius.circular(topBarHeight / 2),
-                      padding: EdgeInsets.symmetric(horizontal: 14.0 * scale),
-                      borderOpacity: 0.16,
-                      borderWidth: 1,
-                      boxShadow: const [
-                        BoxShadow(
-                          color: Color(0x2A000000),
-                          blurRadius: 14,
-                          offset: Offset(0, 8),
-                        ),
-                      ],
-                      child: Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          // LEFT: title
-                          Align(
-                            alignment: Alignment.centerLeft,
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  Icons.blur_on_rounded,
-                                  size: 14 * scale,
-                                  color: Colors.cyan,
-                                ),
-                                SizedBox(width: 6 * scale),
-                                Text(
-                                  'Wall-D · Dynamic Screen',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 12 * scale,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-
-                          // CENTER: workspace tabs (Dashboard / Task)
-                          if (widget.workspaceController != null)
-                            Align(
-                              alignment: Alignment.center,
-                              child: WorkspaceSwitcher(
-                                controller: widget.workspaceController!,
-                              ),
-                            ),
-
-                          // RIGHT: actions
-                          Align(
-                            alignment: Alignment.centerRight,
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                if (_currentUser != null)
-                                  IconButton(
-                                    tooltip: 'Sign out',
-                                    icon: Icon(
-                                      Icons.logout,
-                                      size: 16 * scale,
-                                      color: Colors.white70,
-                                    ),
-                                    onPressed: _signOut,
-                                  ),
-                                Icon(
-                                  Icons.cloud_done,
-                                  size: 13 * scale,
-                                  color: Colors.greenAccent,
-                                ),
-                                SizedBox(width: 4 * scale),
-                                Text(
-                                  'default_tenant',
-                                  style: TextStyle(
-                                    color: Colors.white70,
-                                    fontSize: 11 * scale,
-                                  ),
-                                ),
-                                SizedBox(width: 6 * scale),
-                                PopupMenuButton<_SettingsAction>(
-                                  tooltip: 'Settings',
-                                  padding: EdgeInsets.zero,
-                                  offset: Offset(0, topBarHeight + 8),
-                                  color: const Color(0xFF0B0B12),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                    side: const BorderSide(
-                                      color: Color(0x33FFFFFF),
-                                    ),
-                                  ),
-                                  onSelected: (action) async {
-                                    switch (action) {
-                                      case _SettingsAction.pickWallpaper:
-                                        await _pickWallpaperFromWindows();
-                                        break;
-                                      case _SettingsAction.resetWallpaper:
-                                        await _resetWallpaper();
-                                        break;
-                                      case _SettingsAction.glassSettings:
-                                        await _openGlobalGlassSheet();
-                                        break;
-                                    }
-                                  },
-                                  itemBuilder: (context) => const [
-                                    PopupMenuItem(
-                                      value: _SettingsAction.pickWallpaper,
-                                      child: _MenuRow(
-                                        icon: Icons.wallpaper,
-                                        text: 'Change wallpaper…',
-                                      ),
-                                    ),
-                                    PopupMenuItem(
-                                      value: _SettingsAction.resetWallpaper,
-                                      child: _MenuRow(
-                                        icon: Icons.refresh_rounded,
-                                        text: 'Reset wallpaper',
-                                      ),
-                                    ),
-                                    PopupMenuItem(
-                                      value: _SettingsAction.glassSettings,
-                                      child: _MenuRow(
-                                        icon: Icons.blur_on_rounded,
-                                        text: 'Glass settings…',
-                                      ),
-                                    ),
-                                  ],
-                                  child: Padding(
-                                    padding: EdgeInsets.all(4 * scale),
-                                    child: Icon(
-                                      Icons.settings_rounded,
-                                      size: 16 * scale,
-                                      color: Colors.white70,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-
-                  SizedBox(height: mainSpacing),
-
-                  // STATIC CHIPS (disabled)
-                  // if (false) ...[ ... ],
-
-                  // MAIN AREA (grid widgets)
-                  Expanded(
-                    child: LayoutBuilder(
-                      builder: (context, constraints) {
-                        final maxW = constraints.maxWidth;
-                        final maxH = constraints.maxHeight;
-
-                        final cellW = maxW / _grid.columns;
-                        final cellH = maxH / _grid.rows;
-
-                        return Stack(
-                          children: visibleItems
-                              .map(
-                                (item) => _buildGridWidget(
-                                  item: item,
-                                  cellW: cellW,
-                                  cellH: cellH,
-                                  maxW: maxW,
-                                  maxH: maxH,
-                                ),
-                              )
-                              .toList(),
-                        );
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            ),
+  void toggleWidget(String widgetId) {
+    final index = items.indexWhere((w) => w.widgetId == widgetId);
+    if (index != -1) {
+      setState(() => items.removeAt(index));
+    } else {
+      setState(() {
+        items.add(
+          ScreenGridWidgetSpan(
+            widgetId: widgetId,
+            col: 1,
+            row: 2,
+            colSpan: 8,
+            rowSpan: 4,
           ),
-        ),
-      );
-    },
-  );
-}
-
-  Widget _buildGridWidget({
-    required ScreenGridWidgetSpan item,
-    required double cellW,
-    required double cellH,
-    required double maxW,
-    required double maxH,
-  }) {
-    final left = (item.col * cellW).clamp(0.0, maxW - cellW);
-    final top = (item.row * cellH).clamp(0.0, maxH - cellH);
-
-    final widthPx = (item.colSpan * cellW).clamp(cellW * 2, maxW);
-    final heightPx = (item.rowSpan * cellH).clamp(cellH * 2, maxH);
-
-    return _FreeDragResizeItem(
-      key: ValueKey(item.widgetId),
-      item: item,
-      gridColumns: _grid.columns,
-      gridRows: _grid.rows,
-      cellW: cellW,
-      cellH: cellH,
-      maxW: maxW,
-      maxH: maxH,
-      initialLeft: left,
-      initialTop: top,
-      initialWidthPx: widthPx,
-      initialHeightPx: heightPx,
-      globalBlur: _globalGlassBlur,
-      globalOpacity: _globalGlassOpacity,
-      globalTint: _globalGlassTint,
-      onSnap: _saveLayout,
-    );
+        );
+      });
+    }
+    saveLayout();
   }
-}
 
-enum _SettingsAction { pickWallpaper, resetWallpaper, glassSettings }
-
-class _MenuRow extends StatelessWidget {
-  final IconData icon;
-  final String text;
-
-  const _MenuRow({required this.icon, required this.text});
+  // ---------- BUILD ----------
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Icon(icon, size: 16, color: Colors.cyanAccent),
-        const SizedBox(width: 10),
-        Text(text, style: const TextStyle(color: Colors.white)),
-      ],
+    // Show all widgets regardless of permissions
+    final visibleItems = items;
+
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: Container(
+        decoration: backgroundDecoration,
+        child: SafeArea(
+          child: Stack(
+            children: [
+              DashboardGrid(
+                grid: grid,
+                items: visibleItems,
+                onSnap: saveLayout,
+              ),
+              DashboardTopBar(
+                workspaceController: widget.workspaceController,
+                onGlassSettings: openGlobalGlassSheet,
+                onWallpaperSettings: pickWallpaperFromWindows,
+                onResetWallpaper: resetWallpaper,
+                onSignOut: signOut,
+              ),
+              DashboardDrawer(
+                allowedWidgetIds: allowedWidgetIds,
+                items: items,
+                onToggleWidget: toggleWidget,
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
 
-class _FreeDragResizeItem extends StatefulWidget {
-  final ScreenGridWidgetSpan item;
+================================================================================
 
-  final int gridColumns;
-  final int gridRows;
+// File: lib\dynamic_screen\dashboard_drawer.dart
+import 'package:flutter/material.dart';
 
-  final double cellW;
-  final double cellH;
+import 'model/screen_grid.dart';
 
-  final double maxW;
-  final double maxH;
+class DashboardDrawer extends StatelessWidget {
+  final Set<String> allowedWidgetIds;
+  final List<ScreenGridWidgetSpan> items;
+  final void Function(String widgetId) onToggleWidget;
 
-  final double initialLeft;
-  final double initialTop;
-  final double initialWidthPx;
-  final double initialHeightPx;
+  const DashboardDrawer({
+    super.key,
+    required this.allowedWidgetIds,
+    required this.items,
+    required this.onToggleWidget,
+  });
 
-  final double globalBlur;
-  final double globalOpacity;
-  final Color globalTint;
+  bool _isVisible(String id) {
+    return items.any((w) => w.widgetId == id);
+  }
 
+  @override
+  Widget build(BuildContext context) {
+    // If only login is allowed, drawer can stay hidden
+    if (allowedWidgetIds.length == 1 && allowedWidgetIds.contains('login')) {
+      return const SizedBox.shrink();
+    }
+
+    return Positioned(
+      left: 16,
+      top: 64,
+      bottom: 16,
+      child: MouseRegion(
+        opaque: false,
+        child: Align(
+          alignment: Alignment.topLeft,
+          child: Container(
+            width: 220,
+            decoration: BoxDecoration(
+              color: const Color(0xCC05040A),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: Colors.white10),
+            ),
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Widgets',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Expanded(
+                  child: ListView(
+                    children: [
+                      if (allowedWidgetIds.contains('createtask'))
+                        _item(
+                          id: 'createtask',
+                          label: 'Create Task',
+                          icon: Icons.add_task_rounded,
+                        ),
+                      if (allowedWidgetIds.contains('viewassignedtasks'))
+                        _item(
+                          id: 'viewassignedtasks',
+                          label: 'Assigned Tasks',
+                          icon: Icons.assignment_ind_rounded,
+                        ),
+                      if (allowedWidgetIds.contains('viewalltasks'))
+                        _item(
+                          id: 'viewalltasks',
+                          label: 'All Tasks',
+                          icon: Icons.view_list_rounded,
+                        ),
+                      if (allowedWidgetIds.contains('completetask'))
+                        _item(
+                          id: 'completetask',
+                          label: 'Complete Task',
+                          icon: Icons.check_circle_rounded,
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _item({
+    required String id,
+    required String label,
+    required IconData icon,
+  }) {
+    final visible = _isVisible(id);
+    return ListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(
+        icon,
+        size: 18,
+        color: visible ? Colors.cyanAccent : Colors.white70,
+      ),
+      title: Text(
+        label,
+        style: TextStyle(
+          color: visible ? Colors.cyanAccent : Colors.white70,
+          fontSize: 13,
+        ),
+      ),
+      trailing: Switch(
+        value: visible,
+        activeColor: Colors.cyanAccent,
+        onChanged: (_) => onToggleWidget(id),
+      ),
+      onTap: () => onToggleWidget(id),
+    );
+  }
+}
+
+================================================================================
+
+// File: lib\dynamic_screen\dashboard_grid.dart
+import 'package:flutter/material.dart';
+import '../core/wallpaper_service.dart';
+import 'model/screen_grid.dart';
+import 'model/floating_widget.dart';
+import 'widgets/widgets.dart'; // exposes buildGridWidget
+
+class DashboardGrid extends StatelessWidget {
+  final ScreenGridConfig grid;
+  final List<ScreenGridWidgetSpan> items;
   final VoidCallback onSnap;
 
-  const _FreeDragResizeItem({
+  const DashboardGrid({
     super.key,
-    required this.item,
-    required this.gridColumns,
-    required this.gridRows,
-    required this.cellW,
-    required this.cellH,
-    required this.maxW,
-    required this.maxH,
-    required this.initialLeft,
-    required this.initialTop,
-    required this.initialWidthPx,
-    required this.initialHeightPx,
-    required this.globalBlur,
-    required this.globalOpacity,
-    required this.globalTint,
+    required this.grid,
+    required this.items,
     required this.onSnap,
   });
 
   @override
-  State<_FreeDragResizeItem> createState() => _FreeDragResizeItemState();
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final cellW = constraints.maxWidth / grid.columns;
+        final cellH = constraints.maxHeight / grid.rows;
+
+        final visibleItems = items;
+
+        return Stack(
+          children: visibleItems.map((item) {
+            final left = cellW * item.col;
+            final top = cellH * item.row;
+            final widthPx = cellW * item.colSpan;
+            final heightPx = cellH * item.rowSpan;
+
+            return buildGridWidget(
+              item: item,
+              cellW: cellW,
+              cellH: cellH,
+              maxW: constraints.maxWidth,
+              maxH: constraints.maxHeight,
+              initialLeft: left,
+              initialTop: top,
+              initialWidthPx: widthPx,
+              initialHeightPx: heightPx,
+              globalBlur: WallpaperService.instance.globalGlassBlur,
+              globalOpacity: WallpaperService.instance.globalGlassOpacity,
+              globalTint: const Color(0xFFFFFFFF),
+              onSnap: onSnap,
+            );
+          }).toList(),
+        );
+      },
+    );
+  }
 }
 
-class _FreeDragResizeItemState extends State<_FreeDragResizeItem> {
-  late double left;
-  late double top;
-  late double widthPx;
-  late double heightPx;
+================================================================================
 
-  Offset? dragLastGlobal;
-  Offset? resizeLastGlobal;
+// File: lib\dynamic_screen\dashboard_layout_persistence.dart
+import 'dart:convert';
+import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-  bool get isInteracting => dragLastGlobal != null || resizeLastGlobal != null;
+import 'model/screen_grid.dart';
 
-  @override
-  void initState() {
-    super.initState();
-    left = widget.initialLeft;
-    top = widget.initialTop;
-    widthPx = widget.initialWidthPx;
-    heightPx = widget.initialHeightPx;
-  }
+class DashboardLayoutPersistence {
+  static Future<void> loadLayout({
+    required String prefsKey,
+    required void Function(List<ScreenGridWidgetSpan>) onLoaded,
+    required List<ScreenGridWidgetSpan> Function() defaultItemsBuilder,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final jsonString = prefs.getString(prefsKey);
+    if (jsonString == null) {
+      debugPrint('[LAYOUT] No saved layout, using defaults');
+      onLoaded(defaultItemsBuilder());
+      return;
+    }
 
-  @override
-  void didUpdateWidget(covariant _FreeDragResizeItem oldWidget) {
-    super.didUpdateWidget(oldWidget);
-
-    if (!isInteracting) {
-      left = (widget.item.col * widget.cellW)
-          .clamp(0.0, widget.maxW - widget.cellW);
-      top = (widget.item.row * widget.cellH)
-          .clamp(0.0, widget.maxH - widget.cellH);
-
-      widthPx = (widget.item.colSpan * widget.cellW)
-          .clamp(widget.cellW * 2, widget.maxW);
-      heightPx = (widget.item.rowSpan * widget.cellH)
-          .clamp(widget.cellH * 2, widget.maxH);
+    try {
+      final List<dynamic> decoded = jsonDecode(jsonString) as List<dynamic>;
+      final loaded = decoded.map((e) {
+        final m = e as Map<String, dynamic>;
+        return ScreenGridWidgetSpan(
+          widgetId: m['id'] as String,
+          col: m['col'] as int,
+          row: m['row'] as int,
+          colSpan: m['colSpan'] as int,
+          rowSpan: m['rowSpan'] as int,
+        );
+      }).toList();
+      debugPrint('[LAYOUT] Loaded ${loaded.length} items');
+      onLoaded(loaded);
+    } catch (e) {
+      debugPrint('[LAYOUT] Failed to parse layout: $e');
+      onLoaded(defaultItemsBuilder());
     }
   }
 
-  void _snapToGridAndPersist() {
-    int col = (left / widget.cellW).round();
-    int row = (top / widget.cellH).round();
-    int colSpan = (widthPx / widget.cellW).round();
-    int rowSpan = (heightPx / widget.cellH).round();
-
-    colSpan = colSpan.clamp(2, widget.gridColumns) as int;
-    rowSpan = rowSpan.clamp(2, widget.gridRows) as int;
-
-    col = col.clamp(0, widget.gridColumns - colSpan) as int;
-    row = row.clamp(0, widget.gridRows - rowSpan) as int;
-
-    widget.item
-      ..col = col
-      ..row = row
-      ..colSpan = colSpan
-      ..rowSpan = rowSpan;
-
-    setState(() {
-      left = col * widget.cellW;
-      top = row * widget.cellH;
-      widthPx = colSpan * widget.cellW;
-      heightPx = rowSpan * widget.cellH;
-    });
-
-    widget.onSnap(); // persist layout in parent
+  static Future<void> saveLayout({
+    required String prefsKey,
+    required List<ScreenGridWidgetSpan> items,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final data = items
+        .map((w) => {
+              'id': w.widgetId,
+              'col': w.col,
+              'row': w.row,
+              'colSpan': w.colSpan,
+              'rowSpan': w.rowSpan,
+            })
+        .toList();
+    await prefs.setString(prefsKey, jsonEncode(data));
+    debugPrint('[LAYOUT] Saved layout with ${items.length} items');
   }
+}
+
+================================================================================
+
+// File: lib\dynamic_screen\dashboard_permissions.dart
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
+
+class DashboardPermissions {
+  static const String _tenantId = 'default_tenant';
+
+  /// Pure helper – no setState/mounted/allowedWidgetIds inside this file.
+  /// It only logs and then calls [onAllowedWidgetIds].
+  static Future<void> loadUserPermissions({
+    required BuildContext context,
+    required String userId,
+    required void Function(Set<String> allowedWidgetIds) onAllowedWidgetIds,
+  }) async {
+    debugPrint('[PERM] ---- loadUserPermissions START ----');
+    debugPrint('[PERM] userId=$userId');
+
+    try {
+      // 1) Load user doc
+      final userDoc = await FirebaseFirestore.instance
+          .collection('tenants')
+          .doc(_tenantId)
+          .collection('users')
+          .doc(userId)
+          .get();
+
+      debugPrint('[PERM] userDoc.exists = ${userDoc.exists}');
+      if (!userDoc.exists) {
+        debugPrint('[PERM] user doc missing -> signOut & login-only');
+        await FirebaseAuth.instance.signOut();
+        onAllowedWidgetIds({'login'});
+        return;
+      }
+
+      final data = userDoc.data() as Map<String, dynamic>;
+      debugPrint('[PERM] userDoc.data = $data');
+
+      final designation = data['designation'] as String?;
+      debugPrint('[PERM] designation = $designation');
+
+      if (designation == null || designation.trim().isEmpty) {
+        debugPrint('[PERM] designation null/empty -> signOut & login-only');
+        await FirebaseAuth.instance.signOut();
+        onAllowedWidgetIds({'login'});
+        return;
+      }
+
+      // 2) Load designation metadata
+      final metaDoc = await FirebaseFirestore.instance
+          .collection('tenants')
+          .doc(_tenantId)
+          .collection('metadata')
+          .doc('designations')
+          .get();
+
+      debugPrint('[PERM] metaDoc.exists = ${metaDoc.exists}');
+      if (!metaDoc.exists) {
+        debugPrint('[PERM] designations meta missing -> signOut & login-only');
+        await FirebaseAuth.instance.signOut();
+        onAllowedWidgetIds({'login'});
+        return;
+      }
+
+      final meta = metaDoc.data() as Map<String, dynamic>;
+      debugPrint('[PERM] meta keys = ${meta.keys.toList()}');
+
+      final allDesignations =
+          meta['designations'] as Map<String, dynamic>? ?? {};
+      debugPrint(
+          '[PERM] allDesignations keys = ${allDesignations.keys.toList()}');
+
+      final designationData =
+          allDesignations[designation] as Map<String, dynamic>?;
+      debugPrint('[PERM] designationData = $designationData');
+
+      if (designationData == null) {
+        debugPrint(
+            '[PERM] designation $designation not found -> signOut & login-only');
+        await FirebaseAuth.instance.signOut();
+        onAllowedWidgetIds({'login'});
+        return;
+      }
+
+      final permissionsRaw =
+          (designationData['permissions'] as List<dynamic>? ?? []);
+      final permissions =
+          permissionsRaw.map((e) => e.toString()).toSet();
+      debugPrint('[PERM] permissions = $permissions');
+
+      // 3) Map permissions to widget ids
+      final allowed = <String>{};
+      if (permissions.contains('create_task') ||
+          permissions.contains('createtask')) {
+        allowed.add('createtask');
+      }
+      if (permissions.contains('view_assigned_tasks') ||
+          permissions.contains('viewassignedtasks')) {
+        allowed.add('viewassignedtasks');
+      }
+      if (permissions.contains('view_all_tasks') ||
+          permissions.contains('viewalltasks')) {
+        allowed.add('viewalltasks');
+      }
+      if (permissions.contains('complete_task') ||
+          permissions.contains('completetask')) {
+        allowed.add('completetask');
+      }
+
+      debugPrint('[PERM] allowedWidgetIds computed = $allowed');
+
+      onAllowedWidgetIds(allowed.isEmpty ? {'login'} : allowed);
+
+      debugPrint('[PERM] ---- loadUserPermissions END OK ----');
+    } catch (e, st) {
+      debugPrint('[PERM] Permission load error: $e');
+      debugPrint('[PERM] Stack: $st');
+      // Do NOT auto sign-out during debugging; just fall back to login view.
+      onAllowedWidgetIds({'login'});
+    }
+  }
+}
+
+================================================================================
+
+// File: lib\dynamic_screen\dashboard_topbar.dart
+import 'package:flutter/material.dart';
+
+import '../workspace/workspace_controller.dart';
+import '../workspace/workspace_switcher.dart';
+
+class DashboardTopBar extends StatelessWidget {
+  final WorkspaceController? workspaceController;
+  final VoidCallback onGlassSettings;
+  final VoidCallback onWallpaperSettings;
+  final VoidCallback onResetWallpaper;
+  final Future<void> Function() onSignOut;
+
+  const DashboardTopBar({
+    super.key,
+    required this.workspaceController,
+    required this.onGlassSettings,
+    required this.onWallpaperSettings,
+    required this.onResetWallpaper,
+    required this.onSignOut,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final content = WidgetFactory.createWidget(widget.item.widgetId);
-
-    final glassCard = GlassContainer(
-      blur: widget.globalBlur,
-      opacity: widget.globalOpacity,
-      tint: widget.globalTint,
-      borderRadius: BorderRadius.circular(24),
-      child: content,
-    );
-
-    const hitHandleSize = 24.0;
-
     return Positioned(
-      left: left.clamp(0.0, widget.maxW - widthPx),
-      top: top.clamp(0.0, widget.maxH - heightPx),
-      width: widthPx.clamp(widget.cellW * 2, widget.maxW),
-      height: heightPx.clamp(widget.cellH * 2, widget.maxH),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onPanStart: (details) {
-          final local = details.localPosition;
-          final isResize =
-              local.dx > (widthPx - hitHandleSize) &&
-              local.dy > (heightPx - hitHandleSize);
-
-          if (isResize) {
-            resizeLastGlobal = details.globalPosition;
-          } else {
-            dragLastGlobal = details.globalPosition;
-          }
-        },
-        onPanUpdate: (details) {
-          setState(() {
-            if (resizeLastGlobal != null) {
-              final delta = details.globalPosition - resizeLastGlobal!;
-              widthPx = (widthPx + delta.dx)
-                  .clamp(widget.cellW * 2, widget.maxW - left);
-              heightPx = (heightPx + delta.dy)
-                  .clamp(widget.cellH * 2, widget.maxH - top);
-              resizeLastGlobal = details.globalPosition;
-            } else if (dragLastGlobal != null) {
-              final delta = details.globalPosition - dragLastGlobal!;
-              left = (left + delta.dx)
-                  .clamp(0.0, widget.maxW - widthPx);
-              top = (top + delta.dy)
-                  .clamp(0.0, widget.maxH - heightPx);
-              dragLastGlobal = details.globalPosition;
-            }
-          });
-        },
-        onPanEnd: (_) {
-          dragLastGlobal = null;
-          resizeLastGlobal = null;
-          _snapToGridAndPersist();
-        },
-        onPanCancel: () {
-          dragLastGlobal = null;
-          resizeLastGlobal = null;
-          _snapToGridAndPersist();
-        },
-        child: Stack(
+      left: 16,
+      right: 16,
+      top: 12,
+      child: SizedBox(
+        height: 40,
+        child: Row(
           children: [
-            Positioned.fill(child: glassCard),
-
-            // RESIZE HANDLE WITH RESIZE CURSOR
-            Positioned(
-              right: 4,
-              bottom: 4,
-              child: MouseRegion(
-                cursor: SystemMouseCursors.resizeDownRight,
-                child: Container(
-                  width: hitHandleSize,
-                  height: hitHandleSize,
-                  alignment: Alignment.bottomRight,
-                  color: Colors.transparent, // keeps hit-test area
-                  child: Container(
-                    width: 14,
-                    height: 14,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(4),
-                      // color: Colors.cyanAccent,
-                    ),
+            // Left: App title
+            const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.blur_on_rounded, color: Colors.cyan, size: 18),
+                SizedBox(width: 8),
+                Text(
+                  'Wall-D Dashboard',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
-              ),
+              ],
+            ),
+            const Spacer(),
+            // Center: Workspace switcher
+            if (workspaceController != null)
+              WorkspaceSwitcher(controller: workspaceController!),
+            const Spacer(),
+            // Right: actions
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.wallpaper_rounded,
+                      color: Colors.white70, size: 18),
+                  tooltip: 'Change wallpaper',
+                  onPressed: onWallpaperSettings,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.refresh_rounded,
+                      color: Colors.white70, size: 18),
+                  tooltip: 'Reset wallpaper',
+                  onPressed: onResetWallpaper,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.tune_rounded,
+                      color: Colors.white70, size: 18),
+                  tooltip: 'Glass settings',
+                  onPressed: onGlassSettings,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.logout_rounded,
+                      color: Colors.white70, size: 18),
+                  tooltip: 'Sign out',
+                  onPressed: () => onSignOut(),
+                ),
+              ],
             ),
           ],
         ),
@@ -7699,8 +7640,250 @@ class ViewAssignedTasksWidget extends StatelessWidget {
 
 ================================================================================
 
+// File: lib\dynamic_screen\widgets\widgets.dart
+import 'package:flutter/material.dart';
+
+import '../../core/glass_container.dart';
+import '../../core/wallpaper_service.dart';
+import '../model/screen_grid.dart';
+import '../model/floating_widget.dart';
+import '../widget_factory.dart';
+
+Widget buildGridWidget({
+  required ScreenGridWidgetSpan item,
+  required double cellW,
+  required double cellH,
+  required double maxW,
+  required double maxH,
+  required double initialLeft,
+  required double initialTop,
+  required double initialWidthPx,
+  required double initialHeightPx,
+  required double globalBlur,
+  required double globalOpacity,
+  required Color globalTint,
+  required VoidCallback onSnap,
+}) {
+  return FreeDragResizeItem(
+    key: ValueKey(item.widgetId),
+    item: item,
+    gridColumns: 24, // the grid.columns value used previously
+    gridRows: 14,    // the grid.rows value used previously
+    cellW: cellW,
+    cellH: cellH,
+    maxW: maxW,
+    maxH: maxH,
+    initialLeft: initialLeft,
+    initialTop: initialTop,
+    initialWidthPx: initialWidthPx,
+    initialHeightPx: initialHeightPx,
+    globalBlur: globalBlur,
+    globalOpacity: globalOpacity,
+    globalTint: globalTint,
+    onSnap: onSnap,
+  );
+}
+
+/// Draggable + resizable wrapper used by the dashboard grid.
+class FreeDragResizeItem extends StatefulWidget {
+  final ScreenGridWidgetSpan item;
+  final int gridColumns;
+  final int gridRows;
+
+  final double cellW;
+  final double cellH;
+  final double maxW;
+  final double maxH;
+
+  final double initialLeft;
+  final double initialTop;
+  final double initialWidthPx;
+  final double initialHeightPx;
+
+  final double globalBlur;
+  final double globalOpacity;
+  final Color globalTint;
+  final VoidCallback onSnap;
+
+  const FreeDragResizeItem({
+    super.key,
+    required this.item,
+    required this.gridColumns,
+    required this.gridRows,
+    required this.cellW,
+    required this.cellH,
+    required this.maxW,
+    required this.maxH,
+    required this.initialLeft,
+    required this.initialTop,
+    required this.initialWidthPx,
+    required this.initialHeightPx,
+    required this.globalBlur,
+    required this.globalOpacity,
+    required this.globalTint,
+    required this.onSnap,
+  });
+
+  @override
+  State<FreeDragResizeItem> createState() => _FreeDragResizeItemState();
+}
+
+class _FreeDragResizeItemState extends State<FreeDragResizeItem> {
+  late double left;
+  late double top;
+  late double widthPx;
+  late double heightPx;
+
+  Offset? dragLastGlobal;
+  Offset? resizeLastGlobal;
+
+  bool get isInteracting => dragLastGlobal != null || resizeLastGlobal != null;
+
+  @override
+  void initState() {
+    super.initState();
+    left = widget.initialLeft;
+    top = widget.initialTop;
+    widthPx = widget.initialWidthPx;
+    heightPx = widget.initialHeightPx;
+  }
+
+  @override
+  void didUpdateWidget(covariant FreeDragResizeItem oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!isInteracting) {
+      left = (widget.item.col * widget.cellW).clamp(0.0, widget.maxW - widget.cellW);
+      top = (widget.item.row * widget.cellH).clamp(0.0, widget.maxH - widget.cellH);
+      widthPx = (widget.item.colSpan * widget.cellW)
+          .clamp(widget.cellW * 2, widget.maxW);
+      heightPx = (widget.item.rowSpan * widget.cellH)
+          .clamp(widget.cellH * 2, widget.maxH);
+    }
+  }
+
+  void snapToGridAndPersist() {
+    int col = (left / widget.cellW).round();
+    int row = (top / widget.cellH).round();
+    int colSpan = (widthPx / widget.cellW).round();
+    int rowSpan = (heightPx / widget.cellH).round();
+
+    colSpan = colSpan.clamp(2, widget.gridColumns);
+    rowSpan = rowSpan.clamp(2, widget.gridRows);
+
+    col = col.clamp(0, widget.gridColumns - colSpan);
+    row = row.clamp(0, widget.gridRows - rowSpan);
+
+    widget.item
+      ..col = col
+      ..row = row
+      ..colSpan = colSpan
+      ..rowSpan = rowSpan;
+
+    setState(() {
+      left = col * widget.cellW;
+      top = row * widget.cellH;
+      widthPx = colSpan * widget.cellW;
+      heightPx = rowSpan * widget.cellH;
+    });
+
+    widget.onSnap();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final content = WidgetFactory.createWidget(widget.item.widgetId);
+
+    final glassCard = GlassContainer(
+      blur: widget.globalBlur,
+      opacity: widget.globalOpacity,
+      tint: widget.globalTint,
+      borderRadius: BorderRadius.circular(24),
+      child: content,
+    );
+
+    const hitHandleSize = 24.0;
+
+    return Positioned(
+      left: left.clamp(0.0, widget.maxW - widthPx),
+      top: top.clamp(0.0, widget.maxH - heightPx),
+      width: widthPx.clamp(widget.cellW * 2, widget.maxW),
+      height: heightPx.clamp(widget.cellH * 2, widget.maxH),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onPanStart: (details) {
+          final local = details.localPosition;
+          final isResize =
+              local.dx > widthPx - hitHandleSize && local.dy > heightPx - hitHandleSize;
+          if (isResize) {
+            resizeLastGlobal = details.globalPosition;
+          } else {
+            dragLastGlobal = details.globalPosition;
+          }
+        },
+        onPanUpdate: (details) {
+          setState(() {
+            if (resizeLastGlobal != null) {
+              final delta = details.globalPosition - resizeLastGlobal!;
+              widthPx = (widthPx + delta.dx)
+                  .clamp(widget.cellW * 2, widget.maxW - left);
+              heightPx = (heightPx + delta.dy)
+                  .clamp(widget.cellH * 2, widget.maxH - top);
+              resizeLastGlobal = details.globalPosition;
+            } else if (dragLastGlobal != null) {
+              final delta = details.globalPosition - dragLastGlobal!;
+              left = (left + delta.dx).clamp(0.0, widget.maxW - widthPx);
+              top = (top + delta.dy).clamp(0.0, widget.maxH - heightPx);
+              dragLastGlobal = details.globalPosition;
+            }
+          });
+        },
+        onPanEnd: (_) {
+          dragLastGlobal = null;
+          resizeLastGlobal = null;
+          snapToGridAndPersist();
+        },
+        onPanCancel: () {
+          dragLastGlobal = null;
+          resizeLastGlobal = null;
+          snapToGridAndPersist();
+        },
+        child: Stack(
+          children: [
+            Positioned.fill(child: glassCard),
+            // Resize handle
+            Positioned(
+              right: 4,
+              bottom: 4,
+              child: MouseRegion(
+                cursor: SystemMouseCursors.resizeDownRight,
+                child: Container(
+                  width: hitHandleSize,
+                  height: hitHandleSize,
+                  alignment: Alignment.bottomRight,
+                  color: Colors.transparent,
+                  child: Container(
+                    width: 14,
+                    height: 14,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(4),
+                      color: Colors.cyanAccent,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+================================================================================
+
 // File: lib\task\task_tabs_manifest.dart
 import 'package:flutter/material.dart';
+import '../core/wallpaper_service.dart'; // NEW IMPORT
 import 'pages/create_task_page.dart';
 import 'pages/view_all_tasks_page.dart';
 import 'pages/view_assigned_tasks_page.dart';
@@ -7708,8 +7891,8 @@ import 'pages/complete_task_page.dart';
 
 class TaskTabIds {
   static const create = 'create';
-  static const viewAll = 'view_all';
-  static const viewAssigned = 'view_assigned';
+  static const viewAll = 'viewall';
+  static const viewAssigned = 'viewassigned';
   static const complete = 'complete';
 }
 
@@ -7727,42 +7910,48 @@ class TaskTabDef {
   });
 }
 
-// IMPORTANT: NOT const
-final List<TaskTabDef> taskTabs = <TaskTabDef>[
+final List<TaskTabDef> taskTabs = [
   TaskTabDef(
     id: TaskTabIds.create,
     title: 'Create',
     icon: Icons.add_task_rounded,
-    builder: (_) => const CreateTaskPage(),
+    builder: (context) => const CreateTaskPage(),
   ),
   TaskTabDef(
     id: TaskTabIds.viewAssigned,
     title: 'Assigned',
     icon: Icons.assignment_ind_rounded,
-    builder: (_) => const ViewAssignedTasksPage(),
+    builder: (context) => const ViewAssignedTasksPage(),
   ),
   TaskTabDef(
     id: TaskTabIds.viewAll,
     title: 'All',
     icon: Icons.view_list_rounded,
-    builder: (_) => const ViewAllTasksPage(),
+    builder: (context) => const ViewAllTasksPage(),
   ),
   TaskTabDef(
     id: TaskTabIds.complete,
     title: 'Complete',
     icon: Icons.check_circle_rounded,
-    builder: (_) => const CompleteTaskPage(),
+    builder: (context) => const CompleteTaskPage(),
   ),
 ];
+
+/// UPDATED: Now uses WallpaperService instead of local gradient
+BoxDecoration backgroundDecoration() {
+  return WallpaperService.instance.backgroundDecoration;
+}
 
 ================================================================================
 
 // File: lib\task\task_workspace.dart
 import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/glass_container.dart';
+import '../core/wallpaper_service.dart'; // NEW IMPORT
 import '../workspace/workspace_controller.dart';
 import '../workspace/workspace_switcher.dart';
 import 'task_tabs_manifest.dart';
@@ -7771,17 +7960,52 @@ import 'widgets/task_side_panel.dart';
 class TaskWorkspace extends StatefulWidget {
   final WorkspaceController workspaceController;
 
-  const TaskWorkspace({super.key, required this.workspaceController});
+  const TaskWorkspace({
+    super.key,
+    required this.workspaceController,
+  });
 
   @override
-  State<TaskWorkspace> createState() => _TaskWorkspaceState();
+  State<TaskWorkspace> createState() => TaskWorkspaceState();
 }
 
-class _TaskWorkspaceState extends State<TaskWorkspace> {
+class TaskWorkspaceState extends State<TaskWorkspace> {
   String tabId = taskTabs.first.id;
 
   double glassBlur = 18;
   double glassOpacity = 0.16;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadGlassSettings();
+    // Listen to wallpaper service changes
+    WallpaperService.instance.addListener(_onWallpaperChanged);
+  }
+
+  @override
+  void dispose() {
+    WallpaperService.instance.removeListener(_onWallpaperChanged);
+    super.dispose();
+  }
+
+  void _onWallpaperChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _loadGlassSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      glassBlur = prefs.getDouble('task_glass_blur') ?? 18.0;
+      glassOpacity = prefs.getDouble('task_glass_opacity') ?? 0.16;
+    });
+  }
+
+  Future<void> _saveGlassSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble('task_glass_blur', glassBlur);
+    await prefs.setDouble('task_glass_opacity', glassOpacity);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -7789,14 +8013,15 @@ class _TaskWorkspaceState extends State<TaskWorkspace> {
 
     return Scaffold(
       backgroundColor: Colors.transparent,
+      // UPDATED: Use wallpaper service
       body: Container(
-        decoration: _backgroundDecoration(),
+        decoration: WallpaperService.instance.backgroundDecoration,
         child: SafeArea(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(18, 12, 18, 14),
             child: Column(
               children: [
-                // TOP BAR with centered WorkspaceSwitcher (your existing Stack)
+                // TOP BAR WITH WORKSPACE SWITCHER
                 SizedBox(
                   height: 40,
                   child: GlassContainer(
@@ -7804,7 +8029,8 @@ class _TaskWorkspaceState extends State<TaskWorkspace> {
                     opacity: glassOpacity,
                     tint: Colors.white,
                     borderRadius: BorderRadius.circular(20),
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
                     child: Stack(
                       alignment: Alignment.center,
                       children: [
@@ -7820,7 +8046,7 @@ class _TaskWorkspaceState extends State<TaskWorkspace> {
                               ),
                               SizedBox(width: 8),
                               Text(
-                                'Wall-D · Task Workspace',
+                                'Wall-D Task Workspace',
                                 style: TextStyle(
                                   color: Colors.white,
                                   fontWeight: FontWeight.w600,
@@ -7835,6 +8061,33 @@ class _TaskWorkspaceState extends State<TaskWorkspace> {
                             controller: widget.workspaceController,
                           ),
                         ),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              // NEW: Wallpaper settings button
+                              IconButton(
+                                icon: const Icon(
+                                  Icons.wallpaper_rounded,
+                                  color: Colors.white70,
+                                  size: 18,
+                                ),
+                                tooltip: 'Wallpaper settings',
+                                onPressed: _openWallpaperSettingsDialog,
+                              ),
+                              IconButton(
+                                icon: const Icon(
+                                  Icons.tune_rounded,
+                                  color: Colors.white70,
+                                  size: 18,
+                                ),
+                                tooltip: 'Glass settings',
+                                onPressed: _openGlassSettingsDialog,
+                              ),
+                            ],
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -7842,7 +8095,7 @@ class _TaskWorkspaceState extends State<TaskWorkspace> {
 
                 const SizedBox(height: 12),
 
-                // MAIN TASK LAYOUT with slide+fade
+                // MAIN TASK LAYOUT WITH SLIDE/FADE
                 Expanded(
                   child: AnimatedSwitcher(
                     duration: const Duration(milliseconds: 260),
@@ -7850,7 +8103,7 @@ class _TaskWorkspaceState extends State<TaskWorkspace> {
                     switchOutCurve: Curves.easeInCubic,
                     transitionBuilder: (child, animation) {
                       final offsetAnimation = Tween<Offset>(
-                        begin: const Offset(-0.04, 0), // from left for contrast
+                        begin: const Offset(-0.04, 0),
                         end: Offset.zero,
                       ).animate(animation);
                       return FadeTransition(
@@ -7868,7 +8121,11 @@ class _TaskWorkspaceState extends State<TaskWorkspace> {
                           width: 240,
                           child: TaskSidePanel(
                             selectedTabId: tabId,
-                            onSelect: (id) => setState(() => tabId = id),
+                            onSelect: (id) {
+                              setState(() {
+                                tabId = id;
+                              });
+                            },
                           ),
                         ),
                         const SizedBox(width: 12),
@@ -7878,8 +8135,12 @@ class _TaskWorkspaceState extends State<TaskWorkspace> {
                             opacity: glassOpacity,
                             tint: Colors.white,
                             borderRadius: BorderRadius.circular(24),
-                            padding:
-                                const EdgeInsets.fromLTRB(18, 16, 18, 16),
+                            padding: const EdgeInsets.fromLTRB(
+                              18,
+                              16,
+                              18,
+                              16,
+                            ),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
@@ -7892,7 +8153,9 @@ class _TaskWorkspaceState extends State<TaskWorkspace> {
                                   ),
                                 ),
                                 const SizedBox(height: 10),
-                                Expanded(child: tab.builder(context)),
+                                Expanded(
+                                  child: tab.builder(context),
+                                ),
                               ],
                             ),
                           ),
@@ -7908,21 +8171,142 @@ class _TaskWorkspaceState extends State<TaskWorkspace> {
       ),
     );
   }
-  BoxDecoration _backgroundDecoration() {
-  return const BoxDecoration(
-    gradient: LinearGradient(
-      begin: Alignment.topCenter,
-      end: Alignment.bottomCenter,
-      colors: [
-        Color(0xFF050716),
-        Color(0xFF020308),
-      ],
-    ),
-  );
-}
 
-}
+  // NEW: Wallpaper settings dialog
+  Future<void> _openWallpaperSettingsDialog() async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF111118),
+          title: const Text(
+            'Wallpaper settings',
+            style: TextStyle(color: Colors.white),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.image, color: Colors.cyan),
+                title: const Text(
+                  'Change wallpaper',
+                  style: TextStyle(color: Colors.white),
+                ),
+                onTap: () async {
+                  Navigator.pop(context);
+                  await WallpaperService.instance.pickWallpaper();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.refresh, color: Colors.orange),
+                title: const Text(
+                  'Reset to default',
+                  style: TextStyle(color: Colors.white),
+                ),
+                onTap: () async {
+                  Navigator.pop(context);
+                  await WallpaperService.instance.resetWallpaper();
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
+    );
+  }
 
+  Future<void> _openGlassSettingsDialog() async {
+    double tempBlur = glassBlur;
+    double tempOpacity = glassOpacity;
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF111118),
+              title: const Text(
+                'Glass settings',
+                style: TextStyle(color: Colors.white),
+              ),
+              content: SizedBox(
+                width: 420,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Blur',
+                        style: TextStyle(color: Colors.white70),
+                      ),
+                    ),
+                    Slider(
+                      value: tempBlur,
+                      min: 0,
+                      max: 40,
+                      divisions: 40,
+                      label: tempBlur.toStringAsFixed(0),
+                      onChanged: (v) {
+                        setDialogState(() {
+                          tempBlur = v;
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    const Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Opacity',
+                        style: TextStyle(color: Colors.white70),
+                      ),
+                    ),
+                    Slider(
+                      value: tempOpacity,
+                      min: 0.02,
+                      max: 0.40,
+                      divisions: 38,
+                      label: tempOpacity.toStringAsFixed(2),
+                      onChanged: (v) {
+                        setDialogState(() {
+                          tempOpacity = v;
+                        });
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    setState(() {
+                      glassBlur = tempBlur;
+                      glassOpacity = tempOpacity;
+                    });
+                    _saveGlassSettings();
+                    Navigator.pop(context);
+                  },
+                  child: const Text('Apply'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+}
 
 ================================================================================
 

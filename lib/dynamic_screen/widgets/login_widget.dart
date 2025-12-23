@@ -20,34 +20,18 @@ class _LoginWidgetState extends State<LoginWidget> {
   String? _errorMessage;
 
   Future<void> _signIn() async {
-  if (!_formKey.currentState!.validate()) return;
-
-  setState(() {
-    _isLoading = true;
-    _errorMessage = null;
-  });
-
   try {
-    // Store result in a variable
-    final UserCredential cred =
-        await FirebaseAuth.instance.signInWithEmailAndPassword(
+    final cred = await FirebaseAuth.instance.signInWithEmailAndPassword(
       email: _emailController.text.trim(),
       password: _passwordController.text.trim(),
     );
-
-    debugPrint('Signed in as ${cred.user?.uid}');
-    // DashboardPanel listens to authStateChanges and will react.
+    debugPrint('[LOGIN] Signed in as ${cred.user?.uid}');
+    // No Navigator.push or new DashboardPanel here.
   } on FirebaseAuthException catch (e) {
-    debugPrint('Sign-in failed: ${e.code}');
-    setState(() {
-      _errorMessage = _getErrorMessage(e.code);
-    });
-  } finally {
-    if (mounted) {
-      setState(() => _isLoading = false);
-    }
+    debugPrint('[LOGIN] error: ${e.code} ${e.message}');
   }
 }
+
 
 
   String _getErrorMessage(String code) {
