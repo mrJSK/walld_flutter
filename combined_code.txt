@@ -4,7 +4,8 @@ PROJECT FILE STRUCTURE
 
 Root: lib (lib)
 ├── core/
-│   └── app_colors.dart
+│   ├── app_colors.dart
+│   └── glass_container.dart
 ├── Developer/
 │   ├── DynamicForms/
 │   │   ├── dynamic_forms_panel.dart
@@ -36,6 +37,7 @@ Root: lib (lib)
 │   │   ├── floating_widget.dart
 │   │   ├── grid_layout.dart
 │   │   ├── screen_grid.dart
+│   │   ├── task_form_models.dart
 │   │   └── widget.dart
 │   ├── repository/
 │   │   └── dashboard_repository.dart
@@ -49,6 +51,22 @@ Root: lib (lib)
 │   ├── widget_factory.dart
 │   ├── widget_manifest.dart
 │   └── widgets.dart
+├── task/
+│   ├── pages/
+│   │   ├── complete_task_page.dart
+│   │   ├── create_task_page.dart
+│   │   ├── view_all_tasks_page.dart
+│   │   └── view_assigned_tasks_page.dart
+│   ├── task/
+│   ├── widgets/
+│   │   └── task_side_panel.dart
+│   ├── task_tabs_manifest.dart
+│   └── task_workspace.dart
+├── workspace/
+│   ├── workspace_controller.dart
+│   ├── workspace_ids.dart
+│   ├── workspace_shell.dart
+│   └── workspace_switcher.dart
 ├── firebase_options.dart
 └── main.dart
 
@@ -163,6 +181,7 @@ import 'package:flutter/services.dart';
 import 'firebase_options.dart';
 import 'Developer/developer_dashboard_screen.dart';
 import 'dynamic_screen/dashboardpanel.dart';
+import 'workspace/workspace_shell.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -213,7 +232,8 @@ class WallDApp extends StatelessWidget {
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF05040A),
       ),
-      home: const DashboardPanel(),
+      //home: const DashboardPanel(),
+      home: const WorkspaceShell(),
       //home: const DeveloperDashboardScreen(),
     );
   }
@@ -238,6 +258,67 @@ class AppColors {
   static const darkBg = Color(0xFF05040A);
   static const cardBg = Color(0x6611111C);
   static const glassWhite = Color(0x22FFFFFF);
+}
+
+================================================================================
+
+// File: lib\core\glass_container.dart
+import 'dart:ui';
+import 'package:flutter/material.dart';
+
+class GlassContainer extends StatelessWidget {
+  final double blur; // sigma
+  final double opacity; // 0..1
+  final Color tint;
+  final BorderRadius borderRadius;
+  final EdgeInsetsGeometry padding;
+  final Widget child;
+
+  // Visual tuning
+  final double borderOpacity;
+  final double borderWidth;
+  final List<BoxShadow> boxShadow;
+
+  const GlassContainer({
+    super.key,
+    required this.blur,
+    required this.opacity,
+    required this.tint,
+    required this.borderRadius,
+    required this.child,
+    this.padding = EdgeInsets.zero,
+    this.borderOpacity = 0.18,
+    this.borderWidth = 1,
+    this.boxShadow = const [
+      BoxShadow(color: Color(0x40000000), blurRadius: 18, offset: Offset(0, 10)),
+    ],
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final blurSigma = blur.clamp(0.0, 30.0);
+    final a = opacity.clamp(0.0, 1.0);
+    final fill = tint.withOpacity(a);
+
+    return ClipRRect(
+      borderRadius: borderRadius,
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: blurSigma, sigmaY: blurSigma),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: fill,
+            borderRadius: borderRadius,
+            border: Border.all(
+              color: Colors.white.withOpacity(borderOpacity),
+              width: borderWidth,
+            ),
+            boxShadow: boxShadow,
+          ),
+          child: Padding(padding: padding, child: child),
+        ),
+      ),
+    );
+  }
 }
 
 ================================================================================
@@ -5018,6 +5099,9 @@ class UserDatabaseRepository {
 import 'dart:convert';
 import 'dart:io';
 import 'dart:ui';
+import '../workspace/workspace_controller.dart';
+import '../workspace/workspace_switcher.dart';
+
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -5094,7 +5178,9 @@ class GlassContainer extends StatelessWidget {
 }
 
 class DashboardPanel extends StatefulWidget {
-  const DashboardPanel({Key? key}) : super(key: key);
+  final WorkspaceController? workspaceController;
+
+  const DashboardPanel({super.key, this.workspaceController});
 
   @override
   State<DashboardPanel> createState() => _DashboardPanelState();
@@ -5555,240 +5641,232 @@ class _DashboardPanelState extends State<DashboardPanel> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, root) {
-        final width = root.maxWidth;
-        final height = root.maxHeight;
-        final shortest = width < height ? width : height;
+Widget build(BuildContext context) {
+  return LayoutBuilder(
+    builder: (context, root) {
+      final width = root.maxWidth;
+      final height = root.maxHeight;
+      final shortest = width < height ? width : height;
 
-        final double scale =
-            shortest < 700 ? 0.7 : (shortest < 1100 ? 0.9 : 1.1);
+      final double scale =
+          shortest < 700 ? 0.7 : (shortest < 1100 ? 0.9 : 1.1);
 
-        final horizontalPadding = 24.0 * scale;
-        final verticalPadding = 12.0 * scale;
-        final mainSpacing = 12.0 * scale;
-        final topBarHeight = 32.0 * scale;
-        final chipHeight = 32.0 * scale;
+      final horizontalPadding = 24.0 * scale;
+      final verticalPadding = 12.0 * scale;
+      final mainSpacing = 12.0 * scale;
+      final topBarHeight = 40.0;
+      final chipHeight = 32.0 * scale;
 
-        final visibleItems = _items
-            .where((item) => _allowedWidgetIds.contains(item.widgetId))
-            .toList();
+      final visibleItems = _items
+          .where((item) => _allowedWidgetIds.contains(item.widgetId))
+          .toList();
 
-        debugPrint(
-            '[UI] currentUser=${_currentUser?.uid} allowed=$_allowedWidgetIds visible=${visibleItems.map((e) => e.widgetId).toList()}');
+      debugPrint(
+        '[UI] currentUser=${_currentUser?.uid} '
+        'allowed=$_allowedWidgetIds '
+        'visible=${visibleItems.map((e) => e.widgetId).toList()}',
+      );
 
-        return Scaffold(
-          backgroundColor: Colors.transparent,
-          body: Container(
-            decoration: _backgroundDecoration(),
-            child: SafeArea(
-              child: Padding(
-                padding: EdgeInsets.symmetric(
-                  horizontal: horizontalPadding,
-                  vertical: verticalPadding,
-                ),
-                child: Column(
-                  children: [
-                    // TOP BAR
-                    SizedBox(
-                      height: topBarHeight,
-                      child: GlassContainer(
-                        blur: _globalGlassBlur,
-                        opacity: _globalGlassOpacity,
-                        tint: _globalGlassTint,
-                        borderRadius:
-                            BorderRadius.circular(topBarHeight / 2),
-                        padding:
-                            EdgeInsets.symmetric(horizontal: 14.0 * scale),
-                        borderOpacity: 0.16,
-                        borderWidth: 1,
-                        boxShadow: const [
-                          BoxShadow(
-                            color: Color(0x2A000000),
-                            blurRadius: 14,
-                            offset: Offset(0, 8),
-                          ),
-                        ],
-                        child: Row(
-                          children: [
-                            Icon(Icons.blur_on_rounded,
-                                size: 14 * scale, color: Colors.cyan),
-                            SizedBox(width: 6 * scale),
-                            Text(
-                              'Wall‑D • Dynamic Screen',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w600,
-                                fontSize: 12 * scale,
-                              ),
-                            ),
-                            const Spacer(),
-                            if (_currentUser != null)
-                              IconButton(
-                                tooltip: 'Sign out',
-                                icon: Icon(
-                                  Icons.logout,
-                                  size: 16 * scale,
-                                  color: Colors.white70,
+      return Scaffold(
+        backgroundColor: Colors.transparent,
+        body: Container(
+          decoration: _backgroundDecoration(),
+          child: SafeArea(
+            child: Padding(
+              padding: EdgeInsets.symmetric(
+                horizontal: horizontalPadding,
+                vertical: verticalPadding,
+              ),
+              child: Column(
+                children: [
+                  // TOP BAR (fixed height + centered WorkspaceSwitcher)
+                  SizedBox(
+                    height: topBarHeight,
+                    child: GlassContainer(
+                      blur: _globalGlassBlur,
+                      opacity: _globalGlassOpacity,
+                      tint: _globalGlassTint,
+                      borderRadius: BorderRadius.circular(topBarHeight / 2),
+                      padding: EdgeInsets.symmetric(horizontal: 14.0 * scale),
+                      borderOpacity: 0.16,
+                      borderWidth: 1,
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color(0x2A000000),
+                          blurRadius: 14,
+                          offset: Offset(0, 8),
+                        ),
+                      ],
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          // LEFT: title
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.blur_on_rounded,
+                                  size: 14 * scale,
+                                  color: Colors.cyan,
                                 ),
-                                onPressed: _signOut,
-                              ),
-                            Icon(Icons.cloud_done,
-                                size: 13 * scale,
-                                color: Colors.greenAccent),
-                            SizedBox(width: 4 * scale),
-                            Text(
-                              'default_tenant',
-                              style: TextStyle(
-                                color: Colors.white70,
-                                fontSize: 11 * scale,
-                              ),
-                            ),
-                            SizedBox(width: 6 * scale),
-                            PopupMenuButton<_SettingsAction>(
-                              tooltip: 'Settings',
-                              padding: EdgeInsets.zero,
-                              offset: Offset(0, topBarHeight + 8),
-                              color: const Color(0xFF0B0B12),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                side: const BorderSide(
-                                    color: Color(0x33FFFFFF)),
-                              ),
-                              onSelected: (action) async {
-                                switch (action) {
-                                  case _SettingsAction.pickWallpaper:
-                                    await _pickWallpaperFromWindows();
-                                    break;
-                                  case _SettingsAction.resetWallpaper:
-                                    await _resetWallpaper();
-                                    break;
-                                  case _SettingsAction.glassSettings:
-                                    await _openGlobalGlassSheet();
-                                    break;
-                                }
-                              },
-                              itemBuilder: (context) => const [
-                                PopupMenuItem(
-                                  value: _SettingsAction.pickWallpaper,
-                                  child: _MenuRow(
-                                    icon: Icons.wallpaper,
-                                    text: 'Change wallpaper…',
-                                  ),
-                                ),
-                                PopupMenuItem(
-                                  value: _SettingsAction.resetWallpaper,
-                                  child: _MenuRow(
-                                    icon: Icons.refresh_rounded,
-                                    text: 'Reset wallpaper',
-                                  ),
-                                ),
-                                PopupMenuItem(
-                                  value: _SettingsAction.glassSettings,
-                                  child: _MenuRow(
-                                    icon: Icons.blur_on_rounded,
-                                    text: 'Glass settings…',
+                                SizedBox(width: 6 * scale),
+                                Text(
+                                  'Wall-D · Dynamic Screen',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 12 * scale,
                                   ),
                                 ),
                               ],
-                              child: Padding(
-                                padding: EdgeInsets.all(4 * scale),
-                                child: Icon(
-                                  Icons.settings_rounded,
-                                  size: 16 * scale,
-                                  color: Colors.white70,
-                                ),
+                            ),
+                          ),
+
+                          // CENTER: workspace tabs (Dashboard / Task)
+                          if (widget.workspaceController != null)
+                            Align(
+                              alignment: Alignment.center,
+                              child: WorkspaceSwitcher(
+                                controller: widget.workspaceController!,
                               ),
                             ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    SizedBox(height: mainSpacing),
 
-                    // STATIC CHIPS (cannot hide widgets)
-                    if (_currentUser != null) ...[
-                      SizedBox(
-                        height: chipHeight,
-                        child: ListView.separated(
-                          scrollDirection: Axis.horizontal,
-                          itemCount: widgetManifest.length,
-                          separatorBuilder: (_, __) =>
-                              SizedBox(width: 6 * scale),
-                          itemBuilder: (context, index) {
-                            final w = widgetManifest[index];
-                            final id = w['id'] as String;
-                            final name = w['name'] as String;
-
-                            if (id == 'login') {
-                              return const SizedBox.shrink();
-                            }
-
-                            return Container(
-                              padding: EdgeInsets.symmetric(
-                                horizontal: 14 * scale,
-                              ),
-                              decoration: ShapeDecoration(
-                                color: Colors.cyan.withOpacity(0.15),
-                                shape: StadiumBorder(
-                                  side: BorderSide(
-                                    color:
-                                        Colors.cyanAccent.withOpacity(0.6),
+                          // RIGHT: actions
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (_currentUser != null)
+                                  IconButton(
+                                    tooltip: 'Sign out',
+                                    icon: Icon(
+                                      Icons.logout,
+                                      size: 16 * scale,
+                                      color: Colors.white70,
+                                    ),
+                                    onPressed: _signOut,
+                                  ),
+                                Icon(
+                                  Icons.cloud_done,
+                                  size: 13 * scale,
+                                  color: Colors.greenAccent,
+                                ),
+                                SizedBox(width: 4 * scale),
+                                Text(
+                                  'default_tenant',
+                                  style: TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 11 * scale,
                                   ),
                                 ),
-                              ),
-                              alignment: Alignment.center,
-                              child: Text(
-                                name,
-                                style: TextStyle(
-                                  color: Colors.cyanAccent,
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 11 * scale,
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                      SizedBox(height: mainSpacing),
-                    ],
-
-                    // MAIN AREA
-                    Expanded(
-                      child: LayoutBuilder(
-                        builder: (context, constraints) {
-                          final maxW = constraints.maxWidth;
-                          final maxH = constraints.maxHeight;
-
-                          final cellW = maxW / _grid.columns;
-                          final cellH = maxH / _grid.rows;
-
-                          return Stack(
-                            children: visibleItems
-                                .map(
-                                  (item) => _buildGridWidget(
-                                    item: item,
-                                    cellW: cellW,
-                                    cellH: cellH,
-                                    maxW: maxW,
-                                    maxH: maxH,
+                                SizedBox(width: 6 * scale),
+                                PopupMenuButton<_SettingsAction>(
+                                  tooltip: 'Settings',
+                                  padding: EdgeInsets.zero,
+                                  offset: Offset(0, topBarHeight + 8),
+                                  color: const Color(0xFF0B0B12),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                    side: const BorderSide(
+                                      color: Color(0x33FFFFFF),
+                                    ),
                                   ),
-                                )
-                                .toList(),
-                          );
-                        },
+                                  onSelected: (action) async {
+                                    switch (action) {
+                                      case _SettingsAction.pickWallpaper:
+                                        await _pickWallpaperFromWindows();
+                                        break;
+                                      case _SettingsAction.resetWallpaper:
+                                        await _resetWallpaper();
+                                        break;
+                                      case _SettingsAction.glassSettings:
+                                        await _openGlobalGlassSheet();
+                                        break;
+                                    }
+                                  },
+                                  itemBuilder: (context) => const [
+                                    PopupMenuItem(
+                                      value: _SettingsAction.pickWallpaper,
+                                      child: _MenuRow(
+                                        icon: Icons.wallpaper,
+                                        text: 'Change wallpaper…',
+                                      ),
+                                    ),
+                                    PopupMenuItem(
+                                      value: _SettingsAction.resetWallpaper,
+                                      child: _MenuRow(
+                                        icon: Icons.refresh_rounded,
+                                        text: 'Reset wallpaper',
+                                      ),
+                                    ),
+                                    PopupMenuItem(
+                                      value: _SettingsAction.glassSettings,
+                                      child: _MenuRow(
+                                        icon: Icons.blur_on_rounded,
+                                        text: 'Glass settings…',
+                                      ),
+                                    ),
+                                  ],
+                                  child: Padding(
+                                    padding: EdgeInsets.all(4 * scale),
+                                    child: Icon(
+                                      Icons.settings_rounded,
+                                      size: 16 * scale,
+                                      color: Colors.white70,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  ],
-                ),
+                  ),
+
+                  SizedBox(height: mainSpacing),
+
+                  // STATIC CHIPS (disabled)
+                  // if (false) ...[ ... ],
+
+                  // MAIN AREA (grid widgets)
+                  Expanded(
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final maxW = constraints.maxWidth;
+                        final maxH = constraints.maxHeight;
+
+                        final cellW = maxW / _grid.columns;
+                        final cellH = maxH / _grid.rows;
+
+                        return Stack(
+                          children: visibleItems
+                              .map(
+                                (item) => _buildGridWidget(
+                                  item: item,
+                                  cellW: cellW,
+                                  cellH: cellH,
+                                  maxW: maxW,
+                                  maxH: maxH,
+                                ),
+                              )
+                              .toList(),
+                        );
+                      },
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
-        );
-      },
-    );
-  }
+        ),
+      );
+    },
+  );
+}
 
   Widget _buildGridWidget({
     required ScreenGridWidgetSpan item,
@@ -6192,6 +6270,188 @@ class ScreenGridWidgetSpan {
 
 ================================================================================
 
+// File: lib\dynamic_screen\model\task_form_models.dart
+import 'dart:convert';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+enum TaskFieldType { text, dropdown, date }
+
+TaskFieldType _parseFieldType(String raw) {
+  switch (raw) {
+    case 'dropdown':
+      return TaskFieldType.dropdown;
+    case 'date':
+      return TaskFieldType.date;
+    case 'text':
+    default:
+      return TaskFieldType.text;
+  }
+}
+
+class TaskFormFieldConfig {
+  final String id;
+  final String label;
+  final bool required;
+  final TaskFieldType type;
+  final List<String> options;
+
+  TaskFormFieldConfig({
+    required this.id,
+    required this.label,
+    required this.required,
+    required this.type,
+    this.options = const [],
+  });
+
+  factory TaskFormFieldConfig.fromMap(Map<String, dynamic> map) {
+    return TaskFormFieldConfig(
+      id: map['id'] as String,
+      label: (map['label'] as String?) ?? map['id'] as String,
+      required: (map['required'] as bool?) ?? false,
+      type: _parseFieldType(map['type'] as String? ?? 'text'),
+      options: (map['options'] as List<dynamic>?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          const [],
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'label': label,
+      'required': required,
+      'type': switch (type) {
+        TaskFieldType.text => 'text',
+        TaskFieldType.dropdown => 'dropdown',
+        TaskFieldType.date => 'date',
+      },
+      'options': options,
+    };
+  }
+}
+
+class TaskFormDefinition {
+  final String name;
+  final String description;
+  final List<TaskFormFieldConfig> fields;
+
+  TaskFormDefinition({
+    required this.name,
+    required this.description,
+    required this.fields,
+  });
+
+  factory TaskFormDefinition.fromDoc(DocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>? ?? {};
+    final schema = data['schema'] as Map<String, dynamic>? ?? {};
+    final List<dynamic> rawFields = schema['fields'] as List<dynamic>? ?? [];
+    final fields = rawFields
+        .map((f) => TaskFormFieldConfig.fromMap(f as Map<String, dynamic>))
+        .toList();
+
+    return TaskFormDefinition(
+      name: data['name'] as String? ?? 'Create Task',
+      description:
+          data['description'] as String? ?? 'Form to create and assign tasks',
+      fields: fields,
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'name': name,
+      'description': description,
+      'schema': {
+        'fields': fields.map((f) => f.toMap()).toList(),
+      },
+    };
+  }
+
+  factory TaskFormDefinition.fromCacheJson(String json) {
+    final data = jsonDecode(json) as Map<String, dynamic>;
+    final schema = data['schema'] as Map<String, dynamic>? ?? {};
+    final List<dynamic> rawFields = schema['fields'] as List<dynamic>? ?? [];
+    final fields = rawFields
+        .map((f) => TaskFormFieldConfig.fromMap(f as Map<String, dynamic>))
+        .toList();
+
+    return TaskFormDefinition(
+      name: data['name'] as String? ?? 'Create Task',
+      description:
+          data['description'] as String? ?? 'Form to create and assign tasks',
+      fields: fields,
+    );
+  }
+}
+
+class TaskFormRepository {
+  static const _prefsFormKey = 'cached_task_creation_form';
+
+  final String tenantId;
+
+  TaskFormRepository({required this.tenantId});
+
+  Future<TaskFormDefinition> loadCreateTaskFormOnce() async {
+    final prefs = await SharedPreferences.getInstance();
+    final cached = prefs.getString(_prefsFormKey);
+    if (cached != null) {
+      return TaskFormDefinition.fromCacheJson(cached);
+    }
+
+    final docRef = FirebaseFirestore.instance
+        .collection('tenants')
+        .doc(tenantId)
+        .collection('forms')
+        .doc('task_creation');
+
+    final snap = await docRef.get();
+    final def = TaskFormDefinition.fromDoc(snap);
+
+    await prefs.setString(_prefsFormKey, jsonEncode(def.toMap()));
+    return def;
+  }
+
+  Future<void> createTask({
+    required String createdBy,
+    required Map<String, dynamic> values,
+  }) async {
+    final tasksCol = FirebaseFirestore.instance
+        .collection('tenants')
+        .doc(tenantId)
+        .collection('tasks');
+
+    final now = DateTime.now();
+    final core = <String, dynamic>{
+      'title': values['title'] ?? '',
+      'description': values['description'] ?? '',
+      'status': 'PENDING',
+      'created_by': createdBy,
+      'created_at': now.toIso8601String(),
+      'updated_at': now.toIso8601String(),
+    };
+
+    if (values['dueDate'] != null && values['dueDate'] is DateTime) {
+      core['due_date'] = (values['dueDate'] as DateTime).toIso8601String();
+    }
+
+    final custom = Map<String, dynamic>.from(values)
+      ..remove('title')
+      ..remove('description')
+      ..remove('dueDate');
+
+    if (custom.isNotEmpty) {
+      core['custom_fields'] = custom;
+    }
+
+    await tasksCol.add(core);
+  }
+}
+
+================================================================================
+
 // File: lib\dynamic_screen\model\widget.dart
 class WidgetModel {
   final String id;
@@ -6305,10 +6565,25 @@ class CompleteTaskWidget extends StatelessWidget {
 
 // File: lib\dynamic_screen\widgets\create_task_widget.dart
 import 'dart:math' as math;
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+
+import '../../Developer/DynamicForms/dynamic_forms_repository.dart';
+import '../../Developer/DynamicForms/form_models.dart';
 
 class CreateTaskWidget extends StatelessWidget {
   const CreateTaskWidget({Key? key}) : super(key: key);
+
+  void _openFormDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      barrierColor: Colors.black.withOpacity(0.55),
+      builder: (_) => const _CreateTaskFormDialog(),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -6318,76 +6593,584 @@ class CreateTaskWidget extends StatelessWidget {
         final maxH = constraints.maxHeight;
         final shortest = math.min(maxW, maxH);
 
-        // Clamp so resizing very small doesn't destroy layout
         final double unit = (shortest / 8.0).clamp(10.0, 48.0);
-
         final double radius = (unit * 0.85).clamp(12.0, 42.0);
         final double margin = (unit * 0.25).clamp(4.0, 12.0);
-        final EdgeInsets padding = EdgeInsets.all((unit * 0.75).clamp(8.0, 28.0));
-
+        final EdgeInsets padding =
+            EdgeInsets.all((unit * 0.75).clamp(8.0, 28.0));
         final double titleFont = (unit * 1.05).clamp(12.0, 26.0);
         final double bodyFont = (unit * 0.70).clamp(10.0, 18.0);
-        final double smallFont = (unit * 0.60).clamp(9.0, 16.0);
         final double gap = (unit * 0.60).clamp(6.0, 18.0);
 
-        return Container(
-          margin: EdgeInsets.all(margin),
-          decoration: BoxDecoration(
-            color: const Color(0x6611111C),
-            borderRadius: BorderRadius.circular(radius),
-            border: Border.all(color: const Color(0x22FFFFFF)),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x33000000),
-                blurRadius: 18,
-                offset: Offset(0, 10),
-              ),
-            ],
-          ),
-          padding: padding,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Create Task',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: titleFont,
-                  fontWeight: FontWeight.w700,
+        return InkWell(
+          onTap: () => _openFormDialog(context),
+          borderRadius: BorderRadius.circular(radius),
+          child: Container(
+            margin: EdgeInsets.all(margin),
+            decoration: BoxDecoration(
+              color: const Color(0x6611111C),
+              borderRadius: BorderRadius.circular(radius),
+              border: Border.all(color: const Color(0x22FFFFFF)),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x33000000),
+                  blurRadius: 18,
+                  offset: Offset(0, 10),
                 ),
-              ),
-              SizedBox(height: gap),
-              Expanded(
-                child: Text(
-                  'Quick entry panel to create a new task (demo).',
-                  maxLines: 4,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: Colors.white70,
-                    fontSize: bodyFont,
-                    height: 1.2,
-                  ),
-                ),
-              ),
-              Align(
-                alignment: Alignment.bottomRight,
-                child: Text(
-                  'Demo widget content',
+              ],
+            ),
+            padding: padding,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Create Task',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: Colors.white38,
-                    fontSize: smallFont,
+                    color: Colors.white,
+                    fontSize: titleFont,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
-              ),
-            ],
+                SizedBox(height: gap),
+                Expanded(
+                  child: Text(
+                    'Click to open the task creation form.',
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: bodyFont,
+                      height: 1.2,
+                    ),
+                  ),
+                ),
+                Align(
+                  alignment: Alignment.bottomRight,
+                  child: Text(
+                    'Tap to create',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.cyanAccent.withOpacity(0.8),
+                      fontSize: bodyFont * 0.9,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         );
       },
     );
+  }
+}
+
+class _CreateTaskFormDialog extends StatefulWidget {
+  const _CreateTaskFormDialog({Key? key}) : super(key: key);
+
+  @override
+  State<_CreateTaskFormDialog> createState() => _CreateTaskFormDialogState();
+}
+
+class _CreateTaskFormDialogState extends State<_CreateTaskFormDialog> {
+  static const String tenantId = 'default_tenant';
+
+  static FormSchemaMeta? _cachedTaskCreationForm;
+  static Object? _cachedLoadError;
+
+  final DynamicFormsRepository _repo = DynamicFormsRepository();
+  final GlobalKey<_DynamicFormRendererState> _rendererKey =
+      GlobalKey<_DynamicFormRendererState>();
+
+  FormSchemaMeta? _form;
+  bool _loading = true;
+  bool _submitting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (_cachedTaskCreationForm != null || _cachedLoadError != null) {
+      _form = _cachedTaskCreationForm;
+      _loading = false;
+    } else {
+      _loadFormOnce();
+    }
+  }
+
+  Future<void> _loadFormOnce() async {
+    try {
+      final forms = await _repo.loadForms(tenantId);
+      final found = forms.firstWhere(
+        (f) => f.formId == 'task_creation',
+        orElse: () => forms.first,
+      );
+      _cachedTaskCreationForm = found;
+      _cachedLoadError = null;
+      if (!mounted) return;
+      setState(() {
+        _form = found;
+        _loading = false;
+      });
+    } catch (e) {
+      _cachedLoadError = e;
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _createTaskFromPayload(Map<String, dynamic> values) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    setState(() => _submitting = true);
+    try {
+      final now = DateTime.now();
+      final tasksCol = FirebaseFirestore.instance
+          .collection('tenants')
+          .doc(tenantId)
+          .collection('tasks');
+
+      final data = <String, dynamic>{
+        'title': values['title'] ?? '',
+        'description': values['description'] ?? '',
+        'status': 'PENDING',
+        'created_by': user.uid,
+        'created_at': now.toIso8601String(),
+        'updated_at': now.toIso8601String(),
+        'custom_fields': values,
+      };
+
+      if (values['dueDate'] is DateTime) {
+        data['due_date'] = (values['dueDate'] as DateTime).toIso8601String();
+      }
+
+      await tasksCol.add(data);
+
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Task created')),
+      );
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  Future<void> _onCreatePressed() async {
+    final state = _rendererKey.currentState;
+    if (state == null) return;
+    final payload = await state.submitExternally();
+    if (payload == null) return;
+    await _createTaskFromPayload(payload);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final size = MediaQuery.of(context).size;
+    final shortest = math.min(size.width, size.height);
+    final double unit = (shortest / 8.0).clamp(10.0, 48.0);
+    final double titleFont = (unit * 1.05).clamp(14.0, 26.0);
+    final double bodyFont = (unit * 0.70).clamp(11.0, 18.0);
+    final double gap = (unit * 0.60).clamp(6.0, 18.0);
+    final double radius = (unit * 0.85).clamp(16.0, 32.0);
+
+    final loadError = _cachedLoadError;
+
+    return Center(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: size.width * 0.6,
+          maxHeight: size.height * 0.75,
+        ),
+        child: Material(
+          color: const Color(0xFF11111C),
+          elevation: 24,
+          shadowColor: Colors.black87,
+          borderRadius: BorderRadius.circular(radius),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : (_form == null)
+                    ? Center(
+                        child: Text(
+                          loadError == null
+                              ? 'Create Task form config not available.'
+                              : 'Failed to load form: $loadError',
+                          style: const TextStyle(color: Colors.redAccent),
+                        ),
+                      )
+                    : Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Text(
+                                _form!.name,
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: titleFont,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const Spacer(),
+                              IconButton(
+                                icon: const Icon(
+                                  Icons.close,
+                                  color: Colors.white70,
+                                ),
+                                onPressed: () => Navigator.of(context).pop(),
+                              ),
+                            ],
+                          ),
+                          SizedBox(height: gap / 2),
+                          Text(
+                            _form!.description,
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: bodyFont * 0.9,
+                            ),
+                          ),
+                          SizedBox(height: gap),
+                          Expanded(
+                            child: _DynamicFormRenderer(
+                              key: _rendererKey,
+                              tenantId: tenantId,
+                              form: _form!,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: ElevatedButton(
+                              onPressed: _submitting ? null : _onCreatePressed,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.cyanAccent,
+                                foregroundColor: Colors.black,
+                              ),
+                              child: _submitting
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        valueColor:
+                                            AlwaysStoppedAnimation<Color>(
+                                          Colors.black,
+                                        ),
+                                      ),
+                                    )
+                                  : const Text('Create Task'),
+                            ),
+                          ),
+                        ],
+                      ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DynamicFormRenderer extends StatefulWidget {
+  final String tenantId;
+  final FormSchemaMeta form;
+
+  const _DynamicFormRenderer({
+    super.key,
+    required this.tenantId,
+    required this.form,
+  });
+
+  @override
+  State<_DynamicFormRenderer> createState() => _DynamicFormRendererState();
+}
+
+class _DynamicFormRendererState extends State<_DynamicFormRenderer> {
+  final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
+
+  final Map<String, TextEditingController> _controllers = {};
+  final Map<String, dynamic> _values = {};
+  final Map<String, bool> _checkboxValues = {};
+  final Map<String, String?> _dropdownValues = {};
+  final Map<String, List<DropdownMenuItem<String>>> _dropdownItems = {};
+  final Map<String, bool> _loadingDropdown = {};
+
+  @override
+  void initState() {
+    super.initState();
+
+    for (final field in widget.form.fields) {
+      if (field.type == 'checkbox') {
+        _checkboxValues[field.id] = false;
+      } else if (field.type == 'dropdown') {
+        _dropdownValues[field.id] =
+            field.options.isNotEmpty ? field.options.first.toString() : null;
+        _loadDropdownOptions(field);
+      } else {
+        _controllers[field.id] = TextEditingController();
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    for (final c in _controllers.values) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  Future<void> _loadDropdownOptions(FormFieldMeta field) async {
+    final canLoadFromFirestore = field.dataSource == 'firestore' &&
+        field.collection != null &&
+        field.displayField != null &&
+        field.valueField != null;
+
+    if (!canLoadFromFirestore) {
+      _dropdownItems[field.id] = field.options
+          .map(
+            (o) => DropdownMenuItem<String>(
+              value: o.toString(),
+              child: Text(o.toString()),
+            ),
+          )
+          .toList();
+      if (mounted) setState(() {});
+      return;
+    }
+
+    if (mounted) setState(() => _loadingDropdown[field.id] = true);
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('tenants/${widget.tenantId}/${field.collection}')
+          .get();
+
+      final items = snap.docs.map((doc) {
+        final data = doc.data();
+        final value = (data[field.valueField] ?? doc.id).toString();
+        final label = (data[field.displayField] ?? value).toString();
+        return DropdownMenuItem<String>(
+          value: value,
+          child: Text(label),
+        );
+      }).toList();
+
+      _dropdownItems[field.id] = items;
+      if (_dropdownValues[field.id] == null && items.isNotEmpty) {
+        _dropdownValues[field.id] = items.first.value;
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _loadingDropdown[field.id] = false);
+      }
+    }
+  }
+
+  String? _runValidation(FormFieldMeta field, String value) {
+    if (field.required && value.isEmpty) {
+      return '${field.label} is required';
+    }
+
+    if (field.type == 'email' && value.isNotEmpty) {
+      final ok = RegExp(r'^[^@]+@[^@]+\.[^@]+$').hasMatch(value);
+      if (!ok) return 'Invalid email';
+    }
+
+    if (field.validation != null && value.isNotEmpty) {
+      final re = RegExp(field.validation!);
+      if (!re.hasMatch(value)) {
+        return 'Invalid ${field.label}';
+      }
+    }
+
+    return null;
+  }
+
+  Future<Map<String, dynamic>?> submitExternally() async {
+    final ok = _formKey.currentState?.validate() ?? false;
+    if (!ok) return null;
+
+    for (final entry in _controllers.entries) {
+      _values[entry.key] = entry.value.text.trim();
+    }
+    for (final entry in _checkboxValues.entries) {
+      _values[entry.key] = entry.value;
+    }
+    for (final entry in _dropdownValues.entries) {
+      _values[entry.key] = entry.value;
+    }
+
+    return Map<String, dynamic>.from(_values);
+  }
+
+  Widget _buildField(FormFieldMeta field) {
+    switch (field.type) {
+      case 'email':
+      case 'text':
+      case 'password':
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 16.0),
+          child: TextFormField(
+            controller: _controllers[field.id],
+            obscureText: field.type == 'password',
+            decoration: InputDecoration(
+              labelText: field.label,
+              floatingLabelBehavior: FloatingLabelBehavior.auto,
+            ),
+            validator: (v) => _runValidation(field, (v ?? '').trim()),
+          ),
+        );
+
+      case 'dropdown':
+        final loading = _loadingDropdown[field.id] ?? false;
+        final items = _dropdownItems[field.id] ??
+            field.options
+                .map(
+                  (o) => DropdownMenuItem<String>(
+                    value: o.toString(),
+                    child: Text(o.toString()),
+                  ),
+                )
+                .toList();
+
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 16.0),
+          child: DropdownButtonFormField<String>(
+            value: _dropdownValues[field.id],
+            decoration: InputDecoration(
+              labelText: field.label,
+              floatingLabelBehavior: FloatingLabelBehavior.auto,
+            ),
+            dropdownColor: const Color(0xFF111118),
+            items: items,
+            validator: (v) {
+              if (field.required && (v == null || v.isEmpty)) {
+                return '${field.label} is required';
+              }
+              return null;
+            },
+            onChanged: loading
+                ? null
+                : (v) {
+                    setState(() => _dropdownValues[field.id] = v);
+                  },
+          ),
+        );
+
+      case 'checkbox':
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 8.0),
+          child: CheckboxListTile(
+            value: _checkboxValues[field.id] ?? false,
+            onChanged: (v) {
+              setState(() => _checkboxValues[field.id] = v ?? false);
+            },
+            title: Text(
+              field.label,
+              style: const TextStyle(color: Colors.white),
+            ),
+            controlAffinity: ListTileControlAffinity.leading,
+            contentPadding: EdgeInsets.zero,
+          ),
+        );
+
+      case 'date':
+        return _DynamicDateField(
+          label: field.label,
+          required: field.required,
+          onChanged: (value) => _values[field.id] = value,
+        );
+
+      default:
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 16.0),
+          child: Text(
+            'Unsupported field type: ${field.type}',
+            style: const TextStyle(color: Colors.redAccent),
+          ),
+        );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.form.fields.isEmpty) {
+      return const Center(
+        child: Text(
+          'This form has no fields.',
+          style: TextStyle(color: Colors.white70),
+        ),
+      );
+    }
+
+    return Form(
+      key: _formKey,
+      child: ListView(
+        children: [
+          ...widget.form.fields.map(_buildField),
+        ],
+      ),
+    );
+  }
+}
+
+class _DynamicDateField extends StatefulWidget {
+  final String label;
+  final bool required;
+  final ValueChanged<DateTime> onChanged;
+
+  const _DynamicDateField({
+    required this.label,
+    required this.required,
+    required this.onChanged,
+  });
+
+  @override
+  State<_DynamicDateField> createState() => _DynamicDateFieldState();
+}
+
+class _DynamicDateFieldState extends State<_DynamicDateField> {
+  DateTime? _value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16.0),
+      child: InkWell(
+        onTap: _pickDate,
+        child: InputDecorator(
+          decoration: InputDecoration(
+            labelText: widget.label,
+          ),
+          child: Text(
+            _value == null
+                ? 'Select date'
+                : '${_value!.year}-${_value!.month.toString().padLeft(2, '0')}-${_value!.day.toString().padLeft(2, '0')}',
+            style: const TextStyle(color: Colors.white),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickDate() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _value ?? now,
+      firstDate: DateTime(now.year - 5),
+      lastDate: DateTime(now.year + 5),
+    );
+    if (picked != null) {
+      setState(() => _value = picked);
+      widget.onChanged(picked);
+    }
   }
 }
 
@@ -6910,6 +7693,551 @@ class ViewAssignedTasksWidget extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+================================================================================
+
+// File: lib\task\task_tabs_manifest.dart
+import 'package:flutter/material.dart';
+import 'pages/create_task_page.dart';
+import 'pages/view_all_tasks_page.dart';
+import 'pages/view_assigned_tasks_page.dart';
+import 'pages/complete_task_page.dart';
+
+class TaskTabIds {
+  static const create = 'create';
+  static const viewAll = 'view_all';
+  static const viewAssigned = 'view_assigned';
+  static const complete = 'complete';
+}
+
+class TaskTabDef {
+  final String id;
+  final String title;
+  final IconData icon;
+  final WidgetBuilder builder;
+
+  TaskTabDef({
+    required this.id,
+    required this.title,
+    required this.icon,
+    required this.builder,
+  });
+}
+
+// IMPORTANT: NOT const
+final List<TaskTabDef> taskTabs = <TaskTabDef>[
+  TaskTabDef(
+    id: TaskTabIds.create,
+    title: 'Create',
+    icon: Icons.add_task_rounded,
+    builder: (_) => const CreateTaskPage(),
+  ),
+  TaskTabDef(
+    id: TaskTabIds.viewAssigned,
+    title: 'Assigned',
+    icon: Icons.assignment_ind_rounded,
+    builder: (_) => const ViewAssignedTasksPage(),
+  ),
+  TaskTabDef(
+    id: TaskTabIds.viewAll,
+    title: 'All',
+    icon: Icons.view_list_rounded,
+    builder: (_) => const ViewAllTasksPage(),
+  ),
+  TaskTabDef(
+    id: TaskTabIds.complete,
+    title: 'Complete',
+    icon: Icons.check_circle_rounded,
+    builder: (_) => const CompleteTaskPage(),
+  ),
+];
+
+================================================================================
+
+// File: lib\task\task_workspace.dart
+import 'dart:io';
+import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../core/glass_container.dart';
+import '../workspace/workspace_controller.dart';
+import '../workspace/workspace_switcher.dart';
+import 'task_tabs_manifest.dart';
+import 'widgets/task_side_panel.dart';
+
+class TaskWorkspace extends StatefulWidget {
+  final WorkspaceController workspaceController;
+
+  const TaskWorkspace({super.key, required this.workspaceController});
+
+  @override
+  State<TaskWorkspace> createState() => _TaskWorkspaceState();
+}
+
+class _TaskWorkspaceState extends State<TaskWorkspace> {
+  String tabId = taskTabs.first.id;
+
+  double glassBlur = 18;
+  double glassOpacity = 0.16;
+
+  @override
+  Widget build(BuildContext context) {
+    final tab = taskTabs.firstWhere((x) => x.id == tabId);
+
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: Container(
+        decoration: _backgroundDecoration(),
+        child: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 12, 18, 14),
+            child: Column(
+              children: [
+                // TOP BAR with centered WorkspaceSwitcher (your existing Stack)
+                SizedBox(
+                  height: 40,
+                  child: GlassContainer(
+                    blur: glassBlur,
+                    opacity: glassOpacity,
+                    tint: Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        const Align(
+                          alignment: Alignment.centerLeft,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.blur_on_rounded,
+                                color: Colors.cyan,
+                                size: 18,
+                              ),
+                              SizedBox(width: 8),
+                              Text(
+                                'Wall-D · Task Workspace',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Align(
+                          alignment: Alignment.center,
+                          child: WorkspaceSwitcher(
+                            controller: widget.workspaceController,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 12),
+
+                // MAIN TASK LAYOUT with slide+fade
+                Expanded(
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 260),
+                    switchInCurve: Curves.easeOutCubic,
+                    switchOutCurve: Curves.easeInCubic,
+                    transitionBuilder: (child, animation) {
+                      final offsetAnimation = Tween<Offset>(
+                        begin: const Offset(-0.04, 0), // from left for contrast
+                        end: Offset.zero,
+                      ).animate(animation);
+                      return FadeTransition(
+                        opacity: animation,
+                        child: SlideTransition(
+                          position: offsetAnimation,
+                          child: child,
+                        ),
+                      );
+                    },
+                    child: Row(
+                      key: ValueKey('task-layout-$tabId'),
+                      children: [
+                        SizedBox(
+                          width: 240,
+                          child: TaskSidePanel(
+                            selectedTabId: tabId,
+                            onSelect: (id) => setState(() => tabId = id),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: GlassContainer(
+                            blur: glassBlur,
+                            opacity: glassOpacity,
+                            tint: Colors.white,
+                            borderRadius: BorderRadius.circular(24),
+                            padding:
+                                const EdgeInsets.fromLTRB(18, 16, 18, 16),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  tab.title,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                Expanded(child: tab.builder(context)),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+  BoxDecoration _backgroundDecoration() {
+  return const BoxDecoration(
+    gradient: LinearGradient(
+      begin: Alignment.topCenter,
+      end: Alignment.bottomCenter,
+      colors: [
+        Color(0xFF050716),
+        Color(0xFF020308),
+      ],
+    ),
+  );
+}
+
+}
+
+
+================================================================================
+
+// File: lib\task\pages\complete_task_page.dart
+import 'package:flutter/material.dart';
+
+class CompleteTaskPage extends StatelessWidget {
+  const CompleteTaskPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      child: Text('Complete Task (full-screen page placeholder)', style: TextStyle(color: Colors.white70)),
+    );
+  }
+}
+
+================================================================================
+
+// File: lib\task\pages\create_task_page.dart
+import 'package:flutter/material.dart';
+
+class CreateTaskPage extends StatelessWidget {
+  const CreateTaskPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      child: Text('Create Task (full-screen page placeholder)', style: TextStyle(color: Colors.white70)),
+    );
+  }
+}
+
+================================================================================
+
+// File: lib\task\pages\view_all_tasks_page.dart
+import 'package:flutter/material.dart';
+
+class ViewAllTasksPage extends StatelessWidget {
+  const ViewAllTasksPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      child: Text('View All Tasks (full-screen page placeholder)', style: TextStyle(color: Colors.white70)),
+    );
+  }
+}
+
+================================================================================
+
+// File: lib\task\pages\view_assigned_tasks_page.dart
+import 'package:flutter/material.dart';
+
+class ViewAssignedTasksPage extends StatelessWidget {
+  const ViewAssignedTasksPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      child: Text('View Assigned Tasks (full-screen page placeholder)', style: TextStyle(color: Colors.white70)),
+    );
+  }
+}
+
+================================================================================
+
+// File: lib\task\widgets\task_side_panel.dart
+import 'package:flutter/material.dart';
+import '../../core/glass_container.dart';
+import '../task_tabs_manifest.dart';
+
+class TaskSidePanel extends StatelessWidget {
+  final String selectedTabId;
+  final ValueChanged<String> onSelect;
+
+  const TaskSidePanel({
+    super.key,
+    required this.selectedTabId,
+    required this.onSelect,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GlassContainer(
+      blur: 16,
+      opacity: 0.10,
+      tint: Colors.white,
+      borderRadius: BorderRadius.circular(20),
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Column(
+        children: [
+          const SizedBox(height: 6),
+          const Text('TASK', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, letterSpacing: 1.2)),
+          const SizedBox(height: 10),
+          Expanded(
+            child: ListView(
+              children: [
+                for (final t in taskTabs)
+                  _item(
+                    selected: selectedTabId == t.id,
+                    icon: t.icon,
+                    title: t.title,
+                    onTap: () => onSelect(t.id),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _item({
+    required bool selected,
+    required IconData icon,
+    required String title,
+    required VoidCallback onTap,
+  }) {
+    final fg = selected ? Colors.cyanAccent : Colors.white70;
+
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        decoration: BoxDecoration(
+          color: selected ? Colors.cyan.withOpacity(0.12) : Colors.transparent,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: selected ? Colors.cyanAccent.withOpacity(0.5) : Colors.white12,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, color: fg, size: 18),
+            const SizedBox(width: 10),
+            Text(title, style: TextStyle(color: fg, fontWeight: selected ? FontWeight.w600 : FontWeight.w400)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+================================================================================
+
+// File: lib\workspace\workspace_controller.dart
+import 'package:flutter/foundation.dart';
+import 'workspace_ids.dart';
+
+class WorkspaceController extends ChangeNotifier {
+  String _current = WorkspaceIds.dashboard;
+
+  String get current => _current;
+
+  void setWorkspace(String id) {
+    if (id == _current) return;
+    _current = id;
+    notifyListeners();
+  }
+}
+
+================================================================================
+
+// File: lib\workspace\workspace_ids.dart
+class WorkspaceIds {
+  static const dashboard = 'dashboard';
+  static const task = 'task';
+}
+
+================================================================================
+
+// File: lib\workspace\workspace_shell.dart
+// lib/workspace/workspace_shell.dart
+import 'package:flutter/material.dart';
+
+import '../dynamic_screen/dashboardpanel.dart';
+import '../task/task_workspace.dart';
+import 'workspace_controller.dart';
+import 'workspace_ids.dart';
+
+class WorkspaceShell extends StatefulWidget {
+  const WorkspaceShell({super.key});
+
+  @override
+  State<WorkspaceShell> createState() => WorkspaceShellState();
+}
+
+class WorkspaceShellState extends State<WorkspaceShell>
+    with SingleTickerProviderStateMixin {
+  late final WorkspaceController controller;
+
+  // Current workspace id: dashboard / task
+  String current = WorkspaceIds.dashboard;
+
+  @override
+  void initState() {
+    super.initState();
+    controller = WorkspaceController();
+    controller.addListener(_onWorkspaceChange);
+  }
+
+  @override
+  void dispose() {
+    controller.removeListener(_onWorkspaceChange);
+    controller.dispose();
+    super.dispose();
+  }
+
+  void _onWorkspaceChange() {
+    final target = controller.current;
+    if (target == current) return;
+
+    setState(() {
+      current = target;
+    });
+  }
+
+  Widget _buildWorkspace(String id) {
+    switch (id) {
+      case WorkspaceIds.dashboard:
+        return DashboardPanel(workspaceController: controller);
+      case WorkspaceIds.task:
+        return TaskWorkspace(workspaceController: controller);
+      default:
+        return DashboardPanel(workspaceController: controller);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // No heavy slide here; just show current workspace.
+    // Use small animations inside each workspace (AnimatedSwitcher, etc.)
+    // to keep tab switching smooth.
+    return _buildWorkspace(current);
+  }
+}
+
+================================================================================
+
+// File: lib\workspace\workspace_switcher.dart
+import 'package:flutter/material.dart';
+import '../core/glass_container.dart';
+import 'workspace_controller.dart';
+import 'workspace_ids.dart';
+
+class WorkspaceSwitcher extends StatelessWidget {
+  final WorkspaceController controller;
+
+  const WorkspaceSwitcher({super.key, required this.controller});
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (_, __) {
+        final current = controller.current;
+
+        return GlassContainer(
+          blur: 16,
+          opacity: 0.10,
+          tint: Colors.white,
+          borderRadius: BorderRadius.circular(999),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _pillIcon(
+                selected: current == WorkspaceIds.dashboard,
+                icon: Icons.dashboard_customize_rounded,
+                tooltip: 'Dashboard',
+                onTap: () => controller.setWorkspace(WorkspaceIds.dashboard),
+              ),
+              const SizedBox(width: 6),
+              _pillIcon(
+                selected: current == WorkspaceIds.task,
+                icon: Icons.task_alt_rounded,
+                tooltip: 'Task',
+                onTap: () => controller.setWorkspace(WorkspaceIds.task),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _pillIcon({
+    required bool selected,
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback onTap,
+  }) {
+    final fg = selected ? Colors.cyanAccent : Colors.white70;
+    final bg = selected ? Colors.cyan.withOpacity(0.16) : Colors.transparent;
+
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            color: bg,
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+              color: selected ? Colors.cyanAccent.withOpacity(0.6) : Colors.white24,
+              width: 1,
+            ),
+          ),
+          child: Icon(icon, size: 18, color: fg),
+        ),
+      ),
     );
   }
 }

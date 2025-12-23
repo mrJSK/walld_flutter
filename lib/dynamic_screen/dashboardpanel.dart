@@ -2,6 +2,9 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:ui';
+import '../workspace/workspace_controller.dart';
+import '../workspace/workspace_switcher.dart';
+
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -78,7 +81,9 @@ class GlassContainer extends StatelessWidget {
 }
 
 class DashboardPanel extends StatefulWidget {
-  const DashboardPanel({Key? key}) : super(key: key);
+  final WorkspaceController? workspaceController;
+
+  const DashboardPanel({super.key, this.workspaceController});
 
   @override
   State<DashboardPanel> createState() => _DashboardPanelState();
@@ -539,240 +544,232 @@ class _DashboardPanelState extends State<DashboardPanel> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, root) {
-        final width = root.maxWidth;
-        final height = root.maxHeight;
-        final shortest = width < height ? width : height;
+Widget build(BuildContext context) {
+  return LayoutBuilder(
+    builder: (context, root) {
+      final width = root.maxWidth;
+      final height = root.maxHeight;
+      final shortest = width < height ? width : height;
 
-        final double scale =
-            shortest < 700 ? 0.7 : (shortest < 1100 ? 0.9 : 1.1);
+      final double scale =
+          shortest < 700 ? 0.7 : (shortest < 1100 ? 0.9 : 1.1);
 
-        final horizontalPadding = 24.0 * scale;
-        final verticalPadding = 12.0 * scale;
-        final mainSpacing = 12.0 * scale;
-        final topBarHeight = 32.0 * scale;
-        final chipHeight = 32.0 * scale;
+      final horizontalPadding = 24.0 * scale;
+      final verticalPadding = 12.0 * scale;
+      final mainSpacing = 12.0 * scale;
+      final topBarHeight = 40.0;
+      final chipHeight = 32.0 * scale;
 
-        final visibleItems = _items
-            .where((item) => _allowedWidgetIds.contains(item.widgetId))
-            .toList();
+      final visibleItems = _items
+          .where((item) => _allowedWidgetIds.contains(item.widgetId))
+          .toList();
 
-        debugPrint(
-            '[UI] currentUser=${_currentUser?.uid} allowed=$_allowedWidgetIds visible=${visibleItems.map((e) => e.widgetId).toList()}');
+      debugPrint(
+        '[UI] currentUser=${_currentUser?.uid} '
+        'allowed=$_allowedWidgetIds '
+        'visible=${visibleItems.map((e) => e.widgetId).toList()}',
+      );
 
-        return Scaffold(
-          backgroundColor: Colors.transparent,
-          body: Container(
-            decoration: _backgroundDecoration(),
-            child: SafeArea(
-              child: Padding(
-                padding: EdgeInsets.symmetric(
-                  horizontal: horizontalPadding,
-                  vertical: verticalPadding,
-                ),
-                child: Column(
-                  children: [
-                    // TOP BAR
-                    SizedBox(
-                      height: topBarHeight,
-                      child: GlassContainer(
-                        blur: _globalGlassBlur,
-                        opacity: _globalGlassOpacity,
-                        tint: _globalGlassTint,
-                        borderRadius:
-                            BorderRadius.circular(topBarHeight / 2),
-                        padding:
-                            EdgeInsets.symmetric(horizontal: 14.0 * scale),
-                        borderOpacity: 0.16,
-                        borderWidth: 1,
-                        boxShadow: const [
-                          BoxShadow(
-                            color: Color(0x2A000000),
-                            blurRadius: 14,
-                            offset: Offset(0, 8),
-                          ),
-                        ],
-                        child: Row(
-                          children: [
-                            Icon(Icons.blur_on_rounded,
-                                size: 14 * scale, color: Colors.cyan),
-                            SizedBox(width: 6 * scale),
-                            Text(
-                              'Wall‑D • Dynamic Screen',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w600,
-                                fontSize: 12 * scale,
-                              ),
-                            ),
-                            const Spacer(),
-                            if (_currentUser != null)
-                              IconButton(
-                                tooltip: 'Sign out',
-                                icon: Icon(
-                                  Icons.logout,
-                                  size: 16 * scale,
-                                  color: Colors.white70,
+      return Scaffold(
+        backgroundColor: Colors.transparent,
+        body: Container(
+          decoration: _backgroundDecoration(),
+          child: SafeArea(
+            child: Padding(
+              padding: EdgeInsets.symmetric(
+                horizontal: horizontalPadding,
+                vertical: verticalPadding,
+              ),
+              child: Column(
+                children: [
+                  // TOP BAR (fixed height + centered WorkspaceSwitcher)
+                  SizedBox(
+                    height: topBarHeight,
+                    child: GlassContainer(
+                      blur: _globalGlassBlur,
+                      opacity: _globalGlassOpacity,
+                      tint: _globalGlassTint,
+                      borderRadius: BorderRadius.circular(topBarHeight / 2),
+                      padding: EdgeInsets.symmetric(horizontal: 14.0 * scale),
+                      borderOpacity: 0.16,
+                      borderWidth: 1,
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color(0x2A000000),
+                          blurRadius: 14,
+                          offset: Offset(0, 8),
+                        ),
+                      ],
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          // LEFT: title
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.blur_on_rounded,
+                                  size: 14 * scale,
+                                  color: Colors.cyan,
                                 ),
-                                onPressed: _signOut,
-                              ),
-                            Icon(Icons.cloud_done,
-                                size: 13 * scale,
-                                color: Colors.greenAccent),
-                            SizedBox(width: 4 * scale),
-                            Text(
-                              'default_tenant',
-                              style: TextStyle(
-                                color: Colors.white70,
-                                fontSize: 11 * scale,
-                              ),
-                            ),
-                            SizedBox(width: 6 * scale),
-                            PopupMenuButton<_SettingsAction>(
-                              tooltip: 'Settings',
-                              padding: EdgeInsets.zero,
-                              offset: Offset(0, topBarHeight + 8),
-                              color: const Color(0xFF0B0B12),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                side: const BorderSide(
-                                    color: Color(0x33FFFFFF)),
-                              ),
-                              onSelected: (action) async {
-                                switch (action) {
-                                  case _SettingsAction.pickWallpaper:
-                                    await _pickWallpaperFromWindows();
-                                    break;
-                                  case _SettingsAction.resetWallpaper:
-                                    await _resetWallpaper();
-                                    break;
-                                  case _SettingsAction.glassSettings:
-                                    await _openGlobalGlassSheet();
-                                    break;
-                                }
-                              },
-                              itemBuilder: (context) => const [
-                                PopupMenuItem(
-                                  value: _SettingsAction.pickWallpaper,
-                                  child: _MenuRow(
-                                    icon: Icons.wallpaper,
-                                    text: 'Change wallpaper…',
-                                  ),
-                                ),
-                                PopupMenuItem(
-                                  value: _SettingsAction.resetWallpaper,
-                                  child: _MenuRow(
-                                    icon: Icons.refresh_rounded,
-                                    text: 'Reset wallpaper',
-                                  ),
-                                ),
-                                PopupMenuItem(
-                                  value: _SettingsAction.glassSettings,
-                                  child: _MenuRow(
-                                    icon: Icons.blur_on_rounded,
-                                    text: 'Glass settings…',
+                                SizedBox(width: 6 * scale),
+                                Text(
+                                  'Wall-D · Dynamic Screen',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 12 * scale,
                                   ),
                                 ),
                               ],
-                              child: Padding(
-                                padding: EdgeInsets.all(4 * scale),
-                                child: Icon(
-                                  Icons.settings_rounded,
-                                  size: 16 * scale,
-                                  color: Colors.white70,
-                                ),
+                            ),
+                          ),
+
+                          // CENTER: workspace tabs (Dashboard / Task)
+                          if (widget.workspaceController != null)
+                            Align(
+                              alignment: Alignment.center,
+                              child: WorkspaceSwitcher(
+                                controller: widget.workspaceController!,
                               ),
                             ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    SizedBox(height: mainSpacing),
 
-                    // STATIC CHIPS (cannot hide widgets)
-                    if (_currentUser != null) ...[
-                      SizedBox(
-                        height: chipHeight,
-                        child: ListView.separated(
-                          scrollDirection: Axis.horizontal,
-                          itemCount: widgetManifest.length,
-                          separatorBuilder: (_, __) =>
-                              SizedBox(width: 6 * scale),
-                          itemBuilder: (context, index) {
-                            final w = widgetManifest[index];
-                            final id = w['id'] as String;
-                            final name = w['name'] as String;
-
-                            if (id == 'login') {
-                              return const SizedBox.shrink();
-                            }
-
-                            return Container(
-                              padding: EdgeInsets.symmetric(
-                                horizontal: 14 * scale,
-                              ),
-                              decoration: ShapeDecoration(
-                                color: Colors.cyan.withOpacity(0.15),
-                                shape: StadiumBorder(
-                                  side: BorderSide(
-                                    color:
-                                        Colors.cyanAccent.withOpacity(0.6),
+                          // RIGHT: actions
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (_currentUser != null)
+                                  IconButton(
+                                    tooltip: 'Sign out',
+                                    icon: Icon(
+                                      Icons.logout,
+                                      size: 16 * scale,
+                                      color: Colors.white70,
+                                    ),
+                                    onPressed: _signOut,
+                                  ),
+                                Icon(
+                                  Icons.cloud_done,
+                                  size: 13 * scale,
+                                  color: Colors.greenAccent,
+                                ),
+                                SizedBox(width: 4 * scale),
+                                Text(
+                                  'default_tenant',
+                                  style: TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 11 * scale,
                                   ),
                                 ),
-                              ),
-                              alignment: Alignment.center,
-                              child: Text(
-                                name,
-                                style: TextStyle(
-                                  color: Colors.cyanAccent,
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 11 * scale,
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                      SizedBox(height: mainSpacing),
-                    ],
-
-                    // MAIN AREA
-                    Expanded(
-                      child: LayoutBuilder(
-                        builder: (context, constraints) {
-                          final maxW = constraints.maxWidth;
-                          final maxH = constraints.maxHeight;
-
-                          final cellW = maxW / _grid.columns;
-                          final cellH = maxH / _grid.rows;
-
-                          return Stack(
-                            children: visibleItems
-                                .map(
-                                  (item) => _buildGridWidget(
-                                    item: item,
-                                    cellW: cellW,
-                                    cellH: cellH,
-                                    maxW: maxW,
-                                    maxH: maxH,
+                                SizedBox(width: 6 * scale),
+                                PopupMenuButton<_SettingsAction>(
+                                  tooltip: 'Settings',
+                                  padding: EdgeInsets.zero,
+                                  offset: Offset(0, topBarHeight + 8),
+                                  color: const Color(0xFF0B0B12),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                    side: const BorderSide(
+                                      color: Color(0x33FFFFFF),
+                                    ),
                                   ),
-                                )
-                                .toList(),
-                          );
-                        },
+                                  onSelected: (action) async {
+                                    switch (action) {
+                                      case _SettingsAction.pickWallpaper:
+                                        await _pickWallpaperFromWindows();
+                                        break;
+                                      case _SettingsAction.resetWallpaper:
+                                        await _resetWallpaper();
+                                        break;
+                                      case _SettingsAction.glassSettings:
+                                        await _openGlobalGlassSheet();
+                                        break;
+                                    }
+                                  },
+                                  itemBuilder: (context) => const [
+                                    PopupMenuItem(
+                                      value: _SettingsAction.pickWallpaper,
+                                      child: _MenuRow(
+                                        icon: Icons.wallpaper,
+                                        text: 'Change wallpaper…',
+                                      ),
+                                    ),
+                                    PopupMenuItem(
+                                      value: _SettingsAction.resetWallpaper,
+                                      child: _MenuRow(
+                                        icon: Icons.refresh_rounded,
+                                        text: 'Reset wallpaper',
+                                      ),
+                                    ),
+                                    PopupMenuItem(
+                                      value: _SettingsAction.glassSettings,
+                                      child: _MenuRow(
+                                        icon: Icons.blur_on_rounded,
+                                        text: 'Glass settings…',
+                                      ),
+                                    ),
+                                  ],
+                                  child: Padding(
+                                    padding: EdgeInsets.all(4 * scale),
+                                    child: Icon(
+                                      Icons.settings_rounded,
+                                      size: 16 * scale,
+                                      color: Colors.white70,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  ],
-                ),
+                  ),
+
+                  SizedBox(height: mainSpacing),
+
+                  // STATIC CHIPS (disabled)
+                  // if (false) ...[ ... ],
+
+                  // MAIN AREA (grid widgets)
+                  Expanded(
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final maxW = constraints.maxWidth;
+                        final maxH = constraints.maxHeight;
+
+                        final cellW = maxW / _grid.columns;
+                        final cellH = maxH / _grid.rows;
+
+                        return Stack(
+                          children: visibleItems
+                              .map(
+                                (item) => _buildGridWidget(
+                                  item: item,
+                                  cellW: cellW,
+                                  cellH: cellH,
+                                  maxW: maxW,
+                                  maxH: maxH,
+                                ),
+                              )
+                              .toList(),
+                        );
+                      },
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
-        );
-      },
-    );
-  }
+        ),
+      );
+    },
+  );
+}
 
   Widget _buildGridWidget({
     required ScreenGridWidgetSpan item,

@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'firebase_options.dart';
 import 'Developer/developer_dashboard_screen.dart';
 import 'dynamic_screen/dashboardpanel.dart';
+import 'workspace/workspace_shell.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -59,7 +60,8 @@ class WallDApp extends StatelessWidget {
         scaffoldBackgroundColor: const Color(0xFF05040A),
       ),
       //home: const DashboardPanel(),
-      home: const DeveloperDashboardScreen(),
+      home: const WorkspaceShell(),
+      //home: const DeveloperDashboardScreen(),
     );
   }
 }
