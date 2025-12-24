@@ -3,7 +3,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 import '../core/wallpaper_service.dart';
 import '../dynamic_screen/dashboardpanel.dart';
 import '../task/task_workspace.dart';
-
 import 'universal_top_bar.dart';
 import 'workspace_controller.dart';
 import 'workspace_ids.dart';
@@ -21,24 +20,88 @@ class WorkspaceShell extends StatefulWidget {
   State<WorkspaceShell> createState() => _WorkspaceShellState();
 }
 
-class _WorkspaceShellState extends State<WorkspaceShell> {
+class _WorkspaceShellState extends State<WorkspaceShell>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _animationController;
+  late Animation<Offset> _slideAnimation;
+  late Animation<double> _fadeAnimation;
+  
+  int _currentIndex = 0;
+  int _previousIndex = 0;
+
   @override
   void initState() {
     super.initState();
+    
+    // Load wallpaper service
+    _initWallpaperService();
+    
+    // Initialize animation controller
+    _animationController = AnimationController(
+      duration: const Duration(milliseconds: 500),
+      vsync: this,
+    );
+    
+    // Setup animations
+    _slideAnimation = Tween<Offset>(
+      begin: Offset.zero,
+      end: const Offset(-1.0, 0.0),
+    ).animate(CurvedAnimation(
+      parent: _animationController,
+      curve: Curves.easeInOutCubicEmphasized,
+    ));
+    
+    _fadeAnimation = Tween<double>(
+      begin: 1.0,
+      end: 0.0,
+    ).animate(CurvedAnimation(
+      parent: _animationController,
+      curve: const Interval(0.0, 0.5, curve: Curves.easeOut),
+    ));
+    
     widget.workspaceController.addListener(onWorkspaceChanged);
+  }
+
+  Future<void> _initWallpaperService() async {
+    await WallpaperService.instance.loadSettings();
+    WallpaperService.instance.addListener(_onWallpaperChanged);
+  }
+
+  void _onWallpaperChanged() {
+    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
+    _animationController.dispose();
+    WallpaperService.instance.removeListener(_onWallpaperChanged);
     widget.workspaceController.removeListener(onWorkspaceChanged);
     super.dispose();
   }
 
   void onWorkspaceChanged() {
-    setState(() {});
+    final newIndex = getCurrentIndex();
+    
+    if (newIndex != _currentIndex) {
+      _previousIndex = _currentIndex;
+      _currentIndex = newIndex;
+      
+      final isForward = newIndex > _previousIndex;
+      
+      setState(() {
+        _slideAnimation = Tween<Offset>(
+          begin: Offset.zero,
+          end: Offset(isForward ? -1.0 : 1.0, 0.0),
+        ).animate(CurvedAnimation(
+          parent: _animationController,
+          curve: Curves.easeInOutCubicEmphasized,
+        ));
+      });
+      
+      _animationController.forward(from: 0.0);
+    }
   }
 
-  // --- Global Actions ---
   Future<void> pickWallpaperFromWindows() async {
     await WallpaperService.instance.pickWallpaper();
   }
@@ -68,7 +131,6 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // Drag Handle
                     Container(
                       width: 38,
                       height: 4,
@@ -78,39 +140,17 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
                         borderRadius: BorderRadius.circular(999),
                       ),
                     ),
-                    // Title
                     const Row(
                       children: [
-                        Icon(
-                          Icons.blur_on_rounded,
-                          color: Colors.cyanAccent,
-                          size: 18,
-                        ),
+                        Icon(Icons.blur_on_rounded, color: Colors.cyanAccent, size: 18),
                         SizedBox(width: 8),
-                        Text(
-                          'Glass settings',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 14,
-                          ),
-                        ),
+                        Text('Glass settings', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14)),
                       ],
                     ),
                     const SizedBox(height: 12),
-                    // Opacity Slider
                     Row(
                       children: [
-                        const SizedBox(
-                          width: 70,
-                          child: Text(
-                            'Opacity',
-                            style: TextStyle(
-                              color: Colors.white70,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ),
+                        const SizedBox(width: 70, child: Text('Opacity', style: TextStyle(color: Colors.white70, fontSize: 12))),
                         Expanded(
                           child: Slider(
                             min: 0.04,
@@ -118,26 +158,14 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
                             divisions: 26,
                             value: tempOpacity.clamp(0.04, 0.30),
                             label: tempOpacity.toStringAsFixed(2),
-                            onChanged: (v) {
-                              setModalState(() => tempOpacity = v);
-                            },
+                            onChanged: (v) => setModalState(() => tempOpacity = v),
                           ),
                         ),
                       ],
                     ),
-                    // Blur Slider
                     Row(
                       children: [
-                        const SizedBox(
-                          width: 70,
-                          child: Text(
-                            'Blur',
-                            style: TextStyle(
-                              color: Colors.white70,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ),
+                        const SizedBox(width: 70, child: Text('Blur', style: TextStyle(color: Colors.white70, fontSize: 12))),
                         Expanded(
                           child: Slider(
                             min: 0,
@@ -145,15 +173,12 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
                             divisions: 30,
                             value: tempBlur.clamp(0, 30),
                             label: tempBlur.toStringAsFixed(0),
-                            onChanged: (v) {
-                              setModalState(() => tempBlur = v);
-                            },
+                            onChanged: (v) => setModalState(() => tempBlur = v),
                           ),
                         ),
                       ],
                     ),
                     const SizedBox(height: 8),
-                    // Apply Button
                     Align(
                       alignment: Alignment.centerRight,
                       child: TextButton.icon(
@@ -182,7 +207,7 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
     if (widget.workspaceController.current == WorkspaceIds.task) {
       return 1;
     }
-    return 0; // Default to Dashboard
+    return 0;
   }
 
   @override
@@ -191,63 +216,84 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
       backgroundColor: Colors.transparent,
       body: Stack(
         children: [
-          // 1. Ultra-smooth animated screen switching
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 500), // Slightly longer for smoothness
-            switchInCurve: Curves.easeInOutCubicEmphasized, // Premium curve
-            switchOutCurve: Curves.easeInOutCubic,
-            transitionBuilder: (Widget child, Animation<double> animation) {
-              // Determine direction
-              final isForward = child.key == const ValueKey('task');
-              
-              // Slide animation with custom curve for natural motion
-              final slideAnimation = Tween<Offset>(
-                begin: Offset(isForward ? 1.0 : -1.0, 0.0),
-                end: Offset.zero,
-              ).animate(
-                CurvedAnimation(
-                  parent: animation,
-                  curve: Curves.easeInOutCubicEmphasized, // Smooth deceleration
-                ),
-              );
-              
-              // Fade animation - synchronized throughout the transition
-              final fadeAnimation = Tween<double>(
-                begin: 0.0,
-                end: 1.0,
-              ).animate(
-                CurvedAnimation(
-                  parent: animation,
-                  curve: const Interval(0.0, 0.6, curve: Curves.easeIn), // Fade gradually
-                ),
-              );
-              
-              // Subtle scale for depth perception
-              final scaleAnimation = Tween<double>(
-                begin: 0.95,
-                end: 1.0,
-              ).animate(
-                CurvedAnimation(
-                  parent: animation,
-                  curve: const Interval(0.2, 1.0, curve: Curves.easeOutCubic),
-                ),
-              );
-              
-              return SlideTransition(
-                position: slideAnimation,
-                child: FadeTransition(
-                  opacity: fadeAnimation,
-                  child: ScaleTransition(
-                    scale: scaleAnimation,
-                    child: child,
-                  ),
-                ),
-              );
-            },
-            child: _buildCurrentScreen(),
+          // 🎨 FIXED WALLPAPER LAYER (Never moves/animates)
+          Positioned.fill(
+            child: Container(
+              decoration: WallpaperService.instance.backgroundDecoration,
+            ),
           ),
           
-          // 2. Universal Top Bar (stays fixed during transitions)
+          // 📱 Animated Content Screens (Transparent backgrounds)
+          AnimatedBuilder(
+            animation: _animationController,
+            builder: (context, child) {
+              return Stack(
+                children: [
+                  // Dashboard (index 0)
+                  Offstage(
+                    offstage: _currentIndex != 0 && _animationController.value == 1.0,
+                    child: SlideTransition(
+                      position: _currentIndex == 0
+                          ? Tween<Offset>(
+                              begin: Offset(_previousIndex > 0 ? -1.0 : 1.0, 0.0),
+                              end: Offset.zero,
+                            ).animate(CurvedAnimation(
+                              parent: _animationController,
+                              curve: Curves.easeInOutCubicEmphasized,
+                            ))
+                          : _slideAnimation,
+                      child: FadeTransition(
+                        opacity: _currentIndex == 0
+                            ? Tween<double>(begin: 0.0, end: 1.0).animate(
+                                CurvedAnimation(
+                                  parent: _animationController,
+                                  curve: const Interval(0.3, 1.0, curve: Curves.easeIn),
+                                ),
+                              )
+                            : _fadeAnimation,
+                        child: DashboardPanel(
+                          key: const PageStorageKey('dashboardpanel'),
+                          workspaceController: widget.workspaceController,
+                        ),
+                      ),
+                    ),
+                  ),
+                  
+                  // Task Workspace (index 1)
+                  Offstage(
+                    offstage: _currentIndex != 1 && _animationController.value == 1.0,
+                    child: SlideTransition(
+                      position: _currentIndex == 1
+                          ? Tween<Offset>(
+                              begin: Offset(_previousIndex < 1 ? 1.0 : -1.0, 0.0),
+                              end: Offset.zero,
+                            ).animate(CurvedAnimation(
+                              parent: _animationController,
+                              curve: Curves.easeInOutCubicEmphasized,
+                            ))
+                          : _slideAnimation,
+                      child: FadeTransition(
+                        opacity: _currentIndex == 1
+                            ? Tween<double>(begin: 0.0, end: 1.0).animate(
+                                CurvedAnimation(
+                                  parent: _animationController,
+                                  curve: const Interval(0.3, 1.0, curve: Curves.easeIn),
+                                ),
+                              )
+                            : _fadeAnimation,
+                        child: TaskWorkspace(
+                          key: const PageStorageKey('taskworkspace'),
+                          workspaceController: widget.workspaceController,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+          
+          // 🔝 FIXED UNIVERSAL TOP BAR
           UniversalTopBar(
             workspaceController: widget.workspaceController,
             onWallpaperSettings: pickWallpaperFromWindows,
@@ -257,24 +303,5 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
         ],
       ),
     );
-  }
-
-  // Helper method to build the current screen with unique key
-  Widget _buildCurrentScreen() {
-    final currentIndex = getCurrentIndex();
-    
-    if (currentIndex == 1) {
-      // Task Workspace
-      return TaskWorkspace(
-        key: const ValueKey('task'),
-        workspaceController: widget.workspaceController,
-      );
-    } else {
-      // Dashboard Panel
-      return DashboardPanel(
-        key: const ValueKey('dashboard'),
-        workspaceController: widget.workspaceController,
-      );
-    }
   }
 }

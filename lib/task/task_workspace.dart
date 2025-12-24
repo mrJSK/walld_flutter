@@ -62,7 +62,7 @@ class TaskWorkspaceState extends State<TaskWorkspace> {
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: Container(
-        decoration: WallpaperService.instance.backgroundDecoration,
+        
         child: SafeArea(
           // Adjusted top padding slightly as the internal header is gone
           // (Parent layout with UniversalTopBar should handle top spacing)
