@@ -1,9 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 import '../dynamic_screen/dashboardpanel.dart';
 import '../task/task_workspace.dart';
+import '../core/wallpaper_service.dart';
 import 'workspace_controller.dart';
 import 'workspace_ids.dart';
+
+// IMPORTANT: Ensure this import matches the file you just created
+import 'universal_top_bar.dart'; 
 
 class WorkspaceShell extends StatefulWidget {
   final WorkspaceController workspaceController;
@@ -21,7 +26,6 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
   @override
   void initState() {
     super.initState();
-    // Listen to the controller directly (No Provider needed)
     widget.workspaceController.addListener(_onWorkspaceChanged);
   }
 
@@ -32,44 +36,104 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
   }
 
   void _onWorkspaceChanged() {
-    // Rebuild the shell when the workspace changes
     setState(() {});
   }
 
-  /// Helper to map the current ID to an integer index for IndexedStack
-  int _getCurrentIndex() {
-    final current = widget.workspaceController.current;
-    
-    // Check against IDs defined in lib/workspace/workspace_ids.dart
-    if (current == WorkspaceIds.dashboard) {
-      return 0;
-    } else if (current == WorkspaceIds.task) {
-      return 1;
+  // --- Global Actions ---
+  Future<void> pickWallpaperFromWindows() async {
+    await WallpaperService.instance.pickWallpaper();
+  }
+
+  Future<void> signOut() async {
+    await FirebaseAuth.instance.signOut();
+  }
+
+  Future<void> openGlobalGlassSheet() async {
+    final service = WallpaperService.instance;
+    double tempOpacity = service.globalGlassOpacity;
+    double tempBlur = service.globalGlassBlur;
+
+    final applied = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: const Color(0xFF05040A),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('Glass Settings', style: TextStyle(color: Colors.white, fontSize: 18)),
+                    const SizedBox(height: 20),
+                    Row(
+                      children: [
+                        const Text('Blur', style: TextStyle(color: Colors.white)),
+                        Expanded(child: Slider(value: tempBlur, min: 0, max: 30, onChanged: (v) => setModalState(() => tempBlur = v))),
+                      ],
+                    ),
+                    Row(
+                      children: [
+                        const Text('Opacity', style: TextStyle(color: Colors.white)),
+                        Expanded(child: Slider(value: tempOpacity, min: 0.0, max: 0.5, onChanged: (v) => setModalState(() => tempOpacity = v))),
+                      ],
+                    ),
+                    ElevatedButton(
+                         onPressed: () => Navigator.pop(context, true), 
+                         child: const Text("Apply")
+                    )
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    if (applied == true) {
+      service.setGlassOpacity(tempOpacity);
+      service.setGlassBlur(tempBlur);
+      await service.saveSettings();
     }
-    
-    // Default to dashboard if unknown
-    return 0;
+  }
+
+  int _getCurrentIndex() {
+    if (widget.workspaceController.current == WorkspaceIds.task) return 1;
+    return 0; // Default to Dashboard
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.transparent, // Important for wallpaper visibility
-      body: IndexedStack(
-        index: _getCurrentIndex(),
+      backgroundColor: Colors.transparent,
+      body: Stack(
         children: [
-          // Index 0: Dashboard
-          // Wrapped in a Key so Flutter knows it's the same widget
-          DashboardPanel(
-            key: const PageStorageKey('dashboard_panel'),
-            workspaceController: widget.workspaceController,
+          // 1. Screens (with padding for the top bar)
+          Padding(
+            padding: const EdgeInsets.only(top: 80.0), 
+            child: IndexedStack(
+              index: _getCurrentIndex(),
+              children: [
+                DashboardPanel(
+                  key: const PageStorageKey('dashboard_panel'),
+                  workspaceController: widget.workspaceController,
+                ),
+                TaskWorkspace(
+                  key: const PageStorageKey('task_workspace'),
+                  workspaceController: widget.workspaceController,
+                ),
+              ],
+            ),
           ),
 
-          // Index 1: Task Workspace
-          // Wrapped in a Key
-          TaskWorkspace(
-            key: const PageStorageKey('task_workspace'),
+          // 2. Universal Top Bar
+          UniversalTopBar(
             workspaceController: widget.workspaceController,
+            onWallpaperSettings: pickWallpaperFromWindows,
+            onGlassSettings: openGlobalGlassSheet,
+            onSignOut: signOut,
           ),
         ],
       ),

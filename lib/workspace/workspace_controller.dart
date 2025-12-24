@@ -6,9 +6,13 @@ class WorkspaceController extends ChangeNotifier {
 
   String get current => _current;
 
-  void setWorkspace(String id) {
+  // FIX: Added 'switchTo' to match the call in UniversalTopBar
+  void switchTo(String id) {
     if (id == _current) return;
     _current = id;
     notifyListeners();
   }
+
+  // Optional: Keep this if other files use it, or alias it
+  void setWorkspace(String id) => switchTo(id);
 }

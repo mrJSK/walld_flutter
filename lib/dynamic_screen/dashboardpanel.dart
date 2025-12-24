@@ -10,7 +10,6 @@ import 'dashboard_permissions.dart';
 import 'model/screen_grid.dart';
 import 'model/floating_widget.dart';
 import 'dashboard_grid.dart';
-import 'dashboard_topbar.dart';
 import 'dashboard_drawer.dart';
 
 class DashboardPanel extends StatefulWidget {
@@ -369,10 +368,8 @@ class DashboardPanelState extends State<DashboardPanel> {
   @override
   Widget build(BuildContext context) {
     final user = currentUser ?? FirebaseAuth.instance.currentUser;
-    debugPrint('[DASH] build user = ${user?.uid}');
 
-    // 1. If Logged OUT: Show ONLY 'login' widget
-    // 2. If Logged IN: Show widgets in 'items' that are ALSO in 'allowedWidgetIds'
+    // Filter widgets
     final visibleItems = user == null
         ? items.where((w) => w.widgetId == 'login').toList()
         : items.where((w) => allowedWidgetIds.contains(w.widgetId)).toList();
@@ -384,18 +381,18 @@ class DashboardPanelState extends State<DashboardPanel> {
         child: SafeArea(
           child: Stack(
             children: [
+              // 1. THE GRID
               DashboardGrid(
                 grid: grid,
                 items: visibleItems,
                 onSnap: saveLayout,
               ),
-              DashboardTopBar(
-                workspaceController: widget.workspaceController,
-                onGlassSettings: openGlobalGlassSheet,
-                onWallpaperSettings: pickWallpaperFromWindows,
-                onResetWallpaper: resetWallpaper,
-                onSignOut: signOut,
-              ),
+              
+              // 2. REMOVED: DashboardTopBar
+              // It is now handled by WorkspaceShell
+              
+              // 3. Keep Drawer if you use it, or remove if not needed
+              // const DashboardDrawer(), 
             ],
           ),
         ),
