@@ -53,7 +53,6 @@ Root: lib (lib)
 │   ├── dashboard_grid.dart
 │   ├── dashboard_layout_persistence.dart
 │   ├── dashboard_permissions.dart
-│   ├── dashboard_topbar.dart
 │   ├── dashboardpanel.dart
 │   ├── widget_factory.dart
 │   ├── widget_manifest.dart
@@ -70,6 +69,7 @@ Root: lib (lib)
 │   ├── task_tabs_manifest.dart
 │   └── task_workspace.dart
 ├── workspace/
+│   ├── universal_top_bar.dart
 │   ├── workspace_controller.dart
 │   ├── workspace_ids.dart
 │   ├── workspace_shell.dart
@@ -178,17 +178,15 @@ class DefaultFirebaseOptions {
 ================================================================================
 
 // File: lib\main.dart
-// lib/main.dart
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:window_manager/window_manager.dart';
 import 'dart:io' show Platform;
-import 'package:flutter/services.dart';
 
 import 'firebase_options.dart';
-import 'Developer/developer_dashboard_screen.dart';
-import 'dynamic_screen/dashboardpanel.dart';
 import 'workspace/workspace_shell.dart';
+import 'workspace/workspace_controller.dart'; // <--- Added Import
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -228,8 +226,23 @@ Future<void> _setupWindowsWallpaper() async {
   });
 }
 
-class WallDApp extends StatelessWidget {
+// Changed to StatefulWidget to hold the WorkspaceController
+class WallDApp extends StatefulWidget {
   const WallDApp({super.key});
+
+  @override
+  State<WallDApp> createState() => _WallDAppState();
+}
+
+class _WallDAppState extends State<WallDApp> {
+  // 1. Initialize the controller
+  final WorkspaceController _workspaceController = WorkspaceController();
+
+  @override
+  void dispose() {
+    _workspaceController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -239,9 +252,18 @@ class WallDApp extends StatelessWidget {
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF05040A),
       ),
-      //home: const DashboardPanel(),
-      home: const WorkspaceShell(),
-      //home: const DeveloperDashboardScreen(),
+      home: StreamBuilder<User?>(
+        stream: FirebaseAuth.instance.authStateChanges(),
+        builder: (context, snapshot) {
+          final user = snapshot.data;
+          debugPrint('[MAIN] authStateChanges -> user = ${user?.uid}');
+          
+          // 2. Pass the controller (removed 'const' because controller is not const)
+          return WorkspaceShell(
+            workspaceController: _workspaceController,
+          );
+        },
+      ),
     );
   }
 }
@@ -5247,7 +5269,6 @@ import 'dashboard_permissions.dart';
 import 'model/screen_grid.dart';
 import 'model/floating_widget.dart';
 import 'dashboard_grid.dart';
-import 'dashboard_topbar.dart';
 import 'dashboard_drawer.dart';
 
 class DashboardPanel extends StatefulWidget {
@@ -5274,9 +5295,15 @@ class DashboardPanelState extends State<DashboardPanel> {
   @override
   void initState() {
     super.initState();
+    // 1. Initialize with defaults temporarily
     items = defaultItems();
+    
     _initWallpaperService();
+    
+    // 2. Load saved layout from disk (this might overwrite items with an incomplete list!)
     loadLayout();
+    
+    debugPrint('[DASH] initState -> attaching auth listener');
     listenAuthState();
   }
 
@@ -5301,23 +5328,18 @@ class DashboardPanelState extends State<DashboardPanel> {
 
   void listenAuthState() {
     FirebaseAuth.instance.authStateChanges().listen((user) {
+      debugPrint('[DASH] authStateChanges user = ${user?.uid}');
       currentUser = user;
       if (!mounted) return;
 
       if (user == null) {
+        debugPrint('[DASH] user == null -> login only');
         setState(() {
           allowedWidgetIds = {'login'};
         });
       } else {
-        // Start with all task widgets allowed; will be refined by metadata
-        setState(() {
-          allowedWidgetIds = {
-            'createtask',
-            'viewassignedtasks',
-            'viewalltasks',
-            'completetask',
-          };
-        });
+        debugPrint('[DASH] user logged in, loading permissions');
+        // Load real permissions
         loadUserPermissions(user.uid);
       }
     });
@@ -5331,6 +5353,36 @@ class DashboardPanelState extends State<DashboardPanel> {
         if (!mounted) return;
         setState(() {
           allowedWidgetIds = ids;
+
+          // ============================================================
+          // FIX: RECONCILIATION LOGIC
+          // Check if any allowed widget is MISSING from the current 'items' list
+          // because it wasn't in the saved layout.
+          // ============================================================
+          
+          // 1. What widgets do we currently have in the layout?
+          final currentLayoutIds = items.map((w) => w.widgetId).toSet();
+          
+          // 2. Which allowed widgets are missing?
+          final missingIds = ids.difference(currentLayoutIds);
+
+          if (missingIds.isNotEmpty) {
+            debugPrint('[DASH] Found missing allowed widgets: $missingIds. Restoring them now...');
+            final defaults = defaultItems();
+            
+            for (final missingId in missingIds) {
+              // Try to find the default configuration for this missing widget
+              try {
+                final defaultWidget = defaults.firstWhere((w) => w.widgetId == missingId);
+                items.add(defaultWidget);
+              } catch (e) {
+                debugPrint('[DASH] Warning: No default layout definition found for widgetId: $missingId');
+              }
+            }
+            
+            // 3. Save the repaired layout immediately so they stick
+            saveLayout();
+          }
         });
       },
     );
@@ -5348,6 +5400,11 @@ class DashboardPanelState extends State<DashboardPanel> {
       onLoaded: (loaded) {
         if (!mounted) return;
         setState(() => items = loaded);
+        
+        // Trigger a permission check again in case layout loaded AFTER auth
+        if (currentUser != null) {
+           loadUserPermissions(currentUser!.uid);
+        }
       },
       defaultItemsBuilder: defaultItems,
     );
@@ -5551,17 +5608,16 @@ class DashboardPanelState extends State<DashboardPanel> {
     if (index != -1) {
       setState(() => items.removeAt(index));
     } else {
-      setState(() {
-        items.add(
-          ScreenGridWidgetSpan(
-            widgetId: widgetId,
-            col: 1,
-            row: 2,
-            colSpan: 8,
-            rowSpan: 4,
-          ),
-        );
-      });
+      // Find default to add back
+      final defaults = defaultItems();
+      try {
+        final w = defaults.firstWhere((element) => element.widgetId == widgetId);
+        setState(() {
+          items.add(w);
+        });
+      } catch (e) {
+        debugPrint("Widget ID $widgetId not found in defaults");
+      }
     }
     saveLayout();
   }
@@ -5570,8 +5626,12 @@ class DashboardPanelState extends State<DashboardPanel> {
 
   @override
   Widget build(BuildContext context) {
-    // Show all widgets regardless of permissions
-    final visibleItems = items;
+    final user = currentUser ?? FirebaseAuth.instance.currentUser;
+
+    // Filter widgets
+    final visibleItems = user == null
+        ? items.where((w) => w.widgetId == 'login').toList()
+        : items.where((w) => allowedWidgetIds.contains(w.widgetId)).toList();
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -5580,23 +5640,18 @@ class DashboardPanelState extends State<DashboardPanel> {
         child: SafeArea(
           child: Stack(
             children: [
+              // 1. THE GRID
               DashboardGrid(
                 grid: grid,
                 items: visibleItems,
                 onSnap: saveLayout,
               ),
-              DashboardTopBar(
-                workspaceController: widget.workspaceController,
-                onGlassSettings: openGlobalGlassSheet,
-                onWallpaperSettings: pickWallpaperFromWindows,
-                onResetWallpaper: resetWallpaper,
-                onSignOut: signOut,
-              ),
-              DashboardDrawer(
-                allowedWidgetIds: allowedWidgetIds,
-                items: items,
-                onToggleWidget: toggleWidget,
-              ),
+              
+              // 2. REMOVED: DashboardTopBar
+              // It is now handled by WorkspaceShell
+              
+              // 3. Keep Drawer if you use it, or remove if not needed
+              // const DashboardDrawer(), 
             ],
           ),
         ),
@@ -5980,97 +6035,6 @@ class DashboardPermissions {
 
 ================================================================================
 
-// File: lib\dynamic_screen\dashboard_topbar.dart
-import 'package:flutter/material.dart';
-
-import '../workspace/workspace_controller.dart';
-import '../workspace/workspace_switcher.dart';
-
-class DashboardTopBar extends StatelessWidget {
-  final WorkspaceController? workspaceController;
-  final VoidCallback onGlassSettings;
-  final VoidCallback onWallpaperSettings;
-  final VoidCallback onResetWallpaper;
-  final Future<void> Function() onSignOut;
-
-  const DashboardTopBar({
-    super.key,
-    required this.workspaceController,
-    required this.onGlassSettings,
-    required this.onWallpaperSettings,
-    required this.onResetWallpaper,
-    required this.onSignOut,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Positioned(
-      left: 16,
-      right: 16,
-      top: 12,
-      child: SizedBox(
-        height: 40,
-        child: Row(
-          children: [
-            // Left: App title
-            const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.blur_on_rounded, color: Colors.cyan, size: 18),
-                SizedBox(width: 8),
-                Text(
-                  'Wall-D Dashboard',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-            const Spacer(),
-            // Center: Workspace switcher
-            if (workspaceController != null)
-              WorkspaceSwitcher(controller: workspaceController!),
-            const Spacer(),
-            // Right: actions
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.wallpaper_rounded,
-                      color: Colors.white70, size: 18),
-                  tooltip: 'Change wallpaper',
-                  onPressed: onWallpaperSettings,
-                ),
-                IconButton(
-                  icon: const Icon(Icons.refresh_rounded,
-                      color: Colors.white70, size: 18),
-                  tooltip: 'Reset wallpaper',
-                  onPressed: onResetWallpaper,
-                ),
-                IconButton(
-                  icon: const Icon(Icons.tune_rounded,
-                      color: Colors.white70, size: 18),
-                  tooltip: 'Glass settings',
-                  onPressed: onGlassSettings,
-                ),
-                IconButton(
-                  icon: const Icon(Icons.logout_rounded,
-                      color: Colors.white70, size: 18),
-                  tooltip: 'Sign out',
-                  onPressed: () => onSignOut(),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-================================================================================
-
 // File: lib\dynamic_screen\widgets.dart
 export 'widgets/create_task_widget.dart';
 export 'widgets/view_assigned_tasks_widget.dart';
@@ -6080,27 +6044,59 @@ export 'widgets/view_all_tasks_widget.dart';
 ================================================================================
 
 // File: lib\dynamic_screen\widget_factory.dart
-// lib/dynamic_screen/widget_factory.dart
 import 'package:flutter/material.dart';
-import 'widgets.dart';
 import 'widgets/login_widget.dart';
+import 'widgets/create_task_widget.dart';
+import 'widgets/view_assigned_tasks_widget.dart';
+import 'widgets/view_all_tasks_widget.dart';
+import 'widgets/complete_task_widget.dart';
 
-class WidgetFactory {
-  static Widget createWidget(String widgetId) {
-    switch (widgetId) {
+class DynamicWidgetFactory {
+  static Widget create(String widgetId) {
+    // 1. Normalize the ID: remove underscores and make lowercase
+    // This ensures 'create_task' and 'createtask' both work.
+    final normalizedId = widgetId.toLowerCase().replaceAll('_', '');
+
+    switch (normalizedId) {
       case 'login':
         return const LoginWidget();
-      case 'create_task':
+        
+      case 'createtask':
         return const CreateTaskWidget();
-      case 'view_assigned_tasks':
+        
+      case 'viewassignedtasks':
         return const ViewAssignedTasksWidget();
-      case 'complete_task':
-        return const CompleteTaskWidget();
-      case 'view_all_tasks':
+        
+      case 'viewalltasks':
         return const ViewAllTasksWidget();
+        
+      case 'completetask':
+        return const CompleteTaskWidget();
+
       default:
-        return const Text('Widget not found');
+        // This handles the "Widget Not Found" error gracefully
+        return _buildNotFoundWidget(widgetId);
     }
+  }
+
+  static Widget _buildNotFoundWidget(String id) {
+    return Container(
+      color: Colors.red.withOpacity(0.1),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.broken_image_outlined, color: Colors.red, size: 32),
+            const SizedBox(height: 8),
+            Text(
+              'Unknown Widget\n"$id"',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.red, fontSize: 12),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -7140,34 +7136,18 @@ class _LoginWidgetState extends State<LoginWidget> {
   String? _errorMessage;
 
   Future<void> _signIn() async {
-  if (!_formKey.currentState!.validate()) return;
-
-  setState(() {
-    _isLoading = true;
-    _errorMessage = null;
-  });
-
   try {
-    // Store result in a variable
-    final UserCredential cred =
-        await FirebaseAuth.instance.signInWithEmailAndPassword(
+    final cred = await FirebaseAuth.instance.signInWithEmailAndPassword(
       email: _emailController.text.trim(),
       password: _passwordController.text.trim(),
     );
-
-    debugPrint('Signed in as ${cred.user?.uid}');
-    // DashboardPanel listens to authStateChanges and will react.
+    debugPrint('[LOGIN] Signed in as ${cred.user?.uid}');
+    // No Navigator.push or new DashboardPanel here.
   } on FirebaseAuthException catch (e) {
-    debugPrint('Sign-in failed: ${e.code}');
-    setState(() {
-      _errorMessage = _getErrorMessage(e.code);
-    });
-  } finally {
-    if (mounted) {
-      setState(() => _isLoading = false);
-    }
+    debugPrint('[LOGIN] error: ${e.code} ${e.message}');
   }
 }
+
 
 
   String _getErrorMessage(String code) {
@@ -7791,7 +7771,7 @@ class _FreeDragResizeItemState extends State<FreeDragResizeItem> {
 
   @override
   Widget build(BuildContext context) {
-    final content = WidgetFactory.createWidget(widget.item.widgetId);
+    final content = DynamicWidgetFactory.create(widget.item.widgetId);
 
     final glassCard = GlassContainer(
       blur: widget.globalBlur,
@@ -7945,15 +7925,14 @@ BoxDecoration backgroundDecoration() {
 ================================================================================
 
 // File: lib\task\task_workspace.dart
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/glass_container.dart';
-import '../core/wallpaper_service.dart'; // NEW IMPORT
+import '../core/wallpaper_service.dart';
 import '../workspace/workspace_controller.dart';
-import '../workspace/workspace_switcher.dart';
+// Removed unused WorkspaceSwitcher import
 import 'task_tabs_manifest.dart';
 import 'widgets/task_side_panel.dart';
 
@@ -8001,11 +7980,7 @@ class TaskWorkspaceState extends State<TaskWorkspace> {
     });
   }
 
-  Future<void> _saveGlassSettings() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setDouble('task_glass_blur', glassBlur);
-    await prefs.setDouble('task_glass_opacity', glassOpacity);
-  }
+  
 
   @override
   Widget build(BuildContext context) {
@@ -8013,87 +7988,16 @@ class TaskWorkspaceState extends State<TaskWorkspace> {
 
     return Scaffold(
       backgroundColor: Colors.transparent,
-      // UPDATED: Use wallpaper service
       body: Container(
         decoration: WallpaperService.instance.backgroundDecoration,
         child: SafeArea(
+          // Adjusted top padding slightly as the internal header is gone
+          // (Parent layout with UniversalTopBar should handle top spacing)
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 12, 18, 14),
+            padding: const EdgeInsets.fromLTRB(18, 64, 18, 14),
             child: Column(
               children: [
-                // TOP BAR WITH WORKSPACE SWITCHER
-                SizedBox(
-                  height: 40,
-                  child: GlassContainer(
-                    blur: glassBlur,
-                    opacity: glassOpacity,
-                    tint: Colors.white,
-                    borderRadius: BorderRadius.circular(20),
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
-                    child: Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        const Align(
-                          alignment: Alignment.centerLeft,
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.blur_on_rounded,
-                                color: Colors.cyan,
-                                size: 18,
-                              ),
-                              SizedBox(width: 8),
-                              Text(
-                                'Wall-D Task Workspace',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Align(
-                          alignment: Alignment.center,
-                          child: WorkspaceSwitcher(
-                            controller: widget.workspaceController,
-                          ),
-                        ),
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              // NEW: Wallpaper settings button
-                              IconButton(
-                                icon: const Icon(
-                                  Icons.wallpaper_rounded,
-                                  color: Colors.white70,
-                                  size: 18,
-                                ),
-                                tooltip: 'Wallpaper settings',
-                                onPressed: _openWallpaperSettingsDialog,
-                              ),
-                              IconButton(
-                                icon: const Icon(
-                                  Icons.tune_rounded,
-                                  color: Colors.white70,
-                                  size: 18,
-                                ),
-                                tooltip: 'Glass settings',
-                                onPressed: _openGlassSettingsDialog,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-
-                const SizedBox(height: 12),
+                // REMOVED: Internal Top Bar & Spacer
 
                 // MAIN TASK LAYOUT WITH SLIDE/FADE
                 Expanded(
@@ -8172,140 +8076,7 @@ class TaskWorkspaceState extends State<TaskWorkspace> {
     );
   }
 
-  // NEW: Wallpaper settings dialog
-  Future<void> _openWallpaperSettingsDialog() async {
-    await showDialog<void>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          backgroundColor: const Color(0xFF111118),
-          title: const Text(
-            'Wallpaper settings',
-            style: TextStyle(color: Colors.white),
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: const Icon(Icons.image, color: Colors.cyan),
-                title: const Text(
-                  'Change wallpaper',
-                  style: TextStyle(color: Colors.white),
-                ),
-                onTap: () async {
-                  Navigator.pop(context);
-                  await WallpaperService.instance.pickWallpaper();
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.refresh, color: Colors.orange),
-                title: const Text(
-                  'Reset to default',
-                  style: TextStyle(color: Colors.white),
-                ),
-                onTap: () async {
-                  Navigator.pop(context);
-                  await WallpaperService.instance.resetWallpaper();
-                },
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Close'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Future<void> _openGlassSettingsDialog() async {
-    double tempBlur = glassBlur;
-    double tempOpacity = glassOpacity;
-
-    await showDialog<void>(
-      context: context,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              backgroundColor: const Color(0xFF111118),
-              title: const Text(
-                'Glass settings',
-                style: TextStyle(color: Colors.white),
-              ),
-              content: SizedBox(
-                width: 420,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        'Blur',
-                        style: TextStyle(color: Colors.white70),
-                      ),
-                    ),
-                    Slider(
-                      value: tempBlur,
-                      min: 0,
-                      max: 40,
-                      divisions: 40,
-                      label: tempBlur.toStringAsFixed(0),
-                      onChanged: (v) {
-                        setDialogState(() {
-                          tempBlur = v;
-                        });
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    const Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        'Opacity',
-                        style: TextStyle(color: Colors.white70),
-                      ),
-                    ),
-                    Slider(
-                      value: tempOpacity,
-                      min: 0.02,
-                      max: 0.40,
-                      divisions: 38,
-                      label: tempOpacity.toStringAsFixed(2),
-                      onChanged: (v) {
-                        setDialogState(() {
-                          tempOpacity = v;
-                        });
-                      },
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Cancel'),
-                ),
-                FilledButton(
-                  onPressed: () {
-                    setState(() {
-                      glassBlur = tempBlur;
-                      glassOpacity = tempOpacity;
-                    });
-                    _saveGlassSettings();
-                    Navigator.pop(context);
-                  },
-                  child: const Text('Apply'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }
+  
 }
 
 ================================================================================
@@ -8454,6 +8225,127 @@ class TaskSidePanel extends StatelessWidget {
 
 ================================================================================
 
+// File: lib\workspace\universal_top_bar.dart
+import 'package:flutter/material.dart';
+import '../core/glass_container.dart';
+import '../workspace/workspace_switcher.dart'; // Imported to match TaskWorkspace layout
+import 'workspace_controller.dart';
+
+class UniversalTopBar extends StatelessWidget {
+  final WorkspaceController workspaceController;
+  final VoidCallback onWallpaperSettings;
+  final VoidCallback onGlassSettings;
+  final VoidCallback onSignOut;
+
+  const UniversalTopBar({
+    super.key,
+    required this.workspaceController,
+    required this.onWallpaperSettings,
+    required this.onGlassSettings,
+    required this.onSignOut,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // Hardcoded values to match the TaskWorkspace defaults
+    const double glassBlur = 18.0;
+    const double glassOpacity = 0.16;
+
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 12, 18, 0),
+        child: SizedBox(
+          height: 40,
+          child: GlassContainer(
+            blur: glassBlur,
+            opacity: glassOpacity,
+            tint: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                // LEFT: Branding
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.blur_on_rounded,
+                        color: Colors.cyan,
+                        size: 18,
+                      ),
+                      SizedBox(width: 8),
+                      Text(
+                        'Wall-D Workspace', // Adjusted title for universal context
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                // CENTER: Workspace Switcher
+                Align(
+                  alignment: Alignment.center,
+                  child: WorkspaceSwitcher(
+                    controller: workspaceController,
+                  ),
+                ),
+
+                // RIGHT: Settings & Actions
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Wallpaper Settings
+                      IconButton(
+                        icon: const Icon(
+                          Icons.wallpaper_rounded,
+                          color: Colors.white70,
+                          size: 18,
+                        ),
+                        tooltip: 'Wallpaper settings',
+                        onPressed: onWallpaperSettings,
+                      ),
+                      // Glass Settings
+                      IconButton(
+                        icon: const Icon(
+                          Icons.tune_rounded,
+                          color: Colors.white70,
+                          size: 18,
+                        ),
+                        tooltip: 'Glass settings',
+                        onPressed: onGlassSettings,
+                      ),
+                      // Sign Out (Added to maintain functionality in new design)
+                      IconButton(
+                        icon: const Icon(
+                          Icons.logout_rounded,
+                          color: Colors.redAccent, // Distinct color for destructive action
+                          size: 18,
+                        ),
+                        tooltip: 'Sign out',
+                        onPressed: onSignOut,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+================================================================================
+
 // File: lib\workspace\workspace_controller.dart
 import 'package:flutter/foundation.dart';
 import 'workspace_ids.dart';
@@ -8463,11 +8355,15 @@ class WorkspaceController extends ChangeNotifier {
 
   String get current => _current;
 
-  void setWorkspace(String id) {
+  // FIX: Added 'switchTo' to match the call in UniversalTopBar
+  void switchTo(String id) {
     if (id == _current) return;
     _current = id;
     notifyListeners();
   }
+
+  // Optional: Keep this if other files use it, or alias it
+  void setWorkspace(String id) => switchTo(id);
 }
 
 ================================================================================
@@ -8481,69 +8377,145 @@ class WorkspaceIds {
 ================================================================================
 
 // File: lib\workspace\workspace_shell.dart
-// lib/workspace/workspace_shell.dart
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 import '../dynamic_screen/dashboardpanel.dart';
 import '../task/task_workspace.dart';
+import '../core/wallpaper_service.dart';
 import 'workspace_controller.dart';
 import 'workspace_ids.dart';
 
+// IMPORTANT: Ensure this import matches the file you just created
+import 'universal_top_bar.dart'; 
+
 class WorkspaceShell extends StatefulWidget {
-  const WorkspaceShell({super.key});
+  final WorkspaceController workspaceController;
+
+  const WorkspaceShell({
+    super.key,
+    required this.workspaceController,
+  });
 
   @override
-  State<WorkspaceShell> createState() => WorkspaceShellState();
+  State<WorkspaceShell> createState() => _WorkspaceShellState();
 }
 
-class WorkspaceShellState extends State<WorkspaceShell>
-    with SingleTickerProviderStateMixin {
-  late final WorkspaceController controller;
-
-  // Current workspace id: dashboard / task
-  String current = WorkspaceIds.dashboard;
-
+class _WorkspaceShellState extends State<WorkspaceShell> {
   @override
   void initState() {
     super.initState();
-    controller = WorkspaceController();
-    controller.addListener(_onWorkspaceChange);
+    widget.workspaceController.addListener(_onWorkspaceChanged);
   }
 
   @override
   void dispose() {
-    controller.removeListener(_onWorkspaceChange);
-    controller.dispose();
+    widget.workspaceController.removeListener(_onWorkspaceChanged);
     super.dispose();
   }
 
-  void _onWorkspaceChange() {
-    final target = controller.current;
-    if (target == current) return;
-
-    setState(() {
-      current = target;
-    });
+  void _onWorkspaceChanged() {
+    setState(() {});
   }
 
-  Widget _buildWorkspace(String id) {
-    switch (id) {
-      case WorkspaceIds.dashboard:
-        return DashboardPanel(workspaceController: controller);
-      case WorkspaceIds.task:
-        return TaskWorkspace(workspaceController: controller);
-      default:
-        return DashboardPanel(workspaceController: controller);
+  // --- Global Actions ---
+  Future<void> pickWallpaperFromWindows() async {
+    await WallpaperService.instance.pickWallpaper();
+  }
+
+  Future<void> signOut() async {
+    await FirebaseAuth.instance.signOut();
+  }
+
+  Future<void> openGlobalGlassSheet() async {
+    final service = WallpaperService.instance;
+    double tempOpacity = service.globalGlassOpacity;
+    double tempBlur = service.globalGlassBlur;
+
+    final applied = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: const Color(0xFF05040A),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('Glass Settings', style: TextStyle(color: Colors.white, fontSize: 18)),
+                    const SizedBox(height: 20),
+                    Row(
+                      children: [
+                        const Text('Blur', style: TextStyle(color: Colors.white)),
+                        Expanded(child: Slider(value: tempBlur, min: 0, max: 30, onChanged: (v) => setModalState(() => tempBlur = v))),
+                      ],
+                    ),
+                    Row(
+                      children: [
+                        const Text('Opacity', style: TextStyle(color: Colors.white)),
+                        Expanded(child: Slider(value: tempOpacity, min: 0.0, max: 0.5, onChanged: (v) => setModalState(() => tempOpacity = v))),
+                      ],
+                    ),
+                    ElevatedButton(
+                         onPressed: () => Navigator.pop(context, true), 
+                         child: const Text("Apply")
+                    )
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    if (applied == true) {
+      service.setGlassOpacity(tempOpacity);
+      service.setGlassBlur(tempBlur);
+      await service.saveSettings();
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    // No heavy slide here; just show current workspace.
-    // Use small animations inside each workspace (AnimatedSwitcher, etc.)
-    // to keep tab switching smooth.
-    return _buildWorkspace(current);
+  int _getCurrentIndex() {
+    if (widget.workspaceController.current == WorkspaceIds.task) return 1;
+    return 0; // Default to Dashboard
   }
+
+  @override
+Widget build(BuildContext context) {
+  return Scaffold(
+    backgroundColor: Colors.transparent,
+    body: Stack(
+      children: [
+        // 1. Full-screen backgrounds (Dashboard or Task workspace)
+        IndexedStack(
+          index: _getCurrentIndex(),
+          children: [
+            DashboardPanel(
+              key: const PageStorageKey('dashboardpanel'),
+              workspaceController: widget.workspaceController,
+            ),
+            TaskWorkspace(
+              key: const PageStorageKey('taskworkspace'),
+              workspaceController: widget.workspaceController,
+            ),
+          ],
+        ),
+        
+        // 2. Universal Top Bar overlays on top
+        UniversalTopBar(
+          workspaceController: widget.workspaceController,
+          onWallpaperSettings: pickWallpaperFromWindows,
+          onGlassSettings: openGlobalGlassSheet,
+          onSignOut: signOut,
+        ),
+      ],
+    ),
+  );
+}
+
 }
 
 ================================================================================

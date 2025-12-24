@@ -1,4 +1,3 @@
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -54,11 +53,7 @@ class TaskWorkspaceState extends State<TaskWorkspace> {
     });
   }
 
-  Future<void> _saveGlassSettings() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setDouble('task_glass_blur', glassBlur);
-    await prefs.setDouble('task_glass_opacity', glassOpacity);
-  }
+  
 
   @override
   Widget build(BuildContext context) {
@@ -72,7 +67,7 @@ class TaskWorkspaceState extends State<TaskWorkspace> {
           // Adjusted top padding slightly as the internal header is gone
           // (Parent layout with UniversalTopBar should handle top spacing)
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 0, 18, 14),
+            padding: const EdgeInsets.fromLTRB(18, 64, 18, 14),
             child: Column(
               children: [
                 // REMOVED: Internal Top Bar & Spacer
@@ -154,140 +149,5 @@ class TaskWorkspaceState extends State<TaskWorkspace> {
     );
   }
 
-  // NOTE: These dialog methods are kept in case you wire them up
-  // to the UniversalTopBar in a parent widget later.
-
-  Future<void> _openWallpaperSettingsDialog() async {
-    await showDialog<void>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          backgroundColor: const Color(0xFF111118),
-          title: const Text(
-            'Wallpaper settings',
-            style: TextStyle(color: Colors.white),
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: const Icon(Icons.image, color: Colors.cyan),
-                title: const Text(
-                  'Change wallpaper',
-                  style: TextStyle(color: Colors.white),
-                ),
-                onTap: () async {
-                  Navigator.pop(context);
-                  await WallpaperService.instance.pickWallpaper();
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.refresh, color: Colors.orange),
-                title: const Text(
-                  'Reset to default',
-                  style: TextStyle(color: Colors.white),
-                ),
-                onTap: () async {
-                  Navigator.pop(context);
-                  await WallpaperService.instance.resetWallpaper();
-                },
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Close'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Future<void> _openGlassSettingsDialog() async {
-    double tempBlur = glassBlur;
-    double tempOpacity = glassOpacity;
-
-    await showDialog<void>(
-      context: context,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              backgroundColor: const Color(0xFF111118),
-              title: const Text(
-                'Glass settings',
-                style: TextStyle(color: Colors.white),
-              ),
-              content: SizedBox(
-                width: 420,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        'Blur',
-                        style: TextStyle(color: Colors.white70),
-                      ),
-                    ),
-                    Slider(
-                      value: tempBlur,
-                      min: 0,
-                      max: 40,
-                      divisions: 40,
-                      label: tempBlur.toStringAsFixed(0),
-                      onChanged: (v) {
-                        setDialogState(() {
-                          tempBlur = v;
-                        });
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    const Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        'Opacity',
-                        style: TextStyle(color: Colors.white70),
-                      ),
-                    ),
-                    Slider(
-                      value: tempOpacity,
-                      min: 0.02,
-                      max: 0.40,
-                      divisions: 38,
-                      label: tempOpacity.toStringAsFixed(2),
-                      onChanged: (v) {
-                        setDialogState(() {
-                          tempOpacity = v;
-                        });
-                      },
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Cancel'),
-                ),
-                FilledButton(
-                  onPressed: () {
-                    setState(() {
-                      glassBlur = tempBlur;
-                      glassOpacity = tempOpacity;
-                    });
-                    _saveGlassSettings();
-                    Navigator.pop(context);
-                  },
-                  child: const Text('Apply'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }
+  
 }
