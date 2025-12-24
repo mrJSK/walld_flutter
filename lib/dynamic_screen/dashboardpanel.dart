@@ -37,9 +37,14 @@ class DashboardPanelState extends State<DashboardPanel> {
   @override
   void initState() {
     super.initState();
+    // 1. Initialize with defaults temporarily
     items = defaultItems();
+    
     _initWallpaperService();
+    
+    // 2. Load saved layout from disk (this might overwrite items with an incomplete list!)
     loadLayout();
+    
     debugPrint('[DASH] initState -> attaching auth listener');
     listenAuthState();
   }
@@ -64,32 +69,23 @@ class DashboardPanelState extends State<DashboardPanel> {
   // ---------- AUTH & PERMISSIONS ----------
 
   void listenAuthState() {
-  FirebaseAuth.instance.authStateChanges().listen((user) {
-    debugPrint('[DASH] authStateChanges user = ${user?.uid}');
-    currentUser = user;
-    if (!mounted) return;
+    FirebaseAuth.instance.authStateChanges().listen((user) {
+      debugPrint('[DASH] authStateChanges user = ${user?.uid}');
+      currentUser = user;
+      if (!mounted) return;
 
-    if (user == null) {
-      debugPrint('[DASH] user == null -> login only');
-      setState(() {
-        allowedWidgetIds = {'login'};
-      });
-    } else {
-      debugPrint('[DASH] user logged in, loading permissions');
-      setState(() {
-        allowedWidgetIds = {
-          'createtask',
-          'viewassignedtasks',
-          'viewalltasks',
-          'completetask',
-        };
-      });
-      loadUserPermissions(user.uid);
-    }
-  });
-}
-
-
+      if (user == null) {
+        debugPrint('[DASH] user == null -> login only');
+        setState(() {
+          allowedWidgetIds = {'login'};
+        });
+      } else {
+        debugPrint('[DASH] user logged in, loading permissions');
+        // Load real permissions
+        loadUserPermissions(user.uid);
+      }
+    });
+  }
 
   Future<void> loadUserPermissions(String userId) async {
     await DashboardPermissions.loadUserPermissions(
@@ -99,6 +95,36 @@ class DashboardPanelState extends State<DashboardPanel> {
         if (!mounted) return;
         setState(() {
           allowedWidgetIds = ids;
+
+          // ============================================================
+          // FIX: RECONCILIATION LOGIC
+          // Check if any allowed widget is MISSING from the current 'items' list
+          // because it wasn't in the saved layout.
+          // ============================================================
+          
+          // 1. What widgets do we currently have in the layout?
+          final currentLayoutIds = items.map((w) => w.widgetId).toSet();
+          
+          // 2. Which allowed widgets are missing?
+          final missingIds = ids.difference(currentLayoutIds);
+
+          if (missingIds.isNotEmpty) {
+            debugPrint('[DASH] Found missing allowed widgets: $missingIds. Restoring them now...');
+            final defaults = defaultItems();
+            
+            for (final missingId in missingIds) {
+              // Try to find the default configuration for this missing widget
+              try {
+                final defaultWidget = defaults.firstWhere((w) => w.widgetId == missingId);
+                items.add(defaultWidget);
+              } catch (e) {
+                debugPrint('[DASH] Warning: No default layout definition found for widgetId: $missingId');
+              }
+            }
+            
+            // 3. Save the repaired layout immediately so they stick
+            saveLayout();
+          }
         });
       },
     );
@@ -116,6 +142,11 @@ class DashboardPanelState extends State<DashboardPanel> {
       onLoaded: (loaded) {
         if (!mounted) return;
         setState(() => items = loaded);
+        
+        // Trigger a permission check again in case layout loaded AFTER auth
+        if (currentUser != null) {
+           loadUserPermissions(currentUser!.uid);
+        }
       },
       defaultItemsBuilder: defaultItems,
     );
@@ -319,17 +350,16 @@ class DashboardPanelState extends State<DashboardPanel> {
     if (index != -1) {
       setState(() => items.removeAt(index));
     } else {
-      setState(() {
-        items.add(
-          ScreenGridWidgetSpan(
-            widgetId: widgetId,
-            col: 1,
-            row: 2,
-            colSpan: 8,
-            rowSpan: 4,
-          ),
-        );
-      });
+      // Find default to add back
+      final defaults = defaultItems();
+      try {
+        final w = defaults.firstWhere((element) => element.widgetId == widgetId);
+        setState(() {
+          items.add(w);
+        });
+      } catch (e) {
+        debugPrint("Widget ID $widgetId not found in defaults");
+      }
     }
     saveLayout();
   }
@@ -338,13 +368,14 @@ class DashboardPanelState extends State<DashboardPanel> {
 
   @override
   Widget build(BuildContext context) {
-    // Show all widgets regardless of permissions
     final user = currentUser ?? FirebaseAuth.instance.currentUser;
     debugPrint('[DASH] build user = ${user?.uid}');
 
+    // 1. If Logged OUT: Show ONLY 'login' widget
+    // 2. If Logged IN: Show widgets in 'items' that are ALSO in 'allowedWidgetIds'
     final visibleItems = user == null
-      ? items.where((w) => w.widgetId == 'login').toList()
-      : items;
+        ? items.where((w) => w.widgetId == 'login').toList()
+        : items.where((w) => allowedWidgetIds.contains(w.widgetId)).toList();
 
     return Scaffold(
       backgroundColor: Colors.transparent,

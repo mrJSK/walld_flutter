@@ -148,7 +148,7 @@ class _FreeDragResizeItemState extends State<FreeDragResizeItem> {
 
   @override
   Widget build(BuildContext context) {
-    final content = WidgetFactory.createWidget(widget.item.widgetId);
+    final content = DynamicWidgetFactory.create(widget.item.widgetId);
 
     final glassCard = GlassContainer(
       blur: widget.globalBlur,
