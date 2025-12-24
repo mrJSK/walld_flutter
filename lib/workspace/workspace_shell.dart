@@ -1,4 +1,3 @@
-// lib/workspace/workspace_shell.dart
 import 'package:flutter/material.dart';
 
 import '../dynamic_screen/dashboardpanel.dart';
@@ -7,58 +6,73 @@ import 'workspace_controller.dart';
 import 'workspace_ids.dart';
 
 class WorkspaceShell extends StatefulWidget {
-  const WorkspaceShell({super.key});
+  final WorkspaceController workspaceController;
+
+  const WorkspaceShell({
+    super.key,
+    required this.workspaceController,
+  });
 
   @override
-  State<WorkspaceShell> createState() => WorkspaceShellState();
+  State<WorkspaceShell> createState() => _WorkspaceShellState();
 }
 
-class WorkspaceShellState extends State<WorkspaceShell>
-    with SingleTickerProviderStateMixin {
-  late final WorkspaceController controller;
-
-  // Current workspace id: dashboard / task
-  String current = WorkspaceIds.dashboard;
-
+class _WorkspaceShellState extends State<WorkspaceShell> {
   @override
   void initState() {
     super.initState();
-    controller = WorkspaceController();
-    controller.addListener(_onWorkspaceChange);
+    // Listen to the controller directly (No Provider needed)
+    widget.workspaceController.addListener(_onWorkspaceChanged);
   }
 
   @override
   void dispose() {
-    controller.removeListener(_onWorkspaceChange);
-    controller.dispose();
+    widget.workspaceController.removeListener(_onWorkspaceChanged);
     super.dispose();
   }
 
-  void _onWorkspaceChange() {
-    final target = controller.current;
-    if (target == current) return;
-
-    setState(() {
-      current = target;
-    });
+  void _onWorkspaceChanged() {
+    // Rebuild the shell when the workspace changes
+    setState(() {});
   }
 
-  Widget _buildWorkspace(String id) {
-    switch (id) {
-      case WorkspaceIds.dashboard:
-        return DashboardPanel(workspaceController: controller);
-      case WorkspaceIds.task:
-        return TaskWorkspace(workspaceController: controller);
-      default:
-        return DashboardPanel(workspaceController: controller);
+  /// Helper to map the current ID to an integer index for IndexedStack
+  int _getCurrentIndex() {
+    final current = widget.workspaceController.current;
+    
+    // Check against IDs defined in lib/workspace/workspace_ids.dart
+    if (current == WorkspaceIds.dashboard) {
+      return 0;
+    } else if (current == WorkspaceIds.task) {
+      return 1;
     }
+    
+    // Default to dashboard if unknown
+    return 0;
   }
 
   @override
   Widget build(BuildContext context) {
-    // No heavy slide here; just show current workspace.
-    // Use small animations inside each workspace (AnimatedSwitcher, etc.)
-    // to keep tab switching smooth.
-    return _buildWorkspace(current);
+    return Scaffold(
+      backgroundColor: Colors.transparent, // Important for wallpaper visibility
+      body: IndexedStack(
+        index: _getCurrentIndex(),
+        children: [
+          // Index 0: Dashboard
+          // Wrapped in a Key so Flutter knows it's the same widget
+          DashboardPanel(
+            key: const PageStorageKey('dashboard_panel'),
+            workspaceController: widget.workspaceController,
+          ),
+
+          // Index 1: Task Workspace
+          // Wrapped in a Key
+          TaskWorkspace(
+            key: const PageStorageKey('task_workspace'),
+            workspaceController: widget.workspaceController,
+          ),
+        ],
+      ),
+    );
   }
 }

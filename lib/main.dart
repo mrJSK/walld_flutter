@@ -1,13 +1,12 @@
-// lib/main.dart
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:window_manager/window_manager.dart';
 import 'dart:io' show Platform;
-import 'package:flutter/services.dart';
 
 import 'firebase_options.dart';
 import 'workspace/workspace_shell.dart';
+import 'workspace/workspace_controller.dart'; // <--- Added Import
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -47,8 +46,23 @@ Future<void> _setupWindowsWallpaper() async {
   });
 }
 
-class WallDApp extends StatelessWidget {
+// Changed to StatefulWidget to hold the WorkspaceController
+class WallDApp extends StatefulWidget {
   const WallDApp({super.key});
+
+  @override
+  State<WallDApp> createState() => _WallDAppState();
+}
+
+class _WallDAppState extends State<WallDApp> {
+  // 1. Initialize the controller
+  final WorkspaceController _workspaceController = WorkspaceController();
+
+  @override
+  void dispose() {
+    _workspaceController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -58,14 +72,16 @@ class WallDApp extends StatelessWidget {
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF05040A),
       ),
-      // Wrap root in auth stream so you see logs and state is in sync.
       home: StreamBuilder<User?>(
         stream: FirebaseAuth.instance.authStateChanges(),
         builder: (context, snapshot) {
           final user = snapshot.data;
           debugPrint('[MAIN] authStateChanges -> user = ${user?.uid}');
-          // WorkspaceShell contains DashboardPanel; it will read current user.
-          return const WorkspaceShell();
+          
+          // 2. Pass the controller (removed 'const' because controller is not const)
+          return WorkspaceShell(
+            workspaceController: _workspaceController,
+          );
         },
       ),
     );
