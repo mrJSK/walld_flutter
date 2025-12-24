@@ -4,9 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/glass_container.dart';
-import '../core/wallpaper_service.dart'; // NEW IMPORT
+import '../core/wallpaper_service.dart';
 import '../workspace/workspace_controller.dart';
-import '../workspace/workspace_switcher.dart';
+// Removed unused WorkspaceSwitcher import
 import 'task_tabs_manifest.dart';
 import 'widgets/task_side_panel.dart';
 
@@ -66,87 +66,16 @@ class TaskWorkspaceState extends State<TaskWorkspace> {
 
     return Scaffold(
       backgroundColor: Colors.transparent,
-      // UPDATED: Use wallpaper service
       body: Container(
         decoration: WallpaperService.instance.backgroundDecoration,
         child: SafeArea(
+          // Adjusted top padding slightly as the internal header is gone
+          // (Parent layout with UniversalTopBar should handle top spacing)
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 12, 18, 14),
+            padding: const EdgeInsets.fromLTRB(18, 0, 18, 14),
             child: Column(
               children: [
-                // TOP BAR WITH WORKSPACE SWITCHER
-                SizedBox(
-                  height: 40,
-                  child: GlassContainer(
-                    blur: glassBlur,
-                    opacity: glassOpacity,
-                    tint: Colors.white,
-                    borderRadius: BorderRadius.circular(20),
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
-                    child: Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        const Align(
-                          alignment: Alignment.centerLeft,
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.blur_on_rounded,
-                                color: Colors.cyan,
-                                size: 18,
-                              ),
-                              SizedBox(width: 8),
-                              Text(
-                                'Wall-D Task Workspace',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Align(
-                          alignment: Alignment.center,
-                          child: WorkspaceSwitcher(
-                            controller: widget.workspaceController,
-                          ),
-                        ),
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              // NEW: Wallpaper settings button
-                              IconButton(
-                                icon: const Icon(
-                                  Icons.wallpaper_rounded,
-                                  color: Colors.white70,
-                                  size: 18,
-                                ),
-                                tooltip: 'Wallpaper settings',
-                                onPressed: _openWallpaperSettingsDialog,
-                              ),
-                              IconButton(
-                                icon: const Icon(
-                                  Icons.tune_rounded,
-                                  color: Colors.white70,
-                                  size: 18,
-                                ),
-                                tooltip: 'Glass settings',
-                                onPressed: _openGlassSettingsDialog,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-
-                const SizedBox(height: 12),
+                // REMOVED: Internal Top Bar & Spacer
 
                 // MAIN TASK LAYOUT WITH SLIDE/FADE
                 Expanded(
@@ -225,7 +154,9 @@ class TaskWorkspaceState extends State<TaskWorkspace> {
     );
   }
 
-  // NEW: Wallpaper settings dialog
+  // NOTE: These dialog methods are kept in case you wire them up
+  // to the UniversalTopBar in a parent widget later.
+
   Future<void> _openWallpaperSettingsDialog() async {
     await showDialog<void>(
       context: context,
