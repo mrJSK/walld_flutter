@@ -254,7 +254,7 @@ Future<void> updateGlass({
   required double blur,
   required double opacity,
 }) async {
-  globalGlassBlur = blur.clamp(0.0, 4.0);
+  globalGlassBlur = blur.clamp(0.0, 30.0);
   globalGlassOpacity = opacity.clamp(0.0, 1.0);
 
   final prefs = await SharedPreferences.getInstance();

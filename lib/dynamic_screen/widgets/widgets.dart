@@ -344,7 +344,7 @@ class _FreeDragResizeItemState extends State<FreeDragResizeItem> {
   Widget _buildFullGlassCard(Widget content) {
     // Global blur is applied in WorkspaceShell; disable per-widget blur.
     return GlassContainer(
-      blur: 0.0,
+      blur: widget.globalBlur, 
       opacity: widget.globalOpacity,
       tint: widget.globalTint,
       borderRadius: BorderRadius.circular(24),
