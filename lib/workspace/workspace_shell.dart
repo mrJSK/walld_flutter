@@ -548,9 +548,8 @@ class _WorkspaceShellState extends State<WorkspaceShell>
                           child: FadeTransition(
                             opacity: _currentIndex == 1 ? _fadeIn : _fadeOut,
                             child: RepaintBoundary(
-                              child: TaskWorkspace(
-                                key: const PageStorageKey('taskworkspace'),
-                                workspaceController: widget.workspaceController,
+                              child: const TaskWorkspace(
+                                key: PageStorageKey('taskworkspace'),
                               ),
                             ),
                           ),

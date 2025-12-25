@@ -34,12 +34,12 @@ class UniversalTopBar extends StatelessWidget {
             child: SizedBox(
               height: 40,
               child: GlassContainer(
-                blur: glassBlur,
-                opacity: glassOpacity,
+                blur: glassBlur,  // NOW REACTIVE
+                opacity: glassOpacity,  // NOW REACTIVE
                 tint: Colors.white,
                 borderRadius: BorderRadius.circular(20),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+                blurMode: GlassBlurMode.perWidget,  // FORCE BLUR (top bar is tiny)
                 child: Stack(
                   alignment: Alignment.center,
                   children: [

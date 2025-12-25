@@ -25,11 +25,13 @@ class TaskSidePanel extends StatelessWidget {
         final double glassOpacity = wallpaper.globalGlassOpacity;
 
         return GlassContainer(
-          blur: glassBlur,
-          opacity: glassOpacity * 0.7,
-          tint: Colors.white,
-          borderRadius: BorderRadius.circular(20),
-          padding: const EdgeInsets.symmetric(vertical: 10),
+            blur: glassBlur,
+            opacity: glassOpacity * 0.7,
+            tint: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            // ADD THIS:
+            blurMode: GlassBlurMode.perWidget,
           child: Column(
             children: [
               const SizedBox(height: 6),

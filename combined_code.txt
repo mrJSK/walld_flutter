@@ -8159,7 +8159,10 @@ import 'task_tabs_manifest.dart';
 import 'widgets/task_side_panel.dart';
 
 class TaskWorkspace extends StatefulWidget {
-  const TaskWorkspace({super.key, required this.workspaceController});
+  const TaskWorkspace({
+    super.key,
+    required this.workspaceController,
+  });
 
   final WorkspaceController workspaceController;
 
@@ -8174,8 +8177,8 @@ class _TaskWorkspaceState extends State<TaskWorkspace> {
   Widget build(BuildContext context) {
     final wallpaper = WallpaperService.instance;
 
-    // Only react to global wallpaper/glass changes; the outer shell already
-    // draws the wallpaper and top bar.
+    // React to global wallpaper/glass changes so both side panel and
+    // main content update when sliders move.
     return AnimatedBuilder(
       animation: wallpaper,
       builder: (context, _) {
@@ -8184,14 +8187,15 @@ class _TaskWorkspaceState extends State<TaskWorkspace> {
           orElse: () => taskTabs.first,
         );
 
-        final glassBlur = wallpaper.globalGlassBlur;
-        final glassOpacity = wallpaper.globalGlassOpacity;
+        final double glassBlur = wallpaper.globalGlassBlur;
+        final double glassOpacity = wallpaper.globalGlassOpacity;
 
         return Padding(
+          // Top padding to clear the UniversalTopBar drawn by WorkspaceShell.
           padding: const EdgeInsets.fromLTRB(18, 70, 18, 18),
-          // Top padding to clear the global UniversalTopBar that WorkspaceShell draws.
           child: Row(
             children: [
+              // LEFT: Tab list + info
               SizedBox(
                 width: 240,
                 child: TaskSidePanel(
@@ -8200,6 +8204,8 @@ class _TaskWorkspaceState extends State<TaskWorkspace> {
                 ),
               ),
               const SizedBox(width: 12),
+
+              // RIGHT: Main glass content area for current tab
               Expanded(
                 child: GlassContainer(
                   blur: glassBlur,
@@ -8207,6 +8213,10 @@ class _TaskWorkspaceState extends State<TaskWorkspace> {
                   tint: Colors.white,
                   borderRadius: BorderRadius.circular(22),
                   padding: const EdgeInsets.all(14),
+                  // When interacting inside the page, keep quality auto.
+                  blurMode: GlassBlurMode.auto,
+                  qualityMode: GlassQualityMode.auto,
+                  isInteracting: false,
                   child: currentTab.builder(context),
                 ),
               ),
@@ -8254,17 +8264,21 @@ class CreateTaskPage extends StatelessWidget {
 
 // File: lib\task\pages\view_all_tasks_page.dart
 import 'package:flutter/material.dart';
-
+// lib/task/pages/view_all_tasks_page.dart
 class ViewAllTasksPage extends StatelessWidget {
   const ViewAllTasksPage({super.key});
 
   @override
   Widget build(BuildContext context) {
     return const Center(
-      child: Text('View All Tasks (full-screen page placeholder)', style: TextStyle(color: Colors.white70)),
+      child: Text(
+        'View All Tasks full-screen page placeholder',
+        style: TextStyle(color: Colors.white70),
+      ),
     );
   }
 }
+
 
 ================================================================================
 
@@ -8286,6 +8300,7 @@ class ViewAssignedTasksPage extends StatelessWidget {
 
 // File: lib\task\widgets\task_side_panel.dart
 import 'package:flutter/material.dart';
+
 import '../../core/glass_container.dart';
 import '../../core/wallpaper_service.dart';
 import '../task_tabs_manifest.dart';
@@ -8299,35 +8314,52 @@ class TaskSidePanel extends StatelessWidget {
     required this.selectedTabId,
     required this.onSelect,
   });
+
   @override
   Widget build(BuildContext context) {
     final wallpaper = WallpaperService.instance;
-    return GlassContainer(
-      blur: wallpaper.globalGlassBlur,
-      opacity: wallpaper.globalGlassOpacity * 0.7,
-      tint: Colors.white,
-      borderRadius: BorderRadius.circular(20),
-      padding: const EdgeInsets.symmetric(vertical: 10),
-      child: Column(
-        children: [
-          const SizedBox(height: 6),
-          const Text('TASK', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, letterSpacing: 1.2)),
-          const SizedBox(height: 10),
-          Expanded(
-            child: ListView(
-              children: [
-                for (final t in taskTabs)
-                  _item(
-                    selected: selectedTabId == t.id,
-                    icon: t.icon,
-                    title: t.title,
-                    onTap: () => onSelect(t.id),
-                  ),
-              ],
-            ),
+
+    return AnimatedBuilder(
+      animation: wallpaper,
+      builder: (context, _) {
+        final double glassBlur = wallpaper.globalGlassBlur;
+        final double glassOpacity = wallpaper.globalGlassOpacity;
+
+        return GlassContainer(
+          blur: glassBlur,
+          opacity: glassOpacity * 0.7,
+          tint: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          child: Column(
+            children: [
+              const SizedBox(height: 6),
+              const Text(
+                'TASK',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1.2,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Expanded(
+                child: ListView(
+                  children: [
+                    for (final t in taskTabs)
+                      _item(
+                        selected: selectedTabId == t.id,
+                        icon: t.icon,
+                        title: t.title,
+                        onTap: () => onSelect(t.id),
+                      ),
+                  ],
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -8337,7 +8369,7 @@ class TaskSidePanel extends StatelessWidget {
     required String title,
     required VoidCallback onTap,
   }) {
-    final fg = selected ? Colors.cyanAccent : Colors.white70;
+    final Color fg = selected ? Colors.cyanAccent : Colors.white70;
 
     return InkWell(
       onTap: onTap,
@@ -8348,14 +8380,21 @@ class TaskSidePanel extends StatelessWidget {
           color: selected ? Colors.cyan.withOpacity(0.12) : Colors.transparent,
           borderRadius: BorderRadius.circular(14),
           border: Border.all(
-            color: selected ? Colors.cyanAccent.withOpacity(0.5) : Colors.white12,
+            color:
+                selected ? Colors.cyanAccent.withOpacity(0.5) : Colors.white12,
           ),
         ),
         child: Row(
           children: [
             Icon(icon, color: fg, size: 18),
             const SizedBox(width: 10),
-            Text(title, style: TextStyle(color: fg, fontWeight: selected ? FontWeight.w600 : FontWeight.w400)),
+            Text(
+              title,
+              style: TextStyle(
+                color: fg,
+                fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+              ),
+            ),
           ],
         ),
       ),
@@ -8658,9 +8697,11 @@ class _Card extends StatelessWidget {
 
 // File: lib\workspace\universal_top_bar.dart
 import 'package:flutter/material.dart';
+
 import '../core/glass_container.dart';
-import '../workspace/workspace_switcher.dart'; // Imported to match TaskWorkspace layout
+import '../workspace/workspace_switcher.dart';
 import 'workspace_controller.dart';
+import '../core/wallpaper_service.dart';
 
 class UniversalTopBar extends StatelessWidget {
   final WorkspaceController workspaceController;
@@ -8678,99 +8719,102 @@ class UniversalTopBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Hardcoded values to match the TaskWorkspace defaults
-    const double glassBlur = 18.0;
-    const double glassOpacity = 0.16;
+    return AnimatedBuilder(
+      animation: WallpaperService.instance,
+      builder: (context, _) {
+        final ws = WallpaperService.instance;
+        final double glassBlur = ws.globalGlassBlur;
+        final double glassOpacity = ws.globalGlassOpacity;
 
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(18, 12, 18, 0),
-        child: SizedBox(
-          height: 40,
-          child: GlassContainer(
-            blur: glassBlur,
-            opacity: glassOpacity,
-            tint: Colors.white,
-            borderRadius: BorderRadius.circular(20),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                // LEFT: Branding
-                const Align(
-                  alignment: Alignment.centerLeft,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.blur_on_rounded,
-                        color: Colors.cyan,
-                        size: 18,
-                      ),
-                      SizedBox(width: 8),
-                      Text(
-                        'Wall-D Workspace', // Adjusted title for universal context
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-
-                // CENTER: Workspace Switcher
-                Align(
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 12, 18, 0),
+            child: SizedBox(
+              height: 40,
+              child: GlassContainer(
+                blur: glassBlur,
+                opacity: glassOpacity,
+                tint: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+                child: Stack(
                   alignment: Alignment.center,
-                  child: WorkspaceSwitcher(
-                    controller: workspaceController,
-                  ),
-                ),
+                  children: [
+                    // LEFT: Branding
+                    const Align(
+                      alignment: Alignment.centerLeft,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.blur_on_rounded,
+                            color: Colors.cyan,
+                            size: 18,
+                          ),
+                          SizedBox(width: 8),
+                          Text(
+                            'Wall-D Workspace',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
 
-                // RIGHT: Settings & Actions
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      // Wallpaper Settings
-                      IconButton(
-                        icon: const Icon(
-                          Icons.wallpaper_rounded,
-                          color: Colors.white70,
-                          size: 18,
-                        ),
-                        tooltip: 'Wallpaper settings',
-                        onPressed: onWallpaperSettings,
+                    // CENTER: Workspace Switcher
+                    Align(
+                      alignment: Alignment.center,
+                      child: WorkspaceSwitcher(
+                        controller: workspaceController,
                       ),
-                      // Glass Settings
-                      IconButton(
-                        icon: const Icon(
-                          Icons.tune_rounded,
-                          color: Colors.white70,
-                          size: 18,
-                        ),
-                        tooltip: 'Glass settings',
-                        onPressed: onGlassSettings,
+                    ),
+
+                    // RIGHT: Settings & Actions
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: const Icon(
+                              Icons.wallpaper_rounded,
+                              color: Colors.white70,
+                              size: 18,
+                            ),
+                            tooltip: 'Wallpaper settings',
+                            onPressed: onWallpaperSettings,
+                          ),
+                          IconButton(
+                            icon: const Icon(
+                              Icons.tune_rounded,
+                              color: Colors.white70,
+                              size: 18,
+                            ),
+                            tooltip: 'Glass settings',
+                            onPressed: onGlassSettings,
+                          ),
+                          IconButton(
+                            icon: const Icon(
+                              Icons.logout_rounded,
+                              color: Colors.redAccent,
+                              size: 18,
+                            ),
+                            tooltip: 'Sign out',
+                            onPressed: onSignOut,
+                          ),
+                        ],
                       ),
-                      // Sign Out (Added to maintain functionality in new design)
-                      IconButton(
-                        icon: const Icon(
-                          Icons.logout_rounded,
-                          color: Colors.redAccent, // Distinct color for destructive action
-                          size: 18,
-                        ),
-                        tooltip: 'Sign out',
-                        onPressed: onSignOut,
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }
