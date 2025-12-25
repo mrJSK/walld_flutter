@@ -16,7 +16,8 @@ class ViewAllTasksWidget extends StatelessWidget {
 
         final double radius = (unit * 0.85).clamp(12.0, 42.0);
         final double margin = (unit * 0.25).clamp(4.0, 12.0);
-        final EdgeInsets padding = EdgeInsets.all((unit * 0.75).clamp(8.0, 28.0));
+        final EdgeInsets padding =
+            EdgeInsets.all((unit * 0.75).clamp(8.0, 28.0));
 
         final double titleFont = (unit * 1.00).clamp(12.0, 24.0);
         final double bodyFont = (unit * 0.66).clamp(10.0, 17.0);
@@ -26,9 +27,10 @@ class ViewAllTasksWidget extends StatelessWidget {
         return Container(
           margin: EdgeInsets.all(margin),
           decoration: BoxDecoration(
-            color: const Color(0x6611111C),
+            // CHANGED BG COLOR
+            color: const Color(0xCC0B0F1C),
             borderRadius: BorderRadius.circular(radius),
-            border: Border.all(color: const Color(0x22FFFFFF)),
+            border: Border.all(color: const Color(0x33FFFFFF)),
             boxShadow: const [
               BoxShadow(
                 color: Color(0x33000000),

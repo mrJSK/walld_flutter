@@ -29,9 +29,10 @@ class ViewAssignedTasksWidget extends StatelessWidget {
         return Container(
           margin: EdgeInsets.all(margin),
           decoration: BoxDecoration(
-            color: const Color(0x6611111C),
+            // CHANGED BG COLOR
+            color: const Color(0xCC0B0F1C),
             borderRadius: BorderRadius.circular(radius),
-            border: Border.all(color: const Color(0x22FFFFFF)),
+            border: Border.all(color: const Color(0x33FFFFFF)),
             boxShadow: const [
               BoxShadow(
                 color: Color(0x33000000),

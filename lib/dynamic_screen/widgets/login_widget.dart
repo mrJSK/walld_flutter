@@ -20,19 +20,38 @@ class _LoginWidgetState extends State<LoginWidget> {
   String? _errorMessage;
 
   Future<void> _signIn() async {
-  try {
-    final cred = await FirebaseAuth.instance.signInWithEmailAndPassword(
-      email: _emailController.text.trim(),
-      password: _passwordController.text.trim(),
-    );
-    debugPrint('[LOGIN] Signed in as ${cred.user?.uid}');
-    // No Navigator.push or new DashboardPanel here.
-  } on FirebaseAuthException catch (e) {
-    debugPrint('[LOGIN] error: ${e.code} ${e.message}');
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final cred = await FirebaseAuth.instance.signInWithEmailAndPassword(
+        email: _emailController.text.trim(),
+        password: _passwordController.text.trim(),
+      );
+      debugPrint('[LOGIN] Signed in as ${cred.user?.uid}');
+      // No navigation here; outer workspace listens to auth.
+    } on FirebaseAuthException catch (e) {
+      debugPrint('[LOGIN] error: ${e.code} ${e.message}');
+      setState(() {
+        _errorMessage = _getErrorMessage(e.code);
+      });
+    } catch (e) {
+      debugPrint('[LOGIN] unknown error: $e');
+      setState(() {
+        _errorMessage = 'Unexpected error. Please try again.';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
   }
-}
-
-
 
   String _getErrorMessage(String code) {
     switch (code) {
@@ -65,11 +84,13 @@ class _LoginWidgetState extends State<LoginWidget> {
         final maxW = constraints.maxWidth;
         final maxH = constraints.maxHeight;
         final shortest = math.min(maxW, maxH);
+
         // When the box is short, compress everything a bit
         final double compress =
             shortest < 360 ? 0.85 : shortest < 420 ? 0.92 : 1.0;
 
-        final double unit = (shortest / 11.0).clamp(10.0, 32.0) * compress;
+        final double unit =
+            (shortest / 11.0).clamp(10.0, 32.0) * compress;
         final double radius = (unit * 0.9).clamp(12.0, 24.0);
         final double margin = (unit * 0.22).clamp(6.0, 14.0);
         final EdgeInsets padding =
@@ -87,12 +108,11 @@ class _LoginWidgetState extends State<LoginWidget> {
             (unit * 0.75).clamp(10.0, 18.0);
         final double fieldRadius = (unit * 0.70).clamp(10.0, 20.0);
 
-
-
         return Container(
           margin: EdgeInsets.all(margin),
           decoration: BoxDecoration(
-            color: const Color(0x6611111C),
+            // CHANGED BACKGROUND COLOR
+            color: const Color(0xCC0B0F1C),
             borderRadius: BorderRadius.circular(radius),
             border: Border.all(color: const Color(0x22FFFFFF)),
             boxShadow: const [
@@ -142,176 +162,177 @@ class _LoginWidgetState extends State<LoginWidget> {
                 SizedBox(height: gap),
 
                 // Email field
-      TextFormField(
-        controller: _emailController,
-        keyboardType: TextInputType.emailAddress,
-        style: TextStyle(fontSize: fieldFont),
-        decoration: InputDecoration(
-          labelText: 'Work Email',
-          prefixIcon: const Icon(
-            Icons.email_outlined,
-            color: Colors.cyan,
-            size: 18,
-          ),
-          filled: true,
-          fillColor: Colors.grey[900],
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(fieldRadius),
-            borderSide:
-                BorderSide(color: Colors.grey[800] ?? Colors.grey),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(fieldRadius),
-            borderSide: const BorderSide(
-              color: Colors.cyan,
-              width: 2,
-            ),
-          ),
-          contentPadding: EdgeInsets.symmetric(
-            horizontal: fieldHorizontalPad,
-            vertical: fieldVerticalPad,
-          ),
-        ),
-        validator: (value) {
-          if (value == null || value.isEmpty) {
-            return 'Email required';
-          }
-          final regex =
-              RegExp(r'^[\w\-\.]+@([\w\-]+\.)+[\w\-]{2,4}$');
-          if (!regex.hasMatch(value)) {
-            return 'Enter valid work email';
-          }
-          return null;
-        },
-      ),
-      SizedBox(height: gap),
-
-      // Password field
-      TextFormField(
-        controller: _passwordController,
-        obscureText: true,
-        style: TextStyle(fontSize: fieldFont),
-        decoration: InputDecoration(
-          labelText: 'Password',
-          prefixIcon: const Icon(
-            Icons.lock_outline,
-            color: Colors.cyan,
-            size: 18,
-          ),
-          filled: true,
-          fillColor: Colors.grey[900],
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(fieldRadius),
-            borderSide:
-                BorderSide(color: Colors.grey[800] ?? Colors.grey),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(fieldRadius),
-            borderSide: const BorderSide(
-              color: Colors.cyan,
-              width: 2,
-            ),
-          ),
-          contentPadding: EdgeInsets.symmetric(
-            horizontal: fieldHorizontalPad,
-            vertical: fieldVerticalPad,
-          ),
-        ),
-        validator: (value) {
-          if (value == null || value.isEmpty) {
-            return 'Password required';
-          }
-          return null;
-        },
-      ),
-      SizedBox(height: gap),
-
-      // Error message (optional)
-      if (_errorMessage != null) ...[
-        Container(
-          width: double.infinity,
-          padding: EdgeInsets.all(unit * 0.35),
-          decoration: BoxDecoration(
-            color: Colors.red[900],
-            borderRadius: BorderRadius.circular(fieldRadius),
-            border: Border.all(
-              color: Colors.red[700] ?? Colors.red,
-            ),
-          ),
-          child: Row(
-            children: [
-              const Icon(
-                Icons.error_outline,
-                color: Colors.redAccent,
-                size: 16,
-              ),
-              SizedBox(width: unit * 0.3),
-              Expanded(
-                child: Text(
-                  _errorMessage!,
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: smallFont,
+                TextFormField(
+                  controller: _emailController,
+                  keyboardType: TextInputType.emailAddress,
+                  style: TextStyle(fontSize: fieldFont),
+                  decoration: InputDecoration(
+                    labelText: 'Work Email',
+                    prefixIcon: const Icon(
+                      Icons.email_outlined,
+                      color: Colors.cyan,
+                      size: 18,
+                    ),
+                    filled: true,
+                    fillColor: Colors.grey[900],
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(fieldRadius),
+                      borderSide: BorderSide(
+                        color: Colors.grey[800] ?? Colors.grey,
+                      ),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(fieldRadius),
+                      borderSide: const BorderSide(
+                        color: Colors.cyan,
+                        width: 2,
+                      ),
+                    ),
+                    contentPadding: EdgeInsets.symmetric(
+                      horizontal: fieldHorizontalPad,
+                      vertical: fieldVerticalPad,
+                    ),
                   ),
-                  maxLines: 2,
+                  validator: (value) {
+                    if (value == null || value.isEmpty) {
+                      return 'Email required';
+                    }
+                    final regex = RegExp(
+                        r'^[\w\-\.]+@([\w\-]+\.)+[\w\-]{2,4}$');
+                    if (!regex.hasMatch(value)) {
+                      return 'Enter valid work email';
+                    }
+                    return null;
+                  },
+                ),
+                SizedBox(height: gap),
+
+                // Password field
+                TextFormField(
+                  controller: _passwordController,
+                  obscureText: true,
+                  style: TextStyle(fontSize: fieldFont),
+                  decoration: InputDecoration(
+                    labelText: 'Password',
+                    prefixIcon: const Icon(
+                      Icons.lock_outline,
+                      color: Colors.cyan,
+                      size: 18,
+                    ),
+                    filled: true,
+                    fillColor: Colors.grey[900],
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(fieldRadius),
+                      borderSide: BorderSide(
+                        color: Colors.grey[800] ?? Colors.grey,
+                      ),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(fieldRadius),
+                      borderSide: const BorderSide(
+                        color: Colors.cyan,
+                        width: 2,
+                      ),
+                    ),
+                    contentPadding: EdgeInsets.symmetric(
+                      horizontal: fieldHorizontalPad,
+                      vertical: fieldVerticalPad,
+                    ),
+                  ),
+                  validator: (value) {
+                    if (value == null || value.isEmpty) {
+                      return 'Password required';
+                    }
+                    return null;
+                  },
+                ),
+                SizedBox(height: gap),
+
+                // Error message (optional)
+                if (_errorMessage != null) ...[
+                  Container(
+                    width: double.infinity,
+                    padding: EdgeInsets.all(unit * 0.35),
+                    decoration: BoxDecoration(
+                      color: Colors.red[900],
+                      borderRadius: BorderRadius.circular(fieldRadius),
+                      border: Border.all(
+                        color: Colors.red[700] ?? Colors.red,
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.error_outline,
+                          color: Colors.redAccent,
+                          size: 16,
+                        ),
+                        SizedBox(width: unit * 0.3),
+                        Expanded(
+                          child: Text(
+                            _errorMessage!,
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: smallFont,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(height: gap),
+                ],
+
+                // Sign in button
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: _isLoading ? null : _signIn,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.cyanAccent,
+                      foregroundColor: Colors.black,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(fieldRadius),
+                      ),
+                      padding: EdgeInsets.symmetric(
+                        vertical: fieldVerticalPad + 1,
+                      ),
+                      elevation: 8,
+                    ),
+                    child: _isLoading
+                        ? SizedBox(
+                            height: unit,
+                            width: unit,
+                            child: const CircularProgressIndicator(
+                              color: Colors.black,
+                              strokeWidth: 2,
+                            ),
+                          )
+                        : Text(
+                            'Sign In',
+                            style: TextStyle(
+                              fontSize: fieldFont,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                  ),
+                ),
+
+                SizedBox(height: gap),
+                Text(
+                  'You\'ll see your dashboard after login',
+                  maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
-        ),
-        SizedBox(height: gap),
-      ],
-
-      // Sign in button (flexible height via padding)
-      SizedBox(
-        width: double.infinity,
-        child: ElevatedButton(
-          onPressed: _isLoading ? null : _signIn,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.cyanAccent,
-            foregroundColor: Colors.black,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(fieldRadius),
-            ),
-            padding: EdgeInsets.symmetric(
-              vertical: fieldVerticalPad + 1,
-            ),
-            elevation: 8,
-          ),
-          child: _isLoading
-              ? SizedBox(
-                  height: unit,
-                  width: unit,
-                  child: const CircularProgressIndicator(
-                    color: Colors.black,
-                    strokeWidth: 2,
-                  ),
-                )
-              : Text(
-                  'Sign In',
                   style: TextStyle(
-                    fontSize: fieldFont,
-                    fontWeight: FontWeight.bold,
+                    fontSize: smallFont,
+                    color: Colors.white38,
                   ),
                 ),
-        ),
-      ),
-
-      SizedBox(height: gap),
-      Text(
-        'You\'ll see your dashboard after login',
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(
-          fontSize: smallFont,
-          color: Colors.white38,
-        ),
-      ),
-    ],
-  ),
-),
-
+              ],
+            ),
+          ),
         );
       },
     );

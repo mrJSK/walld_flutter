@@ -503,29 +503,11 @@ class _WorkspaceShellState extends State<WorkspaceShell>
           ),
 
           // 2) GLOBAL BLUR LAYER (applies blur ONCE to wallpaper only)
+          // In WorkspaceShell, replace global blur layer with:
           Positioned.fill(
-            child: IgnorePointer(
-              child: AnimatedBuilder(
-                // Re-evaluate when wallpaper settings change OR fps/animation state changes.
-                animation: Listenable.merge([
-                  WallpaperService.instance,
-                  _fpsNotifier,
-                  _isAnimatingNotifier,
-                ]),
-                builder: (_, __) {
-                  final sigma = _effectiveGlobalWallpaperBlurSigma();
-                  if (sigma < 2.0) return const SizedBox.shrink();
-
-                  return ClipRect(
-                    child: BackdropFilter(
-                      filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
-                      child: const SizedBox.expand(),
-                    ),
-                  );
-                },
-              ),
-            ),
+            child: const SizedBox.expand(), // No BackdropFilter
           ),
+
 
           // 3) Animated screens (UI is ABOVE blur, so UI is not blurred)
           RepaintBoundary(

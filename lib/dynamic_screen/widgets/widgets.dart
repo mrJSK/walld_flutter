@@ -347,8 +347,8 @@ class _FreeDragResizeItemState extends State<FreeDragResizeItem> {
       blur: widget.globalBlur, 
       opacity: widget.globalOpacity,
       tint: widget.globalTint,
+      blurMode: GlassBlurMode.perWidget,  // ✅ Enable blur
       borderRadius: BorderRadius.circular(24),
-      blurMode: GlassBlurMode.none,
       qualityMode: GlassQualityMode.auto,
       isInteracting: _isInteracting,
       disableShadows: false,

@@ -890,7 +890,7 @@ Future<void> updateGlass({
   required double blur,
   required double opacity,
 }) async {
-  globalGlassBlur = blur.clamp(0.0, 4.0);
+  globalGlassBlur = blur.clamp(0.0, 30.0);
   globalGlassOpacity = opacity.clamp(0.0, 1.0);
 
   final prefs = await SharedPreferences.getInstance();
@@ -8475,7 +8475,7 @@ class _FreeDragResizeItemState extends State<FreeDragResizeItem> {
   Widget _buildFullGlassCard(Widget content) {
     // Global blur is applied in WorkspaceShell; disable per-widget blur.
     return GlassContainer(
-      blur: 0.0,
+      blur: widget.globalBlur, 
       opacity: widget.globalOpacity,
       tint: widget.globalTint,
       borderRadius: BorderRadius.circular(24),
@@ -9805,7 +9805,6 @@ class _WorkspaceShellState extends State<WorkspaceShell>
           Positioned.fill(
             child: IgnorePointer(
               child: AnimatedBuilder(
-                // Re-evaluate when wallpaper settings change OR fps/animation state changes.
                 animation: Listenable.merge([
                   WallpaperService.instance,
                   _fpsNotifier,
