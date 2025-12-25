@@ -1,11 +1,14 @@
+// lib/dynamic_screen/widgets/widgets.dart
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../../core/glass_container.dart';
 import '../../core/wallpaper_service.dart';
 import '../model/screen_grid.dart';
-import '../model/floating_widget.dart';
 import '../widget_factory.dart';
 
+/// Used by DashboardGrid to build a draggable/resizable widget tile.
 Widget buildGridWidget({
   required ScreenGridWidgetSpan item,
   required double cellW,
@@ -24,8 +27,8 @@ Widget buildGridWidget({
   return FreeDragResizeItem(
     key: ValueKey(item.widgetId),
     item: item,
-    gridColumns: 24, // the grid.columns value used previously
-    gridRows: 14,    // the grid.rows value used previously
+    gridColumns: 24,
+    gridRows: 14,
     cellW: cellW,
     cellH: cellH,
     maxW: maxW,
@@ -41,14 +44,49 @@ Widget buildGridWidget({
   );
 }
 
+class _LiveLayout {
+  final double left;
+  final double top;
+  final double width;
+  final double height;
+
+  const _LiveLayout({
+    required this.left,
+    required this.top,
+    required this.width,
+    required this.height,
+  });
+
+  _LiveLayout copyWith({
+    double? left,
+    double? top,
+    double? width,
+    double? height,
+  }) {
+    return _LiveLayout(
+      left: left ?? this.left,
+      top: top ?? this.top,
+      width: width ?? this.width,
+      height: height ?? this.height,
+    );
+  }
+}
+
 /// Draggable + resizable wrapper used by the dashboard grid.
+///
+/// Performance fixes:
+/// - No setState() on each pointer update (uses ValueNotifier for layout).
+/// - While dragging/resizing, renders a cheap outline placeholder (no blur/shadow).
+/// - Cached inner widget content so it does not rebuild while moving.
 class FreeDragResizeItem extends StatefulWidget {
   final ScreenGridWidgetSpan item;
+
   final int gridColumns;
   final int gridRows;
 
   final double cellW;
   final double cellH;
+
   final double maxW;
   final double maxH;
 
@@ -60,6 +98,7 @@ class FreeDragResizeItem extends StatefulWidget {
   final double globalBlur;
   final double globalOpacity;
   final Color globalTint;
+
   final VoidCallback onSnap;
 
   const FreeDragResizeItem({
@@ -86,46 +125,177 @@ class FreeDragResizeItem extends StatefulWidget {
 }
 
 class _FreeDragResizeItemState extends State<FreeDragResizeItem> {
-  late double left;
-  late double top;
-  late double widthPx;
-  late double heightPx;
+  // Cached widget content
+  Widget? _cachedContent;
+  String? _cachedWidgetId;
 
-  Offset? dragLastGlobal;
-  Offset? resizeLastGlobal;
+  // Live layout updated without setState()
+  late final ValueNotifier<_LiveLayout> _layoutVN;
 
-  bool get isInteracting => dragLastGlobal != null || resizeLastGlobal != null;
+  // Interaction state (dragging/resizing)
+  late final ValueNotifier<bool> _interactingVN;
+
+  // Drag state
+  Offset? _dragStartGlobal;
+  _LiveLayout? _dragStartLayout;
+
+  // Resize state
+  Offset? _resizeStartGlobal;
+  _LiveLayout? _resizeStartLayout;
+
+  static const double _minSpan = 2; // min 2x2 cells
+  static const double _handleSize = 18;
+
+  bool get _isDragging => _dragStartGlobal != null;
+  bool get _isResizing => _resizeStartGlobal != null;
+  bool get _isInteracting => _isDragging || _isResizing;
 
   @override
   void initState() {
     super.initState();
-    left = widget.initialLeft;
-    top = widget.initialTop;
-    widthPx = widget.initialWidthPx;
-    heightPx = widget.initialHeightPx;
+
+    _layoutVN = ValueNotifier<_LiveLayout>(
+      _LiveLayout(
+        left: widget.initialLeft,
+        top: widget.initialTop,
+        width: widget.initialWidthPx,
+        height: widget.initialHeightPx,
+      ),
+    );
+
+    _interactingVN = ValueNotifier<bool>(false);
+
+    _buildCachedContent();
   }
 
   @override
   void didUpdateWidget(covariant FreeDragResizeItem oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!isInteracting) {
-      left = (widget.item.col * widget.cellW).clamp(0.0, widget.maxW - widget.cellW);
-      top = (widget.item.row * widget.cellH).clamp(0.0, widget.maxH - widget.cellH);
-      widthPx = (widget.item.colSpan * widget.cellW)
-          .clamp(widget.cellW * 2, widget.maxW);
-      heightPx = (widget.item.rowSpan * widget.cellH)
-          .clamp(widget.cellH * 2, widget.maxH);
+
+    if (oldWidget.item.widgetId != widget.item.widgetId) {
+      _buildCachedContent();
+    }
+
+    if (!_isInteracting) {
+      _layoutVN.value = _LiveLayout(
+        left: (widget.item.col * widget.cellW)
+            .clamp(0.0, math.max(0.0, widget.maxW - widget.cellW)),
+        top: (widget.item.row * widget.cellH)
+            .clamp(0.0, math.max(0.0, widget.maxH - widget.cellH)),
+        width: (widget.item.colSpan * widget.cellW)
+            .clamp(widget.cellW * _minSpan, widget.maxW),
+        height: (widget.item.rowSpan * widget.cellH)
+            .clamp(widget.cellH * _minSpan, widget.maxH),
+      );
     }
   }
 
-  void snapToGridAndPersist() {
-    int col = (left / widget.cellW).round();
-    int row = (top / widget.cellH).round();
-    int colSpan = (widthPx / widget.cellW).round();
-    int rowSpan = (heightPx / widget.cellH).round();
+  @override
+  void dispose() {
+    _layoutVN.dispose();
+    _interactingVN.dispose();
+    super.dispose();
+  }
 
-    colSpan = colSpan.clamp(2, widget.gridColumns);
-    rowSpan = rowSpan.clamp(2, widget.gridRows);
+  void _buildCachedContent() {
+    _cachedWidgetId = widget.item.widgetId;
+    _cachedContent = RepaintBoundary(
+      child: DynamicWidgetFactory.create(widget.item.widgetId),
+    );
+  }
+
+  double _clampLeft(double left, double width) {
+    final maxLeft = math.max(0.0, widget.maxW - width);
+    return left.clamp(0.0, maxLeft);
+  }
+
+  double _clampTop(double top, double height) {
+    final maxTop = math.max(0.0, widget.maxH - height);
+    return top.clamp(0.0, maxTop);
+  }
+
+  double _clampWidth(double width) {
+    final minW = widget.cellW * _minSpan;
+    return width.clamp(minW, widget.maxW);
+  }
+
+  double _clampHeight(double height) {
+    final minH = widget.cellH * _minSpan;
+    return height.clamp(minH, widget.maxH);
+  }
+
+  void _setInteracting(bool v) {
+    if (_interactingVN.value != v) _interactingVN.value = v;
+  }
+
+  // Drag handlers
+  void _onDragStart(DragStartDetails d) {
+    _dragStartGlobal = d.globalPosition;
+    _dragStartLayout = _layoutVN.value;
+    _setInteracting(true);
+  }
+
+  void _onDragUpdate(DragUpdateDetails d) {
+    if (_dragStartGlobal == null || _dragStartLayout == null) return;
+
+    final delta = d.globalPosition - _dragStartGlobal!;
+    final start = _dragStartLayout!;
+
+    final newLeft = _clampLeft(start.left + delta.dx, start.width);
+    final newTop = _clampTop(start.top + delta.dy, start.height);
+
+    _layoutVN.value = start.copyWith(left: newLeft, top: newTop);
+  }
+
+  void _onDragEnd([DragEndDetails? _]) {
+    _dragStartGlobal = null;
+    _dragStartLayout = null;
+    _snapToGridAndPersist();
+  }
+
+  // Resize handlers
+  void _onResizeStart(DragStartDetails d) {
+    _resizeStartGlobal = d.globalPosition;
+    _resizeStartLayout = _layoutVN.value;
+    _setInteracting(true);
+  }
+
+  void _onResizeUpdate(DragUpdateDetails d) {
+    if (_resizeStartGlobal == null || _resizeStartLayout == null) return;
+
+    final delta = d.globalPosition - _resizeStartGlobal!;
+    final start = _resizeStartLayout!;
+
+    final newWidth = _clampWidth(start.width + delta.dx);
+    final newHeight = _clampHeight(start.height + delta.dy);
+
+    final newLeft = _clampLeft(start.left, newWidth);
+    final newTop = _clampTop(start.top, newHeight);
+
+    _layoutVN.value = start.copyWith(
+      left: newLeft,
+      top: newTop,
+      width: newWidth,
+      height: newHeight,
+    );
+  }
+
+  void _onResizeEnd([DragEndDetails? _]) {
+    _resizeStartGlobal = null;
+    _resizeStartLayout = null;
+    _snapToGridAndPersist();
+  }
+
+  void _snapToGridAndPersist() {
+    final l = _layoutVN.value;
+
+    int col = (l.left / widget.cellW).round();
+    int row = (l.top / widget.cellH).round();
+    int colSpan = (l.width / widget.cellW).round();
+    int rowSpan = (l.height / widget.cellH).round();
+
+    colSpan = colSpan.clamp(_minSpan.toInt(), widget.gridColumns);
+    rowSpan = rowSpan.clamp(_minSpan.toInt(), widget.gridRows);
 
     col = col.clamp(0, widget.gridColumns - colSpan);
     row = row.clamp(0, widget.gridRows - rowSpan);
@@ -136,102 +306,138 @@ class _FreeDragResizeItemState extends State<FreeDragResizeItem> {
       ..colSpan = colSpan
       ..rowSpan = rowSpan;
 
-    setState(() {
-      left = col * widget.cellW;
-      top = row * widget.cellH;
-      widthPx = colSpan * widget.cellW;
-      heightPx = rowSpan * widget.cellH;
-    });
+    _layoutVN.value = _LiveLayout(
+      left: col * widget.cellW,
+      top: row * widget.cellH,
+      width: colSpan * widget.cellW,
+      height: rowSpan * widget.cellH,
+    );
 
+    _setInteracting(false);
     widget.onSnap();
+  }
+
+  // Outline-only placeholder used while interacting
+  Widget _buildCheapPlaceholder() {
+    final borderColor = Colors.cyanAccent.withOpacity(0.55);
+    final glowColor = Colors.cyanAccent.withOpacity(0.12);
+
+    return IgnorePointer(
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: borderColor, width: 2),
+          boxShadow: [
+            BoxShadow(
+              color: glowColor,
+              blurRadius: 10,
+              spreadRadius: 1,
+            ),
+          ],
+        ),
+        child: const SizedBox.expand(),
+      ),
+    );
+  }
+
+  Widget _buildFullGlassCard(Widget content) {
+    // Global blur is applied in WorkspaceShell; disable per-widget blur.
+    return GlassContainer(
+      blur: 0.0,
+      opacity: widget.globalOpacity,
+      tint: widget.globalTint,
+      borderRadius: BorderRadius.circular(24),
+      blurMode: GlassBlurMode.none,
+      qualityMode: GlassQualityMode.auto,
+      isInteracting: _isInteracting,
+      disableShadows: false,
+      padding: EdgeInsets.zero,
+      child: content,
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final content = DynamicWidgetFactory.create(widget.item.widgetId);
+    final content = _cachedContent ?? const SizedBox.shrink();
 
-    final glassCard = GlassContainer(
-      blur: widget.globalBlur,
-      opacity: widget.globalOpacity,
-      tint: widget.globalTint,
-      borderRadius: BorderRadius.circular(24),
-      child: content,
-    );
+    // Only this tile rebuilds per tick; expensive inner content is cached.
+    return ValueListenableBuilder<_LiveLayout>(
+      valueListenable: _layoutVN,
+      builder: (context, l, _) {
+        return Positioned(
+          left: l.left,
+          top: l.top,
+          width: l.width,
+          height: l.height,
 
-    const hitHandleSize = 24.0;
+          // IMPORTANT: Positioned is the direct child of the Stack in DashboardGrid.
+          child: RepaintBoundary(
+            child: Stack(
+              children: [
+                // Card surface: placeholder vs full glass
+                Positioned.fill(
+                  child: ValueListenableBuilder<bool>(
+                    valueListenable: _interactingVN,
+                    builder: (context, interacting, __) {
+                      if (interacting) {
+                        return _buildCheapPlaceholder();
+                      }
+                      return _buildFullGlassCard(content);
+                    },
+                  ),
+                ),
 
-    return Positioned(
-      left: left.clamp(0.0, widget.maxW - widthPx),
-      top: top.clamp(0.0, widget.maxH - heightPx),
-      width: widthPx.clamp(widget.cellW * 2, widget.maxW),
-      height: heightPx.clamp(widget.cellH * 2, widget.maxH),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onPanStart: (details) {
-          final local = details.localPosition;
-          final isResize =
-              local.dx > widthPx - hitHandleSize && local.dy > heightPx - hitHandleSize;
-          if (isResize) {
-            resizeLastGlobal = details.globalPosition;
-          } else {
-            dragLastGlobal = details.globalPosition;
-          }
-        },
-        onPanUpdate: (details) {
-          setState(() {
-            if (resizeLastGlobal != null) {
-              final delta = details.globalPosition - resizeLastGlobal!;
-              widthPx = (widthPx + delta.dx)
-                  .clamp(widget.cellW * 2, widget.maxW - left);
-              heightPx = (heightPx + delta.dy)
-                  .clamp(widget.cellH * 2, widget.maxH - top);
-              resizeLastGlobal = details.globalPosition;
-            } else if (dragLastGlobal != null) {
-              final delta = details.globalPosition - dragLastGlobal!;
-              left = (left + delta.dx).clamp(0.0, widget.maxW - widthPx);
-              top = (top + delta.dy).clamp(0.0, widget.maxH - heightPx);
-              dragLastGlobal = details.globalPosition;
-            }
-          });
-        },
-        onPanEnd: (_) {
-          dragLastGlobal = null;
-          resizeLastGlobal = null;
-          snapToGridAndPersist();
-        },
-        onPanCancel: () {
-          dragLastGlobal = null;
-          resizeLastGlobal = null;
-          snapToGridAndPersist();
-        },
-        child: Stack(
-          children: [
-            Positioned.fill(child: glassCard),
-            // Resize handle
-            Positioned(
-              right: 4,
-              bottom: 4,
-              child: MouseRegion(
-                cursor: SystemMouseCursors.resizeDownRight,
-                child: Container(
-                  width: hitHandleSize,
-                  height: hitHandleSize,
-                  alignment: Alignment.bottomRight,
-                  color: Colors.transparent,
-                  child: Container(
-                    width: 14,
-                    height: 14,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(4),
-                      color: Colors.cyanAccent,
+                // Drag overlay
+                Positioned.fill(
+                  child: Listener(
+                    behavior: HitTestBehavior.translucent,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.translucent,
+                      onPanStart: _onDragStart,
+                      onPanUpdate: _onDragUpdate,
+                      onPanEnd: _onDragEnd,
+                      child: const SizedBox.expand(),
                     ),
                   ),
                 ),
-              ),
+
+                // Resize handle (bottom-right)
+                Positioned(
+                  right: 6,
+                  bottom: 6,
+                  child: Listener(
+                    behavior: HitTestBehavior.opaque,
+                    child: GestureDetector(
+                      onPanStart: _onResizeStart,
+                      onPanUpdate: _onResizeUpdate,
+                      onPanEnd: _onResizeEnd,
+                      child: Container(
+                        width: _handleSize,
+                        height: _handleSize,
+                        decoration: BoxDecoration(
+                          color: Colors.white
+                              .withOpacity(_isInteracting ? 0.10 : 0.14),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: Colors.white.withOpacity(0.18),
+                            width: 1,
+                          ),
+                        ),
+                        child: Icon(
+                          Icons.open_in_full,
+                          size: 12,
+                          color: Colors.white.withOpacity(0.65),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 }

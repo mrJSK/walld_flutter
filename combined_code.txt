@@ -6,6 +6,8 @@ Root: lib (lib)
 ├── core/
 │   ├── app_colors.dart
 │   ├── glass_container.dart
+│   ├── performance_state.dart
+│   ├── permissions_cache.dart
 │   └── wallpaper_service.dart
 ├── Developer/
 │   ├── DynamicForms/
@@ -53,6 +55,7 @@ Root: lib (lib)
 │   ├── dashboard_grid.dart
 │   ├── dashboard_layout_persistence.dart
 │   ├── dashboard_permissions.dart
+│   ├── dashboard_screen.dart
 │   ├── dashboardpanel.dart
 │   ├── widget_factory.dart
 │   ├── widget_manifest.dart
@@ -69,6 +72,7 @@ Root: lib (lib)
 │   ├── task_tabs_manifest.dart
 │   └── task_workspace.dart
 ├── workspace/
+│   ├── loading_screen.dart
 │   ├── universal_top_bar.dart
 │   ├── workspace_controller.dart
 │   ├── workspace_ids.dart
@@ -180,53 +184,79 @@ class DefaultFirebaseOptions {
 // File: lib\main.dart
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:window_manager/window_manager.dart';
 import 'dart:io' show Platform;
 
 import 'firebase_options.dart';
 import 'workspace/workspace_shell.dart';
-import 'workspace/workspace_controller.dart'; // <--- Added Import
+import 'workspace/workspace_controller.dart';
+import 'workspace/loading_screen.dart';
+import 'core/wallpaper_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
 
-  if (Platform.isWindows) {
-    await _setupWindowsWallpaper();
+  // STEP 1: Defer first frame until heavy init is done
+  final binding = WidgetsBinding.instance;
+  binding.deferFirstFrame();
+
+  try {
+    // Initialize Firebase
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+
+    // STEP 2: Pre-load wallpaper service
+    await WallpaperService.instance.loadSettings();
+    debugPrint('✅ WallpaperService loaded before first frame');
+
+    // STEP 3: Setup desktop window properties
+    if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+      await _setupDesktopWindow();
+    }
+  } catch (e) {
+    debugPrint('❌ Error during pre-initialization: $e');
   }
 
+  // STEP 4: Allow first frame and run app
+  binding.allowFirstFrame();
   runApp(const WallDApp());
 }
 
-Future<void> _setupWindowsWallpaper() async {
-  await windowManager.ensureInitialized();
-  const windowOptions = WindowOptions(
-    backgroundColor: Colors.black,
-    titleBarStyle: TitleBarStyle.hidden,
-    skipTaskbar: false,
-  );
+/// Setup desktop window properties (Windows/macOS/Linux)
+Future<void> _setupDesktopWindow() async {
+  try {
+    await windowManager.ensureInitialized();
 
-  await windowManager.waitUntilReadyToShow(windowOptions, () async {
-    await windowManager.show();
-    await windowManager.setFullScreen(false);
-    await windowManager.maximize();
-    await windowManager.setMovable(false);
-    await windowManager.setResizable(false);
-    await windowManager.setMinimizable(false);
-    await windowManager.setClosable(false);
+    const windowOptions = WindowOptions(
+      backgroundColor: Colors.black,
+      titleBarStyle: TitleBarStyle.hidden,
+      skipTaskbar: false,
+    );
 
-    try {
-      await windowManager.setAlwaysOnBottom(true);
-    } catch (e) {
-      debugPrint('Could not set window to bottom: $e');
-    }
-  });
+    await windowManager.waitUntilReadyToShow(windowOptions, () async {
+      await windowManager.show();
+      await windowManager.setFullScreen(false);
+      await windowManager.maximize();
+
+      // Removed: setMovable (not supported)
+      await windowManager.setResizable(false);
+      await windowManager.setMinimizable(false);
+      await windowManager.setClosable(false);
+
+      try {
+        await windowManager.setAlwaysOnBottom(true);
+      } catch (e) {
+        debugPrint('⚠️ Could not set window to bottom: $e');
+      }
+    });
+
+    debugPrint('✅ Desktop window configured');
+  } catch (e) {
+    debugPrint('❌ Desktop window setup failed: $e');
+  }
 }
 
-// Changed to StatefulWidget to hold the WorkspaceController
 class WallDApp extends StatefulWidget {
   const WallDApp({super.key});
 
@@ -235,13 +265,20 @@ class WallDApp extends StatefulWidget {
 }
 
 class _WallDAppState extends State<WallDApp> {
-  // 1. Initialize the controller
   final WorkspaceController _workspaceController = WorkspaceController();
+  bool _isLoading = true;
 
   @override
   void dispose() {
     _workspaceController.dispose();
     super.dispose();
+  }
+
+  void _onLoadingComplete() {
+    debugPrint('🎉 Loading complete - transitioning to workspace');
+    if (mounted) {
+      setState(() => _isLoading = false);
+    }
   }
 
   @override
@@ -252,18 +289,15 @@ class _WallDAppState extends State<WallDApp> {
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF05040A),
       ),
-      home: StreamBuilder<User?>(
-        stream: FirebaseAuth.instance.authStateChanges(),
-        builder: (context, snapshot) {
-          final user = snapshot.data;
-          debugPrint('[MAIN] authStateChanges -> user = ${user?.uid}');
-          
-          // 2. Pass the controller (removed 'const' because controller is not const)
-          return WorkspaceShell(
-            workspaceController: _workspaceController,
-          );
-        },
-      ),
+      home: _isLoading
+          ? LoadingScreen(
+              // FIX: only pass onLoadingComplete,
+              // because LoadingScreen(onLoadingComplete: ...) is the signature
+              onLoadingComplete: _onLoadingComplete,
+            )
+          : WorkspaceShell(
+              workspaceController: _workspaceController,
+            ),
     );
   }
 }
@@ -292,21 +326,66 @@ class AppColors {
 ================================================================================
 
 // File: lib\core\glass_container.dart
+// lib/core/glasscontainer.dart
 import 'dart:ui';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import 'performance_state.dart';
+
+/// Controls whether this widget applies per-widget BackdropFilter blur.
+///
+/// - [none]: Never uses BackdropFilter (recommended when you plan to use ONE global blur layer,
+///           or a pre-blurred wallpaper image).
+/// - [perWidget]: Always uses BackdropFilter when blur >= 2.0 (expensive; avoid on low-end).
+/// - [auto]: Uses BackdropFilter only when conditions are good (warm-up stable + good FPS + not interacting).
+enum GlassBlurMode {
+  none,
+  perWidget,
+  auto,
+}
+
+/// High-level quality selection.
+///
+/// - [auto]: Decides based on [PerformanceState.instance.currentFps] and [isInteracting].
+/// - Others: Force a specific quality level.
+enum GlassQualityMode {
+  auto,
+  high,
+  medium,
+  low,
+  ultraLow,
+}
+
+/// A performant “glass” container.
+///
+/// Key performance idea:
+/// - Prefer a SINGLE global blur layer (or pre-blurred wallpaper) instead of per-widget blur.
+/// - This widget can be used in "no blur" mode while still keeping the glass look via opacity/tint.
 class GlassContainer extends StatelessWidget {
-  final double blur; // sigma
-  final double opacity; // 0..1
+  final double blur;
+  final double opacity;
   final Color tint;
   final BorderRadius borderRadius;
   final EdgeInsetsGeometry padding;
   final Widget child;
 
-  // Visual tuning
   final double borderOpacity;
   final double borderWidth;
   final List<BoxShadow> boxShadow;
+
+  /// New: controls blur strategy.
+  final GlassBlurMode blurMode;
+
+  /// New: controls quality strategy.
+  final GlassQualityMode qualityMode;
+
+  /// New: hint from callers (dragging/resizing/scrolling/animating) to reduce effects.
+  final bool isInteracting;
+
+  /// New: allow callers to disable shadows completely (useful during animations).
+  final bool disableShadows;
 
   const GlassContainer({
     super.key,
@@ -319,32 +398,162 @@ class GlassContainer extends StatelessWidget {
     this.borderOpacity = 0.18,
     this.borderWidth = 1,
     this.boxShadow = const [
-      BoxShadow(color: Color(0x40000000), blurRadius: 18, offset: Offset(0, 10)),
+      BoxShadow(
+        color: Color(0x40000000),
+        blurRadius: 18,
+        offset: Offset(0, 10),
+      ),
     ],
+
+    // Defaults: prioritize FPS.
+    this.blurMode = GlassBlurMode.auto,
+    this.qualityMode = GlassQualityMode.auto,
+    this.isInteracting = false,
+    this.disableShadows = false,
   });
+
+  GlassQualityMode _resolveQualityMode() {
+    if (qualityMode != GlassQualityMode.auto) return qualityMode;
+
+    // Caller says this is a hot path (dragging/resizing/scrolling/animating)
+    if (isInteracting) return GlassQualityMode.low;
+
+    final fps = PerformanceState.instance.currentFps;
+
+    // If FPS is unknown (e.g., early startup), be conservative.
+    if (fps == null) return GlassQualityMode.low;
+
+    if (fps < 30) return GlassQualityMode.ultraLow;
+    if (fps < 45) return GlassQualityMode.low;
+    if (fps < 55) return GlassQualityMode.medium;
+    return GlassQualityMode.high;
+  }
+
+  double _effectiveBlur(GlassQualityMode q, double requested) {
+    final b = requested.clamp(0.0, 40.0);
+    switch (q) {
+      case GlassQualityMode.ultraLow:
+        return 0.0;
+      case GlassQualityMode.low:
+        // Keep only a tiny blur (or none) to avoid saveLayer+blur cost.
+        return b.clamp(0.0, 2.0);
+      case GlassQualityMode.medium:
+        return b.clamp(0.0, 6.0);
+      case GlassQualityMode.high:
+      case GlassQualityMode.auto:
+        return b;
+    }
+  }
+
+  double _effectiveOpacity(GlassQualityMode q, double requested) {
+    final o = requested.clamp(0.0, 1.0);
+    switch (q) {
+      case GlassQualityMode.ultraLow:
+        // More opaque reduces blending cost & overdraw artifacts.
+        return o.clamp(0.08, 0.30);
+      case GlassQualityMode.low:
+        return o.clamp(0.06, 0.28);
+      case GlassQualityMode.medium:
+        return o.clamp(0.05, 0.26);
+      case GlassQualityMode.high:
+      case GlassQualityMode.auto:
+        return o;
+    }
+  }
+
+  List<BoxShadow> _effectiveShadows(GlassQualityMode q) {
+    if (disableShadows) return const [];
+
+    // Shadows add overdraw; remove them on low quality.
+    if (q == GlassQualityMode.ultraLow || q == GlassQualityMode.low) {
+      return const [];
+    }
+
+    final factor = q == GlassQualityMode.medium ? 0.55 : 1.0;
+    return boxShadow
+        .map(
+          (s) => BoxShadow(
+            color: s.color.withOpacity(s.color.opacity * factor),
+            offset: s.offset * factor,
+            blurRadius: s.blurRadius * factor,
+            spreadRadius: s.spreadRadius * factor,
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  bool _shouldUseBackdropFilter({
+    required GlassQualityMode q,
+    required double blurSigma,
+  }) {
+    if (blurSigma < 2.0) return false;
+
+    switch (blurMode) {
+      case GlassBlurMode.none:
+        return false;
+
+      case GlassBlurMode.perWidget:
+        // Always enable (expensive).
+        return true;
+
+      case GlassBlurMode.auto:
+        // Only enable in "high" mode and only after warm-up stability
+        // so low-end / startup doesn’t pay the blur cost.
+        if (!PerformanceState.instance.isWarmupStable) return false;
+        return q == GlassQualityMode.high && !isInteracting;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final blurSigma = blur.clamp(0.0, 30.0);
-    final a = opacity.clamp(0.0, 1.0);
+    final q = _resolveQualityMode();
+
+    final blurSigma = _effectiveBlur(q, blur);
+    final a = _effectiveOpacity(q, opacity);
+
+    // Tint fill
     final fill = tint.withOpacity(a);
 
+    // Reduce border work in low quality.
+    final effBorderOpacity = (q == GlassQualityMode.ultraLow)
+        ? (borderOpacity * 0.35).clamp(0.0, 1.0)
+        : (q == GlassQualityMode.low)
+            ? (borderOpacity * 0.55).clamp(0.0, 1.0)
+            : borderOpacity.clamp(0.0, 1.0);
+
+    final effBorderWidth = (q == GlassQualityMode.ultraLow)
+        ? (borderWidth * 0.5).clamp(0.0, borderWidth)
+        : borderWidth;
+
+    final decoration = BoxDecoration(
+      color: fill,
+      borderRadius: borderRadius,
+      border: Border.all(
+        color: Colors.white.withOpacity(effBorderOpacity),
+        width: effBorderWidth,
+      ),
+      boxShadow: _effectiveShadows(q),
+    );
+
+    final body = Container(
+      decoration: decoration,
+      padding: padding,
+      child: child,
+    );
+
+    final useBackdrop = _shouldUseBackdropFilter(q: q, blurSigma: blurSigma);
+
+    // Fast path (recommended): no BackdropFilter at all.
+    if (!useBackdrop) {
+      return body;
+    }
+
+    // Slow path (high quality only): per-widget BackdropFilter.
     return ClipRRect(
       borderRadius: borderRadius,
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: blurSigma, sigmaY: blurSigma),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: fill,
-            borderRadius: borderRadius,
-            border: Border.all(
-              color: Colors.white.withOpacity(borderOpacity),
-              width: borderWidth,
-            ),
-            boxShadow: boxShadow,
-          ),
-          child: Padding(padding: padding, child: child),
-        ),
+        child: body,
       ),
     );
   }
@@ -352,132 +561,327 @@ class GlassContainer extends StatelessWidget {
 
 ================================================================================
 
-// File: lib\core\wallpaper_service.dart
-import 'dart:io';
+// File: lib\core\performance_state.dart
+/// Shared singleton to track app warm-up and performance state
+class PerformanceState {
+  PerformanceState._();
+  static final PerformanceState instance = PerformanceState._();
+
+  /// Set to true when WorkspaceShell has warmed up and is stable
+  bool isWarmupStable = false;
+  
+  /// Optional: track current FPS for logging
+  double? currentFps;
+  
+  /// Reset state (e.g., on hot reload)
+  void reset() {
+    isWarmupStable = false;
+    currentFps = null;
+  }
+}
+
+================================================================================
+
+// File: lib\core\permissions_cache.dart
 import 'package:flutter/material.dart';
+
+class PermissionsCache extends ChangeNotifier {
+  static final PermissionsCache instance = PermissionsCache._();
+  PermissionsCache._();
+
+  Set<String>? _cachedWidgetIds;
+  String? _cachedUserId;
+  DateTime? _cacheTime;
+
+  static const _cacheValidDuration = Duration(minutes: 5);
+
+  bool get hasCache => _cachedWidgetIds != null && _isValid;
+
+  bool get _isValid {
+    if (_cacheTime == null) return false;
+    return DateTime.now().difference(_cacheTime!) < _cacheValidDuration;
+  }
+
+  /// Return cached permissions for [userId] if they are still valid,
+  /// otherwise null.
+  Set<String>? getCachedPermissions(String userId) {
+    if (_cachedUserId != userId) return null;
+    if (!_isValid) return null;
+    return _cachedWidgetIds;
+  }
+
+  /// Store permissions for [userId] in memory cache for a short duration.
+  void setCachedPermissions(String userId, Set<String> widgetIds) {
+    _cachedUserId = userId;
+    _cachedWidgetIds = widgetIds;
+    _cacheTime = DateTime.now();
+
+    debugPrint(
+      '[PermissionsCache] ✅ Cached ${widgetIds.length} permissions for user $userId',
+    );
+    notifyListeners();
+  }
+
+  void clearCache() {
+    _cachedWidgetIds = null;
+    _cachedUserId = null;
+    _cacheTime = null;
+    debugPrint('[PermissionsCache] 🗑️ Cache cleared');
+    notifyListeners();
+  }
+}
+
+================================================================================
+
+// File: lib\core\wallpaper_service.dart
+import 'dart:async';
+import 'dart:io';
+import 'dart:math' as math;
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:path/path.dart' as p;
 
-/// Singleton service for managing app-wide wallpaper and glass settings
 class WallpaperService extends ChangeNotifier {
   static final WallpaperService instance = WallpaperService._();
   WallpaperService._();
 
-  // Keys for SharedPreferences
   static const _prefsWallpaperKey = 'wallpaper_path';
   static const _prefsGlobalOpacityKey = 'global_widget_opacity';
   static const _prefsGlobalBlurKey = 'global_widget_blur';
 
-  // State
   String? wallpaperPath;
   double globalGlassOpacity = 0.12;
   double globalGlassBlur = 16.0;
 
   bool _isLoaded = false;
 
-  /// Load settings from SharedPreferences
+  // Cached wallpaper (avoid sync decode on first frames)
+  ui.Image? _cachedDecodedImage;
+  ImageProvider? _cachedImageProvider;
+
+  // Notify throttling (prevents rebuild storms on sliders)
+  DateTime _lastNotify = DateTime.fromMillisecondsSinceEpoch(0);
+
   Future<void> loadSettings() async {
-    if (_isLoaded) return; // Load only once
-    
+    if (_isLoaded) return;
+
     final prefs = await SharedPreferences.getInstance();
     wallpaperPath = prefs.getString(_prefsWallpaperKey);
     globalGlassOpacity = prefs.getDouble(_prefsGlobalOpacityKey) ?? 0.12;
     globalGlassBlur = prefs.getDouble(_prefsGlobalBlurKey) ?? 16.0;
-    
+
+    if (wallpaperPath != null && File(wallpaperPath!).existsSync()) {
+      await _precacheWallpaper();
+    } else {
+      wallpaperPath = null;
+    }
+
     _isLoaded = true;
-    debugPrint('[WallpaperService] LOADED: wallpaper=$wallpaperPath blur=$globalGlassBlur opacity=$globalGlassOpacity');
-    notifyListeners();
+    _notifyNow();
   }
 
-  /// Save current settings to SharedPreferences
   Future<void> saveSettings() async {
     final prefs = await SharedPreferences.getInstance();
-    
+
     if (wallpaperPath != null) {
       await prefs.setString(_prefsWallpaperKey, wallpaperPath!);
     } else {
       await prefs.remove(_prefsWallpaperKey);
     }
-    
+
     await prefs.setDouble(_prefsGlobalOpacityKey, globalGlassOpacity);
     await prefs.setDouble(_prefsGlobalBlurKey, globalGlassBlur);
-    
-    debugPrint('[WallpaperService] SAVED: wallpaper=$wallpaperPath blur=$globalGlassBlur opacity=$globalGlassOpacity');
-    notifyListeners();
+
+    _notifyNow();
   }
 
-  /// Pick wallpaper from file system (Windows/Desktop)
   Future<void> pickWallpaper() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.image,
       allowMultiple: false,
+      withData: false,
     );
 
     final pickedPath = result?.files.single.path;
     if (pickedPath == null) return;
 
-    // Copy to app support directory
+    final normalizedPath = await _copyAndNormalizeWallpaper(pickedPath);
+    wallpaperPath = normalizedPath;
+
+    await _precacheWallpaper();
+    await saveSettings();
+  }
+
+  Future<void> resetWallpaper() async {
+    wallpaperPath = null;
+    _cachedImageProvider = null;
+    _cachedDecodedImage = null;
+    await saveSettings();
+  }
+
+  void setGlassBlur(double blur) {
+    globalGlassBlur = blur.clamp(0.0, 40.0);
+    _throttledNotify();
+  }
+
+  void setGlassOpacity(double opacity) {
+    globalGlassOpacity = opacity.clamp(0.02, 0.40);
+    _throttledNotify();
+  }
+
+  void _throttledNotify() {
+    final now = DateTime.now();
+    if (now.difference(_lastNotify).inMilliseconds < 16) return; // ~60fps cap
+    _lastNotify = now;
+    notifyListeners();
+  }
+
+  void _notifyNow() {
+    _lastNotify = DateTime.now();
+    notifyListeners();
+  }
+
+  /// IMPORTANT: Keep wallpaper decode async and cached.
+  Future<void> _precacheWallpaper() async {
+    final path = wallpaperPath;
+    if (path == null) return;
+
+    final file = File(path);
+    if (!file.existsSync()) {
+      wallpaperPath = null;
+      _cachedImageProvider = null;
+      _cachedDecodedImage = null;
+      return;
+    }
+
+    try {
+      _cachedImageProvider = FileImage(file);
+
+      final imageStream =
+          _cachedImageProvider!.resolve(const ImageConfiguration());
+      final completer = Completer<void>();
+
+      late final ImageStreamListener listener;
+      listener = ImageStreamListener(
+        (ImageInfo info, bool _) {
+          _cachedDecodedImage = info.image;
+          imageStream.removeListener(listener);
+          completer.complete();
+        },
+        onError: (error, stack) {
+          imageStream.removeListener(listener);
+          _cachedImageProvider = null;
+          _cachedDecodedImage = null;
+          completer.complete();
+        },
+      );
+
+      imageStream.addListener(listener);
+      await completer.future;
+    } catch (_) {
+      _cachedImageProvider = null;
+      _cachedDecodedImage = null;
+    }
+  }
+
+  /// Fixes “wallpaper problems” on desktop by normalizing huge images:
+  /// - Downscales to a max dimension (default 2560px)
+  /// - Re-encodes to PNG (fast decode and predictable)
+  Future<String> _copyAndNormalizeWallpaper(
+    String pickedPath, {
+    int maxDimension = 2560,
+  }) async {
     final appDir = await getApplicationSupportDirectory();
     final wpDir = Directory(p.join(appDir.path, 'wallpapers'));
     if (!await wpDir.exists()) {
       await wpDir.create(recursive: true);
     }
 
-    final ext = p.extension(pickedPath).isNotEmpty 
-        ? p.extension(pickedPath) 
-        : '.jpg';
-    final cachedPath = p.join(wpDir.path, 'current_wallpaper$ext');
+    // Always store as .png after normalization
+    final cachedPath = p.join(wpDir.path, 'current_wallpaper.png');
 
-    await File(pickedPath).copy(cachedPath);
+    final srcBytes = await File(pickedPath).readAsBytes();
 
-    wallpaperPath = cachedPath;
-    await saveSettings();
-  }
+    try {
+      final codec = await ui.instantiateImageCodec(srcBytes);
+      final frame = await codec.getNextFrame();
+      final img = frame.image;
 
-  /// Reset wallpaper to default gradient
-  Future<void> resetWallpaper() async {
-    wallpaperPath = null;
-    await saveSettings();
-  }
+      final srcW = img.width;
+      final srcH = img.height;
 
-  /// Update glass blur
-  void setGlassBlur(double blur) {
-    globalGlassBlur = blur.clamp(0.0, 40.0);
-    notifyListeners();
-  }
+      // Compute target size while preserving aspect ratio
+      final scale =
+          math.min(1.0, maxDimension / math.max(srcW.toDouble(), srcH.toDouble()));
+      final targetW = (srcW * scale).round();
+      final targetH = (srcH * scale).round();
 
-  /// Update glass opacity
-  void setGlassOpacity(double opacity) {
-    globalGlassOpacity = opacity.clamp(0.02, 0.40);
-    notifyListeners();
-  }
+      ui.Image outImage = img;
 
-  /// Get background decoration (wallpaper or gradient)
-  BoxDecoration get backgroundDecoration {
-    final path = wallpaperPath;
-    if (path != null) {
-      final file = File(path);
-      if (file.existsSync()) {
-        return BoxDecoration(
-          image: DecorationImage(
-            image: FileImage(file),
-            fit: BoxFit.cover,
-          ),
+      // If downscaling is needed, decode again with target sizes
+      if (scale < 1.0) {
+        codec.dispose();
+
+        final codec2 = await ui.instantiateImageCodec(
+          srcBytes,
+          targetWidth: targetW,
+          targetHeight: targetH,
         );
+        final frame2 = await codec2.getNextFrame();
+        outImage = frame2.image;
+        codec2.dispose();
+      } else {
+        codec.dispose();
       }
+
+      final byteData =
+          await outImage.toByteData(format: ui.ImageByteFormat.png);
+      final pngBytes = byteData?.buffer.asUint8List();
+
+      if (pngBytes == null) {
+        // fallback: raw copy
+        await File(pickedPath).copy(cachedPath);
+        return cachedPath;
+      }
+
+      await File(cachedPath).writeAsBytes(pngBytes, flush: true);
+
+      // Best-effort dispose
+      try {
+        outImage.dispose();
+      } catch (_) {}
+
+      return cachedPath;
+    } catch (_) {
+      // If anything fails, fallback to a normal copy
+      final ext = p.extension(pickedPath).isNotEmpty ? p.extension(pickedPath) : '.jpg';
+      final fallbackPath = p.join(wpDir.path, 'current_wallpaper$ext');
+      await File(pickedPath).copy(fallbackPath);
+      return fallbackPath;
+    }
+  }
+
+  BoxDecoration get backgroundDecoration {
+    if (_cachedImageProvider != null && _cachedDecodedImage != null) {
+      return BoxDecoration(
+        image: DecorationImage(
+          image: _cachedImageProvider!,
+          fit: BoxFit.cover,
+        ),
+      );
     }
 
-    // Default gradient
     return const BoxDecoration(
       gradient: LinearGradient(
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,
-        colors: [
-          Color(0xFF050716),
-          Color(0xFF020308),
-        ],
+        colors: [Color(0xFF050716), Color(0xFF020308)],
       ),
     );
   }
@@ -5258,401 +5662,301 @@ class UserDatabaseRepository {
 
 // File: lib\dynamic_screen\dashboardpanel.dart
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 
-import '../core/wallpaper_service.dart';
-import '../workspace/workspace_controller.dart';
-import '../workspace/workspace_switcher.dart';
-
-import 'dashboard_layout_persistence.dart';
-import 'dashboard_permissions.dart';
-import 'model/screen_grid.dart';
+import '../../core/glass_container.dart';
+import '../../core/wallpaper_service.dart';
 import 'model/floating_widget.dart';
-import 'dashboard_grid.dart';
-import 'dashboard_drawer.dart';
+import 'widget_factory.dart';
+import 'model/screen_grid.dart';
 
-class DashboardPanel extends StatefulWidget {
-  final WorkspaceController? workspaceController;
-
-  const DashboardPanel({super.key, this.workspaceController});
-
-  @override
-  State<DashboardPanel> createState() => DashboardPanelState();
+Widget buildGridWidget({
+  required ScreenGridWidgetSpan item,
+  required double cellW,
+  required double cellH,
+  required double maxW,
+  required double maxH,
+  required double initialLeft,
+  required double initialTop,
+  required double initialWidthPx,
+  required double initialHeightPx,
+  required double globalBlur,
+  required double globalOpacity,
+  required Color globalTint,
+  required VoidCallback onSnap,
+}) {
+  return FreeDragResizeItem(
+    key: ValueKey(item.widgetId),
+    item: item,
+    gridColumns: 24,
+    gridRows: 14,
+    cellW: cellW,
+    cellH: cellH,
+    maxW: maxW,
+    maxH: maxH,
+    initialLeft: initialLeft,
+    initialTop: initialTop,
+    initialWidthPx: initialWidthPx,
+    initialHeightPx: initialHeightPx,
+    globalBlur: globalBlur,
+    globalOpacity: globalOpacity,
+    globalTint: globalTint,
+    onSnap: onSnap,
+  );
 }
 
-class DashboardPanelState extends State<DashboardPanel> {
-  // Layout
-  final ScreenGridConfig grid = const ScreenGridConfig(columns: 24, rows: 14);
-  late List<ScreenGridWidgetSpan> items;
+/// Draggable + resizable wrapper used by the dashboard grid.
+class FreeDragResizeItem extends StatefulWidget {
+  final ScreenGridWidgetSpan item;
+  final int gridColumns;
+  final int gridRows;
 
-  // Auth / permissions
-  User? currentUser;
-  Set<String> allowedWidgetIds = {'login'};
+  final double cellW;
+  final double cellH;
+  final double maxW;
+  final double maxH;
 
-  // Layout persistence key
-  static const String prefsLayoutKey = 'screen_grid_layout';
+  final double initialLeft;
+  final double initialTop;
+  final double initialWidthPx;
+  final double initialHeightPx;
+
+  final double globalBlur;
+  final double globalOpacity;
+  final Color globalTint;
+  final VoidCallback onSnap;
+
+  const FreeDragResizeItem({
+    super.key,
+    required this.item,
+    required this.gridColumns,
+    required this.gridRows,
+    required this.cellW,
+    required this.cellH,
+    required this.maxW,
+    required this.maxH,
+    required this.initialLeft,
+    required this.initialTop,
+    required this.initialWidthPx,
+    required this.initialHeightPx,
+    required this.globalBlur,
+    required this.globalOpacity,
+    required this.globalTint,
+    required this.onSnap,
+  });
+
+  @override
+  State<FreeDragResizeItem> createState() => _FreeDragResizeItemState();
+}
+
+class _FreeDragResizeItemState extends State<FreeDragResizeItem> {
+  late double left;
+  late double top;
+  late double widthPx;
+  late double heightPx;
+
+  Offset? dragLastGlobal;
+  Offset? resizeLastGlobal;
+
+  // 🔥 FIX: Cache widget content to avoid rebuilding on every frame
+  Widget? _cachedContent;
+  String? _cachedWidgetId;
+
+  bool get isInteracting => dragLastGlobal != null || resizeLastGlobal != null;
 
   @override
   void initState() {
     super.initState();
-    // 1. Initialize with defaults temporarily
-    items = defaultItems();
+    left = widget.initialLeft;
+    top = widget.initialTop;
+    widthPx = widget.initialWidthPx;
+    heightPx = widget.initialHeightPx;
     
-    _initWallpaperService();
-    
-    // 2. Load saved layout from disk (this might overwrite items with an incomplete list!)
-    loadLayout();
-    
-    debugPrint('[DASH] initState -> attaching auth listener');
-    listenAuthState();
-  }
-
-  Future<void> _initWallpaperService() async {
-    await WallpaperService.instance.loadSettings();
-    WallpaperService.instance.addListener(_onWallpaperChanged);
-    if (mounted) setState(() {});
-  }
-
-  void _onWallpaperChanged() {
-    if (!mounted) return;
-    setState(() {});
+    // Cache the widget content
+    _buildCachedContent();
   }
 
   @override
-  void dispose() {
-    WallpaperService.instance.removeListener(_onWallpaperChanged);
-    super.dispose();
+  void didUpdateWidget(covariant FreeDragResizeItem oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    
+    // Rebuild cached content if widget ID changed
+    if (oldWidget.item.widgetId != widget.item.widgetId) {
+      _buildCachedContent();
+    }
+    
+    if (!isInteracting) {
+      left = (widget.item.col * widget.cellW).clamp(0.0, widget.maxW - widget.cellW);
+      top = (widget.item.row * widget.cellH).clamp(0.0, widget.maxH - widget.cellH);
+      widthPx = (widget.item.colSpan * widget.cellW)
+          .clamp(widget.cellW * 2, widget.maxW);
+      heightPx = (widget.item.rowSpan * widget.cellH)
+          .clamp(widget.cellH * 2, widget.maxH);
+    }
   }
 
-  // ---------- AUTH & PERMISSIONS ----------
+  // 🔥 FIX: Build and cache widget content once
+  void _buildCachedContent() {
+    _cachedWidgetId = widget.item.widgetId;
+    _cachedContent = RepaintBoundary(
+      child: DynamicWidgetFactory.create(widget.item.widgetId),
+    );
+  }
 
-  void listenAuthState() {
-    FirebaseAuth.instance.authStateChanges().listen((user) {
-      debugPrint('[DASH] authStateChanges user = ${user?.uid}');
-      currentUser = user;
-      if (!mounted) return;
+  void snapToGridAndPersist() {
+    int col = (left / widget.cellW).round();
+    int row = (top / widget.cellH).round();
+    int colSpan = (widthPx / widget.cellW).round();
+    int rowSpan = (heightPx / widget.cellH).round();
 
-      if (user == null) {
-        debugPrint('[DASH] user == null -> login only');
-        setState(() {
-          allowedWidgetIds = {'login'};
-        });
-      } else {
-        debugPrint('[DASH] user logged in, loading permissions');
-        // Load real permissions
-        loadUserPermissions(user.uid);
-      }
+    colSpan = colSpan.clamp(2, widget.gridColumns);
+    rowSpan = rowSpan.clamp(2, widget.gridRows);
+
+    col = col.clamp(0, widget.gridColumns - colSpan);
+    row = row.clamp(0, widget.gridRows - rowSpan);
+
+    widget.item
+      ..col = col
+      ..row = row
+      ..colSpan = colSpan
+      ..rowSpan = rowSpan;
+
+    setState(() {
+      left = col * widget.cellW;
+      top = row * widget.cellH;
+      widthPx = colSpan * widget.cellW;
+      heightPx = rowSpan * widget.cellH;
     });
+
+    widget.onSnap();
   }
-
-  Future<void> loadUserPermissions(String userId) async {
-    await DashboardPermissions.loadUserPermissions(
-      context: context,
-      userId: userId,
-      onAllowedWidgetIds: (ids) {
-        if (!mounted) return;
-        setState(() {
-          allowedWidgetIds = ids;
-
-          // ============================================================
-          // FIX: RECONCILIATION LOGIC
-          // Check if any allowed widget is MISSING from the current 'items' list
-          // because it wasn't in the saved layout.
-          // ============================================================
-          
-          // 1. What widgets do we currently have in the layout?
-          final currentLayoutIds = items.map((w) => w.widgetId).toSet();
-          
-          // 2. Which allowed widgets are missing?
-          final missingIds = ids.difference(currentLayoutIds);
-
-          if (missingIds.isNotEmpty) {
-            debugPrint('[DASH] Found missing allowed widgets: $missingIds. Restoring them now...');
-            final defaults = defaultItems();
-            
-            for (final missingId in missingIds) {
-              // Try to find the default configuration for this missing widget
-              try {
-                final defaultWidget = defaults.firstWhere((w) => w.widgetId == missingId);
-                items.add(defaultWidget);
-              } catch (e) {
-                debugPrint('[DASH] Warning: No default layout definition found for widgetId: $missingId');
-              }
-            }
-            
-            // 3. Save the repaired layout immediately so they stick
-            saveLayout();
-          }
-        });
-      },
-    );
-  }
-
-  Future<void> signOut() async {
-    await FirebaseAuth.instance.signOut();
-  }
-
-  // ---------- LAYOUT PERSISTENCE ----------
-
-  Future<void> loadLayout() async {
-    await DashboardLayoutPersistence.loadLayout(
-      prefsKey: prefsLayoutKey,
-      onLoaded: (loaded) {
-        if (!mounted) return;
-        setState(() => items = loaded);
-        
-        // Trigger a permission check again in case layout loaded AFTER auth
-        if (currentUser != null) {
-           loadUserPermissions(currentUser!.uid);
-        }
-      },
-      defaultItemsBuilder: defaultItems,
-    );
-  }
-
-  Future<void> saveLayout() async {
-    await DashboardLayoutPersistence.saveLayout(
-      prefsKey: prefsLayoutKey,
-      items: items,
-    );
-  }
-
-  List<ScreenGridWidgetSpan> defaultItems() {
-    return [
-      ScreenGridWidgetSpan(
-        widgetId: 'login',
-        col: 7,
-        row: 3,
-        colSpan: 10,
-        rowSpan: 8,
-      ),
-      ScreenGridWidgetSpan(
-        widgetId: 'createtask',
-        col: 1,
-        row: 2,
-        colSpan: 10,
-        rowSpan: 4,
-      ),
-      ScreenGridWidgetSpan(
-        widgetId: 'viewassignedtasks',
-        col: 13,
-        row: 2,
-        colSpan: 10,
-        rowSpan: 4,
-      ),
-      ScreenGridWidgetSpan(
-        widgetId: 'viewalltasks',
-        col: 1,
-        row: 8,
-        colSpan: 10,
-        rowSpan: 4,
-      ),
-      ScreenGridWidgetSpan(
-        widgetId: 'completetask',
-        col: 13,
-        row: 8,
-        colSpan: 10,
-        rowSpan: 4,
-      ),
-    ];
-  }
-
-  // ---------- WALLPAPER & GLASS ----------
-
-  Future<void> pickWallpaperFromWindows() async {
-    await WallpaperService.instance.pickWallpaper();
-  }
-
-  Future<void> resetWallpaper() async {
-    await WallpaperService.instance.resetWallpaper();
-  }
-
-  BoxDecoration get backgroundDecoration {
-    return WallpaperService.instance.backgroundDecoration;
-  }
-
-  Future<void> openGlobalGlassSheet() async {
-    final service = WallpaperService.instance;
-    double tempOpacity = service.globalGlassOpacity;
-    double tempBlur = service.globalGlassBlur;
-
-    final applied = await showModalBottomSheet<bool>(
-      context: context,
-      backgroundColor: const Color(0xFF05040A),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            return SafeArea(
-              top: false,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 38,
-                      height: 4,
-                      margin: const EdgeInsets.only(bottom: 12),
-                      decoration: BoxDecoration(
-                        color: Colors.white24,
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                    ),
-                    const Row(
-                      children: [
-                        Icon(
-                          Icons.blur_on_rounded,
-                          color: Colors.cyanAccent,
-                          size: 18,
-                        ),
-                        SizedBox(width: 8),
-                        Text(
-                          'Glass settings',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 14,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        const SizedBox(
-                          width: 70,
-                          child: Text(
-                            'Opacity',
-                            style: TextStyle(
-                              color: Colors.white70,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ),
-                        Expanded(
-                          child: Slider(
-                            min: 0.04,
-                            max: 0.30,
-                            divisions: 26,
-                            value: tempOpacity.clamp(0.04, 0.30),
-                            label: tempOpacity.toStringAsFixed(2),
-                            onChanged: (v) {
-                              setModalState(() {
-                                tempOpacity = v;
-                              });
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
-                    Row(
-                      children: [
-                        const SizedBox(
-                          width: 70,
-                          child: Text(
-                            'Blur',
-                            style: TextStyle(
-                              color: Colors.white70,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ),
-                        Expanded(
-                          child: Slider(
-                            min: 0,
-                            max: 30,
-                            divisions: 30,
-                            value: tempBlur.clamp(0, 30),
-                            label: tempBlur.toStringAsFixed(0),
-                            onChanged: (v) {
-                              setModalState(() {
-                                tempBlur = v;
-                              });
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: TextButton.icon(
-                        onPressed: () => Navigator.pop(context, true),
-                        icon: const Icon(Icons.check, size: 16),
-                        label: const Text('Apply'),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
-
-    if (applied == true) {
-      service.setGlassOpacity(tempOpacity);
-      service.setGlassBlur(tempBlur);
-      await service.saveSettings();
-    }
-  }
-
-  // ---------- WIDGET VISIBILITY ----------
-
-  void toggleWidget(String widgetId) {
-    final index = items.indexWhere((w) => w.widgetId == widgetId);
-    if (index != -1) {
-      setState(() => items.removeAt(index));
-    } else {
-      // Find default to add back
-      final defaults = defaultItems();
-      try {
-        final w = defaults.firstWhere((element) => element.widgetId == widgetId);
-        setState(() {
-          items.add(w);
-        });
-      } catch (e) {
-        debugPrint("Widget ID $widgetId not found in defaults");
-      }
-    }
-    saveLayout();
-  }
-
-  // ---------- BUILD ----------
 
   @override
   Widget build(BuildContext context) {
-    final user = currentUser ?? FirebaseAuth.instance.currentUser;
+    // 🔥 FIX: Use cached content instead of rebuilding every frame
+    final content = _cachedContent ?? const SizedBox.shrink();
 
-    // Filter widgets
-    final visibleItems = user == null
-        ? items.where((w) => w.widgetId == 'login').toList()
-        : items.where((w) => allowedWidgetIds.contains(w.widgetId)).toList();
+    // 🔥 FIX: Reduce blur during interaction for better performance
+    final effectiveBlur = isInteracting 
+        ? (widget.globalBlur * 0.5).clamp(0.0, 8.0)  // Half blur when dragging
+        : widget.globalBlur;
 
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      body: Container(
-        decoration: backgroundDecoration,
-        child: SafeArea(
-          child: Stack(
-            children: [
-              // 1. THE GRID
-              DashboardGrid(
-                grid: grid,
-                items: visibleItems,
-                onSnap: saveLayout,
+    final glassCard = GlassContainer(
+      blur: effectiveBlur,
+      opacity: widget.globalOpacity,
+      tint: widget.globalTint,
+      borderRadius: BorderRadius.circular(24),
+      child: content,
+    );
+
+    const hitHandleSize = 24.0;
+
+    return Positioned(
+      left: left.clamp(0.0, widget.maxW - widthPx),
+      top: top.clamp(0.0, widget.maxH - heightPx),
+      width: widthPx.clamp(widget.cellW * 2, widget.maxW),
+      height: heightPx.clamp(widget.cellH * 2, widget.maxH),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onPanStart: (details) {
+          final local = details.localPosition;
+          final isResize =
+              local.dx > widthPx - hitHandleSize && local.dy > heightPx - hitHandleSize;
+          
+          setState(() {
+            if (isResize) {
+              resizeLastGlobal = details.globalPosition;
+            } else {
+              dragLastGlobal = details.globalPosition;
+            }
+          });
+        },
+        onPanUpdate: (details) {
+          setState(() {
+            if (resizeLastGlobal != null) {
+              final delta = details.globalPosition - resizeLastGlobal!;
+              widthPx = (widthPx + delta.dx)
+                  .clamp(widget.cellW * 2, widget.maxW - left);
+              heightPx = (heightPx + delta.dy)
+                  .clamp(widget.cellH * 2, widget.maxH - top);
+              resizeLastGlobal = details.globalPosition;
+            } else if (dragLastGlobal != null) {
+              final delta = details.globalPosition - dragLastGlobal!;
+              left = (left + delta.dx).clamp(0.0, widget.maxW - widthPx);
+              top = (top + delta.dy).clamp(0.0, widget.maxH - heightPx);
+              dragLastGlobal = details.globalPosition;
+            }
+          });
+        },
+        onPanEnd: (_) {
+          setState(() {
+            dragLastGlobal = null;
+            resizeLastGlobal = null;
+          });
+          snapToGridAndPersist();
+        },
+        onPanCancel: () {
+          setState(() {
+            dragLastGlobal = null;
+            resizeLastGlobal = null;
+          });
+          snapToGridAndPersist();
+        },
+        child: Stack(
+          children: [
+            // 🔥 FIX: Isolate glass card repaints
+            Positioned.fill(
+              child: RepaintBoundary(
+                child: glassCard,
               ),
-              
-              // 2. REMOVED: DashboardTopBar
-              // It is now handled by WorkspaceShell
-              
-              // 3. Keep Drawer if you use it, or remove if not needed
-              // const DashboardDrawer(), 
-            ],
+            ),
+            
+            // Resize handle
+            if (!isInteracting || resizeLastGlobal != null)
+              Positioned(
+                right: 4,
+                bottom: 4,
+                child: _ResizeHandle(
+                  isActive: resizeLastGlobal != null,
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// 🔥 FIX: Extract resize handle to prevent rebuilds
+class _ResizeHandle extends StatelessWidget {
+  final bool isActive;
+
+  const _ResizeHandle({required this.isActive});
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeDownRight,
+      child: Container(
+        width: 24.0,
+        height: 24.0,
+        alignment: Alignment.bottomRight,
+        color: Colors.transparent,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          width: isActive ? 16 : 14,
+          height: isActive ? 16 : 14,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(4),
+            color: isActive ? Colors.cyanAccent : Colors.cyanAccent.withOpacity(0.8),
+            boxShadow: isActive
+                ? [
+                    BoxShadow(
+                      color: Colors.cyanAccent.withOpacity(0.5),
+                      blurRadius: 8,
+                      spreadRadius: 2,
+                    ),
+                  ]
+                : null,
           ),
         ),
       ),
@@ -5791,11 +6095,23 @@ class DashboardDrawer extends StatelessWidget {
 
 // File: lib\dynamic_screen\dashboard_grid.dart
 import 'package:flutter/material.dart';
+
 import '../core/wallpaper_service.dart';
 import 'model/screen_grid.dart';
-import 'model/floating_widget.dart';
-import 'widgets/widgets.dart'; // exposes buildGridWidget
+import 'widgets/widgets.dart';
 
+/// Dashboard grid renderer.
+///
+/// FPS fixes:
+/// - Wrap the whole grid in a RepaintBoundary so repaint damage doesn't climb up.
+/// - Wrap EACH item in a RepaintBoundary so moving one tile doesn't repaint others.
+/// - Clip the grid area to reduce overdraw outside bounds (desktop especially).
+///
+/// Notes:
+/// - This doesn't remove translucent blending cost (glass over wallpaper), but it
+///   reduces *how much* of the scene repaints when one item animates/moves.
+/// - A true "canvas-style" solution would require a different architecture
+///   (CustomPainter/scene graph) and is intentionally not forced here.
 class DashboardGrid extends StatelessWidget {
   final ScreenGridConfig grid;
   final List<ScreenGridWidgetSpan> items;
@@ -5810,38 +6126,51 @@ class DashboardGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final cellW = constraints.maxWidth / grid.columns;
-        final cellH = constraints.maxHeight / grid.rows;
+    return RepaintBoundary(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final cellW = constraints.maxWidth / grid.columns;
+          final cellH = constraints.maxHeight / grid.rows;
 
-        final visibleItems = items;
+          // Read once per build (avoid repeated static singleton lookups).
+          final globalBlur = WallpaperService.instance.globalGlassBlur;
+          final globalOpacity = WallpaperService.instance.globalGlassOpacity;
+          const globalTint = Color(0xFFFFFFFF);
 
-        return Stack(
-          children: visibleItems.map((item) {
-            final left = cellW * item.col;
-            final top = cellH * item.row;
-            final widthPx = cellW * item.colSpan;
-            final heightPx = cellH * item.rowSpan;
+          return ClipRect(
+            child: Stack(
+              clipBehavior: Clip.hardEdge,
+              children: items.map((item) {
+                final left = cellW * item.col;
+                final top = cellH * item.row;
+                final widthPx = cellW * item.colSpan;
+                final heightPx = cellH * item.rowSpan;
 
-            return buildGridWidget(
-              item: item,
-              cellW: cellW,
-              cellH: cellH,
-              maxW: constraints.maxWidth,
-              maxH: constraints.maxHeight,
-              initialLeft: left,
-              initialTop: top,
-              initialWidthPx: widthPx,
-              initialHeightPx: heightPx,
-              globalBlur: WallpaperService.instance.globalGlassBlur,
-              globalOpacity: WallpaperService.instance.globalGlassOpacity,
-              globalTint: const Color(0xFFFFFFFF),
-              onSnap: onSnap,
-            );
-          }).toList(),
-        );
-      },
+                // IMPORTANT: isolate each tile’s glass/shadow/content composition.
+                // Even if the inner widget already uses RepaintBoundary, this
+                // guarantees the Positioned subtree itself is also isolated.
+                return RepaintBoundary(
+                  child: buildGridWidget(
+                    item: item,
+                    cellW: cellW,
+                    cellH: cellH,
+                    maxW: constraints.maxWidth,
+                    maxH: constraints.maxHeight,
+                    initialLeft: left,
+                    initialTop: top,
+                    initialWidthPx: widthPx,
+                    initialHeightPx: heightPx,
+                    globalBlur: globalBlur,
+                    globalOpacity: globalOpacity,
+                    globalTint: globalTint,
+                    onSnap: onSnap,
+                  ),
+                );
+              }).toList(),
+            ),
+          );
+        },
+      ),
     );
   }
 }
@@ -6030,6 +6359,264 @@ class DashboardPermissions {
       // Do NOT auto sign-out during debugging; just fall back to login view.
       onAllowedWidgetIds({'login'});
     }
+  }
+}
+
+================================================================================
+
+// File: lib\dynamic_screen\dashboard_screen.dart
+import 'dart:async';
+
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+
+import 'package:walld_flutter/dynamic_screen/dashboard_layout_persistence.dart';
+import 'package:walld_flutter/dynamic_screen/model/screen_grid.dart'
+    show ScreenGridWidgetSpan, ScreenGridConfig;
+
+import '../core/permissions_cache.dart';
+import '../core/wallpaper_service.dart';
+import 'dashboard_drawer.dart';
+import 'dashboard_grid.dart';
+import 'dashboard_permissions.dart' show DashboardPermissions;
+
+class DashboardScreen extends StatefulWidget {
+  const DashboardScreen({super.key});
+
+  @override
+  State<DashboardScreen> createState() => DashboardScreenState();
+}
+
+class DashboardScreenState extends State<DashboardScreen> {
+  static const ScreenGridConfig grid = ScreenGridConfig(columns: 24, rows: 14);
+
+  bool loading = true;
+  String? error;
+
+  Set<String> allowedWidgetIds = const {'login'};
+  final List<ScreenGridWidgetSpan> items = <ScreenGridWidgetSpan>[];
+
+  String get _userId => FirebaseAuth.instance.currentUser?.uid ?? 'anon';
+  String get _layoutPrefsKey => 'dashboard_layout_v1_$_userId';
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_bootstrap());
+  }
+
+  Future<void> _bootstrap() async {
+    setState(() {
+      loading = true;
+      error = null;
+    });
+
+    try {
+      // 1) Permissions (prefer cache)
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid == null) {
+        allowedWidgetIds = const {'login'};
+      } else {
+        final cache = PermissionsCache.instance;
+
+        // Single call to cache abstraction.
+        final cached = cache.getCachedPermissions(uid);
+        if (cached != null && cached.isNotEmpty) {
+          allowedWidgetIds = cached;
+        } else {
+          await DashboardPermissions.loadUserPermissions(
+            context: context,
+            userId: uid,
+            onAllowedWidgetIds: (set) {
+              allowedWidgetIds = set;
+              cache.setCachedPermissions(uid, set);
+            },
+          );
+        }
+      }
+
+      // 2) Layout
+      await DashboardLayoutPersistence.loadLayout(
+        prefsKey: _layoutPrefsKey,
+        onLoaded: (loaded) {
+          items
+            ..clear()
+            ..addAll(_filterToAllowed(loaded));
+          if (items.isEmpty) {
+            items.addAll(_defaultItemsForAllowed());
+          }
+        },
+        defaultItemsBuilder: _defaultItemsForAllowed,
+      );
+
+      if (!mounted) return;
+      setState(() => loading = false);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        loading = false;
+        error = e.toString();
+      });
+    }
+  }
+
+  List<ScreenGridWidgetSpan> _filterToAllowed(
+    List<ScreenGridWidgetSpan> input,
+  ) {
+    return input.where((w) => allowedWidgetIds.contains(w.widgetId)).toList();
+  }
+
+  List<ScreenGridWidgetSpan> _defaultItemsForAllowed() {
+    if (allowedWidgetIds.length == 1 && allowedWidgetIds.contains('login')) {
+      return [
+        ScreenGridWidgetSpan(
+          widgetId: 'login',
+          col: 6,
+          row: 3,
+          colSpan: 12,
+          rowSpan: 8,
+        ),
+      ];
+    }
+
+    final ids = allowedWidgetIds.where((id) => id != 'login').toList();
+    if (ids.isEmpty) {
+      return [
+        ScreenGridWidgetSpan(
+          widgetId: 'login',
+          col: 6,
+          row: 3,
+          colSpan: 12,
+          rowSpan: 8,
+        ),
+      ];
+    }
+
+    final out = <ScreenGridWidgetSpan>[];
+    int c = 0;
+    int r = 0;
+
+    for (final id in ids) {
+      out.add(
+        ScreenGridWidgetSpan(
+          widgetId: id,
+          col: c,
+          row: r,
+          colSpan: 8,
+          rowSpan: 6,
+        ),
+      );
+
+      c += 8;
+      if (c >= grid.columns) {
+        c = 0;
+        r += 6;
+      }
+      if (r >= grid.rows) {
+        r = 0;
+      }
+    }
+    return out;
+  }
+
+  Future<void> _saveLayout() async {
+    await DashboardLayoutPersistence.saveLayout(
+      prefsKey: _layoutPrefsKey,
+      items: items,
+    );
+  }
+
+  void _onSnap() {
+    unawaited(_saveLayout());
+  }
+
+  void _toggleWidget(String widgetId) {
+    final idx = items.indexWhere((w) => w.widgetId == widgetId);
+    if (idx >= 0) {
+      setState(() => items.removeAt(idx));
+      unawaited(_saveLayout());
+      return;
+    }
+
+    final count = items.length;
+    final col = (count * 6) % grid.columns;
+    final row = ((count * 6) ~/ grid.columns) * 5;
+
+    setState(() {
+      items.add(
+        ScreenGridWidgetSpan(
+          widgetId: widgetId,
+          col: col.clamp(0, grid.columns - 6),
+          row: row.clamp(0, grid.rows - 5),
+          colSpan: 6,
+          rowSpan: 5,
+        ),
+      );
+    });
+
+    unawaited(_saveLayout());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (loading) {
+      return const Center(
+        child: SizedBox(
+          width: 28,
+          height: 28,
+          child: CircularProgressIndicator(color: Colors.cyan),
+        ),
+      );
+    }
+
+    if (error != null) {
+      return Center(
+        child: Text(
+          'Dashboard error: $error',
+          style: const TextStyle(color: Colors.redAccent),
+        ),
+      );
+    }
+
+    return AnimatedBuilder(
+      animation: WallpaperService.instance,
+      builder: (context, _) {
+        return Stack(
+          children: [
+            Positioned.fill(
+              child: RepaintBoundary(
+                child: DashboardGrid(
+                  grid: grid,
+                  items: items,
+                  onSnap: _onSnap,
+                ),
+              ),
+            ),
+            DashboardDrawer(
+              allowedWidgetIds: allowedWidgetIds,
+              items: items,
+              onToggleWidget: _toggleWidget,
+            ),
+            if (kDebugMode)
+              Positioned(
+                left: 12,
+                bottom: 10,
+                child: IgnorePointer(
+                  child: Text(
+                    'Widgets: ${items.length} | Allowed: ${allowedWidgetIds.length}',
+                    style: const TextStyle(
+                      color: Colors.white54,
+                      fontSize: 11,
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
   }
 }
 
@@ -7621,14 +8208,17 @@ class ViewAssignedTasksWidget extends StatelessWidget {
 ================================================================================
 
 // File: lib\dynamic_screen\widgets\widgets.dart
+// lib/dynamic_screen/widgets/widgets.dart
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../../core/glass_container.dart';
 import '../../core/wallpaper_service.dart';
 import '../model/screen_grid.dart';
-import '../model/floating_widget.dart';
 import '../widget_factory.dart';
 
+/// Used by DashboardGrid to build a draggable/resizable widget tile.
 Widget buildGridWidget({
   required ScreenGridWidgetSpan item,
   required double cellW,
@@ -7647,8 +8237,8 @@ Widget buildGridWidget({
   return FreeDragResizeItem(
     key: ValueKey(item.widgetId),
     item: item,
-    gridColumns: 24, // the grid.columns value used previously
-    gridRows: 14,    // the grid.rows value used previously
+    gridColumns: 24,
+    gridRows: 14,
     cellW: cellW,
     cellH: cellH,
     maxW: maxW,
@@ -7664,14 +8254,49 @@ Widget buildGridWidget({
   );
 }
 
+class _LiveLayout {
+  final double left;
+  final double top;
+  final double width;
+  final double height;
+
+  const _LiveLayout({
+    required this.left,
+    required this.top,
+    required this.width,
+    required this.height,
+  });
+
+  _LiveLayout copyWith({
+    double? left,
+    double? top,
+    double? width,
+    double? height,
+  }) {
+    return _LiveLayout(
+      left: left ?? this.left,
+      top: top ?? this.top,
+      width: width ?? this.width,
+      height: height ?? this.height,
+    );
+  }
+}
+
 /// Draggable + resizable wrapper used by the dashboard grid.
+///
+/// Performance fixes:
+/// - No setState() on each pointer update (uses ValueNotifier for layout).
+/// - While dragging/resizing, renders a cheap outline placeholder (no blur/shadow).
+/// - Cached inner widget content so it does not rebuild while moving.
 class FreeDragResizeItem extends StatefulWidget {
   final ScreenGridWidgetSpan item;
+
   final int gridColumns;
   final int gridRows;
 
   final double cellW;
   final double cellH;
+
   final double maxW;
   final double maxH;
 
@@ -7683,6 +8308,7 @@ class FreeDragResizeItem extends StatefulWidget {
   final double globalBlur;
   final double globalOpacity;
   final Color globalTint;
+
   final VoidCallback onSnap;
 
   const FreeDragResizeItem({
@@ -7709,46 +8335,177 @@ class FreeDragResizeItem extends StatefulWidget {
 }
 
 class _FreeDragResizeItemState extends State<FreeDragResizeItem> {
-  late double left;
-  late double top;
-  late double widthPx;
-  late double heightPx;
+  // Cached widget content
+  Widget? _cachedContent;
+  String? _cachedWidgetId;
 
-  Offset? dragLastGlobal;
-  Offset? resizeLastGlobal;
+  // Live layout updated without setState()
+  late final ValueNotifier<_LiveLayout> _layoutVN;
 
-  bool get isInteracting => dragLastGlobal != null || resizeLastGlobal != null;
+  // Interaction state (dragging/resizing)
+  late final ValueNotifier<bool> _interactingVN;
+
+  // Drag state
+  Offset? _dragStartGlobal;
+  _LiveLayout? _dragStartLayout;
+
+  // Resize state
+  Offset? _resizeStartGlobal;
+  _LiveLayout? _resizeStartLayout;
+
+  static const double _minSpan = 2; // min 2x2 cells
+  static const double _handleSize = 18;
+
+  bool get _isDragging => _dragStartGlobal != null;
+  bool get _isResizing => _resizeStartGlobal != null;
+  bool get _isInteracting => _isDragging || _isResizing;
 
   @override
   void initState() {
     super.initState();
-    left = widget.initialLeft;
-    top = widget.initialTop;
-    widthPx = widget.initialWidthPx;
-    heightPx = widget.initialHeightPx;
+
+    _layoutVN = ValueNotifier<_LiveLayout>(
+      _LiveLayout(
+        left: widget.initialLeft,
+        top: widget.initialTop,
+        width: widget.initialWidthPx,
+        height: widget.initialHeightPx,
+      ),
+    );
+
+    _interactingVN = ValueNotifier<bool>(false);
+
+    _buildCachedContent();
   }
 
   @override
   void didUpdateWidget(covariant FreeDragResizeItem oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!isInteracting) {
-      left = (widget.item.col * widget.cellW).clamp(0.0, widget.maxW - widget.cellW);
-      top = (widget.item.row * widget.cellH).clamp(0.0, widget.maxH - widget.cellH);
-      widthPx = (widget.item.colSpan * widget.cellW)
-          .clamp(widget.cellW * 2, widget.maxW);
-      heightPx = (widget.item.rowSpan * widget.cellH)
-          .clamp(widget.cellH * 2, widget.maxH);
+
+    if (oldWidget.item.widgetId != widget.item.widgetId) {
+      _buildCachedContent();
+    }
+
+    if (!_isInteracting) {
+      _layoutVN.value = _LiveLayout(
+        left: (widget.item.col * widget.cellW)
+            .clamp(0.0, math.max(0.0, widget.maxW - widget.cellW)),
+        top: (widget.item.row * widget.cellH)
+            .clamp(0.0, math.max(0.0, widget.maxH - widget.cellH)),
+        width: (widget.item.colSpan * widget.cellW)
+            .clamp(widget.cellW * _minSpan, widget.maxW),
+        height: (widget.item.rowSpan * widget.cellH)
+            .clamp(widget.cellH * _minSpan, widget.maxH),
+      );
     }
   }
 
-  void snapToGridAndPersist() {
-    int col = (left / widget.cellW).round();
-    int row = (top / widget.cellH).round();
-    int colSpan = (widthPx / widget.cellW).round();
-    int rowSpan = (heightPx / widget.cellH).round();
+  @override
+  void dispose() {
+    _layoutVN.dispose();
+    _interactingVN.dispose();
+    super.dispose();
+  }
 
-    colSpan = colSpan.clamp(2, widget.gridColumns);
-    rowSpan = rowSpan.clamp(2, widget.gridRows);
+  void _buildCachedContent() {
+    _cachedWidgetId = widget.item.widgetId;
+    _cachedContent = RepaintBoundary(
+      child: DynamicWidgetFactory.create(widget.item.widgetId),
+    );
+  }
+
+  double _clampLeft(double left, double width) {
+    final maxLeft = math.max(0.0, widget.maxW - width);
+    return left.clamp(0.0, maxLeft);
+  }
+
+  double _clampTop(double top, double height) {
+    final maxTop = math.max(0.0, widget.maxH - height);
+    return top.clamp(0.0, maxTop);
+  }
+
+  double _clampWidth(double width) {
+    final minW = widget.cellW * _minSpan;
+    return width.clamp(minW, widget.maxW);
+  }
+
+  double _clampHeight(double height) {
+    final minH = widget.cellH * _minSpan;
+    return height.clamp(minH, widget.maxH);
+  }
+
+  void _setInteracting(bool v) {
+    if (_interactingVN.value != v) _interactingVN.value = v;
+  }
+
+  // Drag handlers
+  void _onDragStart(DragStartDetails d) {
+    _dragStartGlobal = d.globalPosition;
+    _dragStartLayout = _layoutVN.value;
+    _setInteracting(true);
+  }
+
+  void _onDragUpdate(DragUpdateDetails d) {
+    if (_dragStartGlobal == null || _dragStartLayout == null) return;
+
+    final delta = d.globalPosition - _dragStartGlobal!;
+    final start = _dragStartLayout!;
+
+    final newLeft = _clampLeft(start.left + delta.dx, start.width);
+    final newTop = _clampTop(start.top + delta.dy, start.height);
+
+    _layoutVN.value = start.copyWith(left: newLeft, top: newTop);
+  }
+
+  void _onDragEnd([DragEndDetails? _]) {
+    _dragStartGlobal = null;
+    _dragStartLayout = null;
+    _snapToGridAndPersist();
+  }
+
+  // Resize handlers
+  void _onResizeStart(DragStartDetails d) {
+    _resizeStartGlobal = d.globalPosition;
+    _resizeStartLayout = _layoutVN.value;
+    _setInteracting(true);
+  }
+
+  void _onResizeUpdate(DragUpdateDetails d) {
+    if (_resizeStartGlobal == null || _resizeStartLayout == null) return;
+
+    final delta = d.globalPosition - _resizeStartGlobal!;
+    final start = _resizeStartLayout!;
+
+    final newWidth = _clampWidth(start.width + delta.dx);
+    final newHeight = _clampHeight(start.height + delta.dy);
+
+    final newLeft = _clampLeft(start.left, newWidth);
+    final newTop = _clampTop(start.top, newHeight);
+
+    _layoutVN.value = start.copyWith(
+      left: newLeft,
+      top: newTop,
+      width: newWidth,
+      height: newHeight,
+    );
+  }
+
+  void _onResizeEnd([DragEndDetails? _]) {
+    _resizeStartGlobal = null;
+    _resizeStartLayout = null;
+    _snapToGridAndPersist();
+  }
+
+  void _snapToGridAndPersist() {
+    final l = _layoutVN.value;
+
+    int col = (l.left / widget.cellW).round();
+    int row = (l.top / widget.cellH).round();
+    int colSpan = (l.width / widget.cellW).round();
+    int rowSpan = (l.height / widget.cellH).round();
+
+    colSpan = colSpan.clamp(_minSpan.toInt(), widget.gridColumns);
+    rowSpan = rowSpan.clamp(_minSpan.toInt(), widget.gridRows);
 
     col = col.clamp(0, widget.gridColumns - colSpan);
     row = row.clamp(0, widget.gridRows - rowSpan);
@@ -7759,102 +8516,138 @@ class _FreeDragResizeItemState extends State<FreeDragResizeItem> {
       ..colSpan = colSpan
       ..rowSpan = rowSpan;
 
-    setState(() {
-      left = col * widget.cellW;
-      top = row * widget.cellH;
-      widthPx = colSpan * widget.cellW;
-      heightPx = rowSpan * widget.cellH;
-    });
+    _layoutVN.value = _LiveLayout(
+      left: col * widget.cellW,
+      top: row * widget.cellH,
+      width: colSpan * widget.cellW,
+      height: rowSpan * widget.cellH,
+    );
 
+    _setInteracting(false);
     widget.onSnap();
+  }
+
+  // Outline-only placeholder used while interacting
+  Widget _buildCheapPlaceholder() {
+    final borderColor = Colors.cyanAccent.withOpacity(0.55);
+    final glowColor = Colors.cyanAccent.withOpacity(0.12);
+
+    return IgnorePointer(
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: borderColor, width: 2),
+          boxShadow: [
+            BoxShadow(
+              color: glowColor,
+              blurRadius: 10,
+              spreadRadius: 1,
+            ),
+          ],
+        ),
+        child: const SizedBox.expand(),
+      ),
+    );
+  }
+
+  Widget _buildFullGlassCard(Widget content) {
+    // Global blur is applied in WorkspaceShell; disable per-widget blur.
+    return GlassContainer(
+      blur: 0.0,
+      opacity: widget.globalOpacity,
+      tint: widget.globalTint,
+      borderRadius: BorderRadius.circular(24),
+      blurMode: GlassBlurMode.none,
+      qualityMode: GlassQualityMode.auto,
+      isInteracting: _isInteracting,
+      disableShadows: false,
+      padding: EdgeInsets.zero,
+      child: content,
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final content = DynamicWidgetFactory.create(widget.item.widgetId);
+    final content = _cachedContent ?? const SizedBox.shrink();
 
-    final glassCard = GlassContainer(
-      blur: widget.globalBlur,
-      opacity: widget.globalOpacity,
-      tint: widget.globalTint,
-      borderRadius: BorderRadius.circular(24),
-      child: content,
-    );
+    // Only this tile rebuilds per tick; expensive inner content is cached.
+    return ValueListenableBuilder<_LiveLayout>(
+      valueListenable: _layoutVN,
+      builder: (context, l, _) {
+        return Positioned(
+          left: l.left,
+          top: l.top,
+          width: l.width,
+          height: l.height,
 
-    const hitHandleSize = 24.0;
+          // IMPORTANT: Positioned is the direct child of the Stack in DashboardGrid.
+          child: RepaintBoundary(
+            child: Stack(
+              children: [
+                // Card surface: placeholder vs full glass
+                Positioned.fill(
+                  child: ValueListenableBuilder<bool>(
+                    valueListenable: _interactingVN,
+                    builder: (context, interacting, __) {
+                      if (interacting) {
+                        return _buildCheapPlaceholder();
+                      }
+                      return _buildFullGlassCard(content);
+                    },
+                  ),
+                ),
 
-    return Positioned(
-      left: left.clamp(0.0, widget.maxW - widthPx),
-      top: top.clamp(0.0, widget.maxH - heightPx),
-      width: widthPx.clamp(widget.cellW * 2, widget.maxW),
-      height: heightPx.clamp(widget.cellH * 2, widget.maxH),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onPanStart: (details) {
-          final local = details.localPosition;
-          final isResize =
-              local.dx > widthPx - hitHandleSize && local.dy > heightPx - hitHandleSize;
-          if (isResize) {
-            resizeLastGlobal = details.globalPosition;
-          } else {
-            dragLastGlobal = details.globalPosition;
-          }
-        },
-        onPanUpdate: (details) {
-          setState(() {
-            if (resizeLastGlobal != null) {
-              final delta = details.globalPosition - resizeLastGlobal!;
-              widthPx = (widthPx + delta.dx)
-                  .clamp(widget.cellW * 2, widget.maxW - left);
-              heightPx = (heightPx + delta.dy)
-                  .clamp(widget.cellH * 2, widget.maxH - top);
-              resizeLastGlobal = details.globalPosition;
-            } else if (dragLastGlobal != null) {
-              final delta = details.globalPosition - dragLastGlobal!;
-              left = (left + delta.dx).clamp(0.0, widget.maxW - widthPx);
-              top = (top + delta.dy).clamp(0.0, widget.maxH - heightPx);
-              dragLastGlobal = details.globalPosition;
-            }
-          });
-        },
-        onPanEnd: (_) {
-          dragLastGlobal = null;
-          resizeLastGlobal = null;
-          snapToGridAndPersist();
-        },
-        onPanCancel: () {
-          dragLastGlobal = null;
-          resizeLastGlobal = null;
-          snapToGridAndPersist();
-        },
-        child: Stack(
-          children: [
-            Positioned.fill(child: glassCard),
-            // Resize handle
-            Positioned(
-              right: 4,
-              bottom: 4,
-              child: MouseRegion(
-                cursor: SystemMouseCursors.resizeDownRight,
-                child: Container(
-                  width: hitHandleSize,
-                  height: hitHandleSize,
-                  alignment: Alignment.bottomRight,
-                  color: Colors.transparent,
-                  child: Container(
-                    width: 14,
-                    height: 14,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(4),
-                      color: Colors.cyanAccent,
+                // Drag overlay
+                Positioned.fill(
+                  child: Listener(
+                    behavior: HitTestBehavior.translucent,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.translucent,
+                      onPanStart: _onDragStart,
+                      onPanUpdate: _onDragUpdate,
+                      onPanEnd: _onDragEnd,
+                      child: const SizedBox.expand(),
                     ),
                   ),
                 ),
-              ),
+
+                // Resize handle (bottom-right)
+                Positioned(
+                  right: 6,
+                  bottom: 6,
+                  child: Listener(
+                    behavior: HitTestBehavior.opaque,
+                    child: GestureDetector(
+                      onPanStart: _onResizeStart,
+                      onPanUpdate: _onResizeUpdate,
+                      onPanEnd: _onResizeEnd,
+                      child: Container(
+                        width: _handleSize,
+                        height: _handleSize,
+                        decoration: BoxDecoration(
+                          color: Colors.white
+                              .withOpacity(_isInteracting ? 0.10 : 0.14),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: Colors.white.withOpacity(0.18),
+                            width: 1,
+                          ),
+                        ),
+                        child: Icon(
+                          Icons.open_in_full,
+                          size: 12,
+                          color: Colors.white.withOpacity(0.65),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 }
@@ -7925,14 +8718,13 @@ BoxDecoration backgroundDecoration() {
 ================================================================================
 
 // File: lib\task\task_workspace.dart
-
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/glass_container.dart';
 import '../core/wallpaper_service.dart';
+import '../workspace/universal_top_bar.dart';
 import '../workspace/workspace_controller.dart';
-// Removed unused WorkspaceSwitcher import
 import 'task_tabs_manifest.dart';
 import 'widgets/task_side_panel.dart';
 
@@ -7945,10 +8737,10 @@ class TaskWorkspace extends StatefulWidget {
   });
 
   @override
-  State<TaskWorkspace> createState() => TaskWorkspaceState();
+  State<TaskWorkspace> createState() => _TaskWorkspaceState();
 }
 
-class TaskWorkspaceState extends State<TaskWorkspace> {
+class _TaskWorkspaceState extends State<TaskWorkspace> {
   String tabId = taskTabs.first.id;
 
   double glassBlur = 18;
@@ -7958,125 +8750,82 @@ class TaskWorkspaceState extends State<TaskWorkspace> {
   void initState() {
     super.initState();
     _loadGlassSettings();
-    // Listen to wallpaper service changes
-    WallpaperService.instance.addListener(_onWallpaperChanged);
-  }
-
-  @override
-  void dispose() {
-    WallpaperService.instance.removeListener(_onWallpaperChanged);
-    super.dispose();
-  }
-
-  void _onWallpaperChanged() {
-    if (mounted) setState(() {});
   }
 
   Future<void> _loadGlassSettings() async {
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
     setState(() {
-      glassBlur = prefs.getDouble('task_glass_blur') ?? 18.0;
+      glassBlur = prefs.getDouble('task_glass_blur') ?? 18;
       glassOpacity = prefs.getDouble('task_glass_opacity') ?? 0.16;
     });
   }
 
-  
-
   @override
   Widget build(BuildContext context) {
-    final tab = taskTabs.firstWhere((x) => x.id == tabId);
+    final currentTab =
+        taskTabs.firstWhere((t) => t.id == tabId, orElse: () => taskTabs.first);
 
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      body: Container(
-        decoration: WallpaperService.instance.backgroundDecoration,
-        child: SafeArea(
-          // Adjusted top padding slightly as the internal header is gone
-          // (Parent layout with UniversalTopBar should handle top spacing)
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 64, 18, 14),
-            child: Column(
-              children: [
-                // REMOVED: Internal Top Bar & Spacer
-
-                // MAIN TASK LAYOUT WITH SLIDE/FADE
-                Expanded(
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 260),
-                    switchInCurve: Curves.easeOutCubic,
-                    switchOutCurve: Curves.easeInCubic,
-                    transitionBuilder: (child, animation) {
-                      final offsetAnimation = Tween<Offset>(
-                        begin: const Offset(-0.04, 0),
-                        end: Offset.zero,
-                      ).animate(animation);
-                      return FadeTransition(
-                        opacity: animation,
-                        child: SlideTransition(
-                          position: offsetAnimation,
-                          child: child,
-                        ),
-                      );
-                    },
-                    child: Row(
-                      key: ValueKey('task-layout-$tabId'),
-                      children: [
-                        SizedBox(
-                          width: 240,
-                          child: TaskSidePanel(
-                            selectedTabId: tabId,
-                            onSelect: (id) {
-                              setState(() {
-                                tabId = id;
-                              });
-                            },
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: GlassContainer(
-                            blur: glassBlur,
-                            opacity: glassOpacity,
-                            tint: Colors.white,
-                            borderRadius: BorderRadius.circular(24),
-                            padding: const EdgeInsets.fromLTRB(
-                              18,
-                              16,
-                              18,
-                              16,
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  tab.title,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                                const SizedBox(height: 10),
-                                Expanded(
-                                  child: tab.builder(context),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
+    return Stack(
+      children: [
+        // Wallpaper background (repaints only this layer)
+        Positioned.fill(
+          child: AnimatedBuilder(
+            animation: WallpaperService.instance,
+            builder: (_, __) => DecoratedBox(
+              decoration: WallpaperService.instance.backgroundDecoration,
             ),
           ),
         ),
-      ),
+
+        Column(
+          children: [
+            UniversalTopBar(
+              workspaceController: widget.workspaceController,
+              onWallpaperSettings: () async {
+                await WallpaperService.instance.pickWallpaper();
+              },
+              onGlassSettings: () {
+                // Keep your existing glass sheet if you have one
+              },
+              onSignOut: () async {
+                // Keep your existing signOut if you have one
+              },
+            ),
+            const SizedBox(height: 10),
+
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 240,
+                      child: TaskSidePanel(
+                        selectedTabId: tabId,
+                        onSelect: (id) => setState(() => tabId = id),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: GlassContainer(
+                        blur: glassBlur,
+                        opacity: glassOpacity,
+                        tint: Colors.white,
+                        borderRadius: BorderRadius.circular(22),
+                        padding: const EdgeInsets.all(14),
+                        child: currentTab.builder(context),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
-
-  
 }
 
 ================================================================================
@@ -8219,6 +8968,297 @@ class TaskSidePanel extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+================================================================================
+
+// File: lib\workspace\loading_screen.dart
+import 'dart:async';
+
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+
+import '../core/permissions_cache.dart';
+import '../core/wallpaper_service.dart';
+import '../dynamic_screen/dashboard_permissions.dart';
+
+class LoadingScreen extends StatefulWidget {
+  final VoidCallback onLoadingComplete;
+
+  const LoadingScreen({
+    super.key,
+    required this.onLoadingComplete,
+  });
+
+  @override
+  State<LoadingScreen> createState() => _LoadingScreenState();
+}
+
+class _LoadingScreenState extends State<LoadingScreen>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulseController;
+  late final Animation<double> _pulse;
+
+  final ValueNotifier<double> _progress = ValueNotifier<double>(0.0);
+  final ValueNotifier<String> _status = ValueNotifier<String>('Initializing…');
+
+  bool _completed = false;
+  Object? _error;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    )..repeat(reverse: true);
+
+    _pulse = Tween<double>(begin: 0.96, end: 1.04).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
+
+    // Start after first frame so context is stable.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_startLoadingSequence());
+    });
+  }
+
+  @override
+  void dispose() {
+    _pulseController.dispose();
+    _progress.dispose();
+    _status.dispose();
+    super.dispose();
+  }
+
+  Future<void> _startLoadingSequence() async {
+    if (_completed) return;
+
+    try {
+      _error = null;
+
+      await _step(0.10, 'Loading wallpaper…', () async {
+        // Safe even if already loaded (WallpaperService guards internally)
+        await WallpaperService.instance.loadSettings();
+      });
+
+      await _step(0.35, 'Checking authentication…', () async {
+        // Just touching currentUser is cheap; no extra delay needed
+        FirebaseAuth.instance.currentUser;
+      });
+
+      await _step(0.65, 'Loading permissions…', () async {
+        final user = FirebaseAuth.instance.currentUser;
+        if (user == null) return;
+
+        // Use cache first
+        final cached = PermissionsCache.instance.getCachedPermissions(user.uid);
+        if (cached != null) return;
+
+        final ids = await _loadPermissions(user.uid);
+        PermissionsCache.instance.setCachedPermissions(user.uid, ids);
+      });
+
+      await _step(0.90, 'Finalizing…', () async {
+        // Tiny yield to ensure UI paints last progress update
+        await Future<void>.delayed(const Duration(milliseconds: 60));
+      });
+
+      _progress.value = 1.0;
+      _status.value = 'Ready';
+
+      await Future<void>.delayed(const Duration(milliseconds: 160));
+      _complete();
+    } catch (e) {
+      _error = e;
+      _status.value = 'Loading failed. Retry?';
+      if (kDebugMode) {
+        debugPrint('[LoadingScreen] error: $e');
+      }
+    }
+  }
+
+  Future<void> _step(
+    double progress,
+    String message,
+    Future<void> Function() action,
+  ) async {
+    _progress.value = progress;
+    _status.value = message;
+    await action();
+  }
+
+  Future<Set<String>> _loadPermissions(String userId) async {
+    final completer = Completer<Set<String>>();
+
+    await DashboardPermissions.loadUserPermissions(
+      context: context,
+      userId: userId,
+      onAllowedWidgetIds: (ids) {
+        if (!completer.isCompleted) completer.complete(ids);
+      },
+    );
+
+    // Safety: don't hang forever on network issues.
+    return completer.future.timeout(
+      const Duration(seconds: 10),
+      onTimeout: () => <String>{'login'},
+    );
+  }
+
+  void _complete() {
+    if (_completed) return;
+    _completed = true;
+    widget.onLoadingComplete();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: Stack(
+        children: [
+          // Wallpaper background: repaints only this layer on wallpaper changes.
+          Positioned.fill(
+            child: AnimatedBuilder(
+              animation: WallpaperService.instance,
+              builder: (_, __) => DecoratedBox(
+                decoration: WallpaperService.instance.backgroundDecoration,
+              ),
+            ),
+          ),
+
+          // Subtle dark overlay for legibility
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.45),
+              ),
+            ),
+          ),
+
+          Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 520),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 22),
+                child: ScaleTransition(
+                  scale: _pulse,
+                  child: _Card(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const SizedBox(height: 6),
+                        const Text(
+                          'WALL-D',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 22,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 1.4,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        const Text(
+                          'Preparing your workspace…',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(color: Colors.white70, fontSize: 12),
+                        ),
+                        const SizedBox(height: 18),
+
+                        ValueListenableBuilder<double>(
+                          valueListenable: _progress,
+                          builder: (_, p, __) {
+                            return ClipRRect(
+                              borderRadius: BorderRadius.circular(999),
+                              child: LinearProgressIndicator(
+                                value: p.clamp(0.0, 1.0),
+                                minHeight: 8,
+                                backgroundColor: Colors.white.withOpacity(0.10),
+                                valueColor: const AlwaysStoppedAnimation<Color>(
+                                  Colors.cyanAccent,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+
+                        const SizedBox(height: 12),
+
+                        ValueListenableBuilder<String>(
+                          valueListenable: _status,
+                          builder: (_, msg, __) {
+                            return Text(
+                              msg,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white60,
+                                fontSize: 12,
+                              ),
+                            );
+                          },
+                        ),
+
+                        if (_error != null) ...[
+                          const SizedBox(height: 14),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              TextButton(
+                                onPressed: _complete,
+                                child: const Text('Continue'),
+                              ),
+                              const SizedBox(width: 8),
+                              FilledButton(
+                                onPressed: () {
+                                  _error = null;
+                                  unawaited(_startLoadingSequence());
+                                },
+                                child: const Text('Retry'),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _Card extends StatelessWidget {
+  final Widget child;
+  const _Card({required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
+      decoration: BoxDecoration(
+        color: const Color(0xCC0B0B12),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.white.withOpacity(0.10)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0xAA000000),
+            blurRadius: 24,
+            offset: Offset(0, 14),
+          ),
+        ],
+      ),
+      child: child,
     );
   }
 }
@@ -8377,17 +9417,23 @@ class WorkspaceIds {
 ================================================================================
 
 // File: lib\workspace\workspace_shell.dart
-import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+// lib/workspace/workspace_shell.dart
+import 'dart:collection';
+import 'dart:developer' as developer;
+import 'dart:ui';
 
-import '../dynamic_screen/dashboardpanel.dart';
-import '../task/task_workspace.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
+
+import '../core/performance_state.dart';
 import '../core/wallpaper_service.dart';
+import '../dynamic_screen/dashboard_screen.dart';
+import '../task/task_workspace.dart';
+import 'universal_top_bar.dart';
 import 'workspace_controller.dart';
 import 'workspace_ids.dart';
-
-// IMPORTANT: Ensure this import matches the file you just created
-import 'universal_top_bar.dart'; 
 
 class WorkspaceShell extends StatefulWidget {
   final WorkspaceController workspaceController;
@@ -8401,24 +9447,287 @@ class WorkspaceShell extends StatefulWidget {
   State<WorkspaceShell> createState() => _WorkspaceShellState();
 }
 
-class _WorkspaceShellState extends State<WorkspaceShell> {
+class _WorkspaceShellState extends State<WorkspaceShell>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _animationController;
+
+  late final Animation<Offset> _slideForward;
+  late final Animation<Offset> _slideBackward;
+  late final Animation<double> _fadeOut;
+  late final Animation<double> _fadeIn;
+
+  int _currentIndex = 0;
+  int _previousIndex = 0;
+  bool _isAnimating = false;
+  bool _isForward = true;
+  bool _isLowEndDevice = false;
+
+  // FPS / perf tracking
+  final ValueNotifier<double> _fpsNotifier = ValueNotifier<double>(60.0);
+  final ValueNotifier<bool> _isAnimatingNotifier = ValueNotifier<bool>(false);
+  bool _showFPS = true;
+
+  final Queue<double> _frameMsWindow = Queue<double>();
+  static const int _windowSize = 180; // ~3s at 60fps
+  int _frameCount = 0;
+
+  static const double _targetFrameTime = 16.67;
+  static const double _jankThreshold = 33.33;
+  static const double _severeJankThreshold = 50.0;
+
+  // Rate-limit logs
+  DateTime _lastPerfLog = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime _lastJankLog = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime _lastSevereJankLog = DateTime.fromMillisecondsSinceEpoch(0);
+
+  // Vsync lock detection
+  int _consecutive30fpsLike = 0;
+  bool _vsyncLockDetected = false;
+  double _avgFrameTimeWindow = 0.0;
+
+  // Warm-up stability
+  bool _warmupMarked = false;
+  int _stableChecks = 0;
+
+  Duration _lastBuildDuration = Duration.zero;
+
   @override
   void initState() {
     super.initState();
+
+    _currentIndex = getCurrentIndex();
+    _previousIndex = _currentIndex;
+
+    _animationController = AnimationController(
+      duration: const Duration(milliseconds: 360),
+      vsync: this,
+    );
+
+    _setupCachedAnimations();
+
+    _animationController.addStatusListener((status) {
+      if (status == AnimationStatus.forward) {
+        _isAnimatingNotifier.value = true;
+        if (mounted) setState(() => _isAnimating = true);
+      } else if (status == AnimationStatus.completed) {
+        _isAnimatingNotifier.value = false;
+        if (mounted) {
+          setState(() {
+            _isAnimating = false;
+            _previousIndex = _currentIndex;
+          });
+        }
+      }
+    });
+
     widget.workspaceController.addListener(_onWorkspaceChanged);
+
+    // Real frame timings
+    SchedulerBinding.instance.addTimingsCallback(_onFrameTimings);
   }
 
-  @override
-  void dispose() {
-    widget.workspaceController.removeListener(_onWorkspaceChanged);
-    super.dispose();
+  void _setupCachedAnimations() {
+    const curve = Curves.easeInOutCubicEmphasized;
+
+    _slideForward = Tween<Offset>(
+      begin: Offset.zero,
+      end: const Offset(-1.0, 0.0),
+    ).animate(CurvedAnimation(parent: _animationController, curve: curve));
+
+    _slideBackward = Tween<Offset>(
+      begin: Offset.zero,
+      end: const Offset(1.0, 0.0),
+    ).animate(CurvedAnimation(parent: _animationController, curve: curve));
+
+    _fadeOut = Tween<double>(begin: 1.0, end: 0.0).animate(
+      CurvedAnimation(
+        parent: _animationController,
+        curve: const Interval(0.0, 0.60, curve: Curves.easeOut),
+      ),
+    );
+
+    _fadeIn = Tween<double>(begin: 0.2, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _animationController,
+        curve: const Interval(0.10, 0.85, curve: Curves.easeIn),
+      ),
+    );
+  }
+
+  void _onFrameTimings(List<FrameTiming> timings) {
+    for (final t in timings) {
+      final frameMs = t.totalSpan.inMicroseconds / 1000.0;
+
+      _frameMsWindow.addLast(frameMs);
+      while (_frameMsWindow.length > _windowSize) {
+        _frameMsWindow.removeFirst();
+      }
+
+      final avgMs = _frameMsWindow.isEmpty
+          ? _targetFrameTime
+          : _frameMsWindow.reduce((a, b) => a + b) / _frameMsWindow.length;
+
+      _avgFrameTimeWindow = avgMs;
+
+      final fps = (1000.0 / avgMs).clamp(1.0, 240.0);
+      _frameCount++;
+
+      PerformanceState.instance.currentFps = fps;
+
+      if (_frameCount % 10 == 0) {
+        _fpsNotifier.value = fps;
+      }
+
+      if (!_isLowEndDevice && fps < 50) {
+        _isLowEndDevice = true;
+        _animationController.duration = const Duration(milliseconds: 300);
+        _applyPerformanceOptimizations(fps);
+      }
+
+      if (!kDebugMode) continue;
+
+      if (frameMs >= _severeJankThreshold) {
+        final now = DateTime.now();
+        if (now.difference(_lastSevereJankLog).inMilliseconds >= 700) {
+          _lastSevereJankLog = now;
+          _logJank(severe: true, frameMs: frameMs, fps: fps);
+        }
+      } else if (frameMs >= _jankThreshold) {
+        final now = DateTime.now();
+        if (now.difference(_lastJankLog).inMilliseconds >= 900) {
+          _lastJankLog = now;
+          _logJank(severe: false, frameMs: frameMs, fps: fps);
+        }
+      }
+
+      _detectVsyncLock(avgMs);
+      _checkWarmupStability(avgMs, fps);
+
+      final now = DateTime.now();
+      if (now.difference(_lastPerfLog).inSeconds >= 10) {
+        _lastPerfLog = now;
+        debugPrint(
+          '[PERF] fps=${fps.toStringAsFixed(1)} avg=${avgMs.toStringAsFixed(1)}ms '
+          'anim=${_isAnimating ? "Y" : "N"} stable=${PerformanceState.instance.isWarmupStable ? "Y" : "N"}',
+        );
+      }
+    }
+  }
+
+  void _logJank({
+    required bool severe,
+    required double frameMs,
+    required double fps,
+  }) {
+    final tag = severe ? 'JANK:S' : 'JANK:M';
+    final screen = _currentIndex == 0 ? 'Dashboard' : 'Task';
+    final dropped = (frameMs / _targetFrameTime).floor();
+
+    debugPrint(
+      '[$tag] dt=${frameMs.toStringAsFixed(1)}ms drop=$dropped '
+      'fps=${fps.toStringAsFixed(1)} scr=$screen anim=${_isAnimating ? "Y" : "N"} '
+      'build=${_lastBuildDuration.inMilliseconds}ms',
+    );
+
+    if (severe) {
+      developer.Timeline.instantSync(
+        'JANK_SEVERE',
+        arguments: {
+          'dtMs': frameMs,
+          'fps': fps,
+          'screen': screen,
+          'animating': _isAnimating,
+          'buildMs': _lastBuildDuration.inMilliseconds,
+        },
+      );
+    }
+  }
+
+  void _detectVsyncLock(double avgMs) {
+    final looksLike30 = avgMs > 30.0 && avgMs < 36.5;
+    if (looksLike30) {
+      _consecutive30fpsLike++;
+      if (_consecutive30fpsLike >= 12) {
+        _vsyncLockDetected = true;
+      }
+    } else {
+      if (avgMs < 22.0) {
+        _consecutive30fpsLike = 0;
+        _vsyncLockDetected = false;
+      }
+    }
+  }
+
+  void _checkWarmupStability(double avgMs, double fps) {
+    if (_warmupMarked) return;
+    if (_frameMsWindow.length < 120) return;
+
+    final severeCount =
+        _frameMsWindow.where((ms) => ms >= _severeJankThreshold).length;
+
+    final stable = fps >= 45 &&
+        !_animationController.isAnimating &&
+        severeCount <= 6;
+
+    if (stable) {
+      _stableChecks++;
+      if (_stableChecks >= 6) {
+        _warmupMarked = true;
+        PerformanceState.instance.isWarmupStable = true;
+        if (kDebugMode) {
+          debugPrint(
+            '[WARMUP] stable fps=${fps.toStringAsFixed(1)} '
+            'avg=${avgMs.toStringAsFixed(1)}ms severe=$severeCount',
+          );
+        }
+      }
+    } else {
+      _stableChecks = 0;
+    }
+  }
+
+  void _applyPerformanceOptimizations(double avgFps) {
+    final ws = WallpaperService.instance;
+
+    if (avgFps < 25) {
+      ws.setGlassBlur(0.0);
+      ws.setGlassOpacity(0.04);
+      if (kDebugMode) {
+        debugPrint('[OPT] extreme blur=0 op=0.04 fps=${avgFps.toStringAsFixed(1)}');
+      }
+    } else if (avgFps < 40) {
+      ws.setGlassBlur(6.0);
+      ws.setGlassOpacity(0.08);
+      if (kDebugMode) {
+        debugPrint('[OPT] medium blur=6 op=0.08 fps=${avgFps.toStringAsFixed(1)}');
+      }
+    } else if (avgFps < 50) {
+      ws.setGlassBlur(8.0);
+      ws.setGlassOpacity(0.10);
+      if (kDebugMode) {
+        debugPrint('[OPT] light blur=8 op=0.10 fps=${avgFps.toStringAsFixed(1)}');
+      }
+    }
+  }
+
+  int getCurrentIndex() {
+    return widget.workspaceController.current == WorkspaceIds.task ? 1 : 0;
   }
 
   void _onWorkspaceChanged() {
-    setState(() {});
+    final newIndex = getCurrentIndex();
+    if (newIndex == _currentIndex) return;
+    if (_isAnimating) return;
+
+    setState(() {
+      _previousIndex = _currentIndex;
+      _currentIndex = newIndex;
+      _isForward = newIndex > _previousIndex;
+    });
+
+    _animationController.forward(from: 0.0);
   }
 
-  // --- Global Actions ---
   Future<void> pickWallpaperFromWindows() async {
     await WallpaperService.instance.pickWallpaper();
   }
@@ -8435,33 +9744,94 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
     final applied = await showModalBottomSheet<bool>(
       context: context,
       backgroundColor: const Color(0xFF05040A),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setModalState) {
             return SafeArea(
+              top: false,
               child: Padding(
-                padding: const EdgeInsets.all(20),
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Text('Glass Settings', style: TextStyle(color: Colors.white, fontSize: 18)),
-                    const SizedBox(height: 20),
+                    Container(
+                      width: 38,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 12),
+                      decoration: BoxDecoration(
+                        color: Colors.white24,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                    ),
+                    const Row(
+                      children: [
+                        Icon(Icons.blur_on_rounded,
+                            color: Colors.cyanAccent, size: 18),
+                        SizedBox(width: 8),
+                        Text(
+                          'Glass settings',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
                     Row(
                       children: [
-                        const Text('Blur', style: TextStyle(color: Colors.white)),
-                        Expanded(child: Slider(value: tempBlur, min: 0, max: 30, onChanged: (v) => setModalState(() => tempBlur = v))),
+                        const SizedBox(
+                          width: 70,
+                          child: Text('Opacity',
+                              style: TextStyle(
+                                  color: Colors.white70, fontSize: 12)),
+                        ),
+                        Expanded(
+                          child: Slider(
+                            min: 0.04,
+                            max: 0.30,
+                            divisions: 26,
+                            value: tempOpacity.clamp(0.04, 0.30),
+                            label: tempOpacity.toStringAsFixed(2),
+                            onChanged: (v) =>
+                                setModalState(() => tempOpacity = v),
+                          ),
+                        ),
                       ],
                     ),
                     Row(
                       children: [
-                        const Text('Opacity', style: TextStyle(color: Colors.white)),
-                        Expanded(child: Slider(value: tempOpacity, min: 0.0, max: 0.5, onChanged: (v) => setModalState(() => tempOpacity = v))),
+                        const SizedBox(
+                          width: 70,
+                          child: Text('Blur',
+                              style: TextStyle(
+                                  color: Colors.white70, fontSize: 12)),
+                        ),
+                        Expanded(
+                          child: Slider(
+                            min: 0,
+                            max: 30,
+                            divisions: 30,
+                            value: tempBlur.clamp(0, 30),
+                            label: tempBlur.toStringAsFixed(0),
+                            onChanged: (v) => setModalState(() => tempBlur = v),
+                          ),
+                        ),
                       ],
                     ),
-                    ElevatedButton(
-                         onPressed: () => Navigator.pop(context, true), 
-                         child: const Text("Apply")
-                    )
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton.icon(
+                        onPressed: () => Navigator.pop(context, true),
+                        icon: const Icon(Icons.check, size: 16),
+                        label: const Text('Apply'),
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -8478,44 +9848,374 @@ class _WorkspaceShellState extends State<WorkspaceShell> {
     }
   }
 
-  int _getCurrentIndex() {
-    if (widget.workspaceController.current == WorkspaceIds.task) return 1;
-    return 0; // Default to Dashboard
+  /// Global blur sigma applied ONCE on wallpaper layer (root-level).
+  ///
+  /// This intentionally reduces blur when:
+  /// - Warmup not stable (startup stutters)
+  /// - FPS is low
+  /// - Animations are running
+  double _effectiveGlobalWallpaperBlurSigma() {
+    final requested = WallpaperService.instance.globalGlassBlur.clamp(0.0, 40.0);
+    final fps = PerformanceState.instance.currentFps;
+
+    // During startup / unknown fps: be conservative.
+    if (!PerformanceState.instance.isWarmupStable || fps == null) {
+      return requested.clamp(0.0, 2.0);
+    }
+
+    // During transitions: drop blur hard.
+    if (_isAnimating) {
+      return requested.clamp(0.0, 2.0);
+    }
+
+    // Low FPS: reduce blur.
+    if (fps < 30) return 0.0;
+    if (fps < 45) return requested.clamp(0.0, 2.0);
+    if (fps < 55) return requested.clamp(0.0, 6.0);
+
+    return requested.clamp(0.0, 18.0);
   }
 
   @override
-Widget build(BuildContext context) {
-  return Scaffold(
-    backgroundColor: Colors.transparent,
-    body: Stack(
-      children: [
-        // 1. Full-screen backgrounds (Dashboard or Task workspace)
-        IndexedStack(
-          index: _getCurrentIndex(),
-          children: [
-            DashboardPanel(
-              key: const PageStorageKey('dashboardpanel'),
-              workspaceController: widget.workspaceController,
+  void dispose() {
+    SchedulerBinding.instance.removeTimingsCallback(_onFrameTimings);
+    widget.workspaceController.removeListener(_onWorkspaceChanged);
+
+    _animationController.dispose();
+    _fpsNotifier.dispose();
+    _isAnimatingNotifier.dispose();
+
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final buildStart = DateTime.now();
+
+    final outgoingSlide = _isForward ? _slideForward : _slideBackward;
+    final incomingSlide = _isForward
+        ? Tween<Offset>(begin: const Offset(1.0, 0.0), end: Offset.zero).animate(
+            CurvedAnimation(
+              parent: _animationController,
+              curve: Curves.easeInOutCubicEmphasized,
             ),
-            TaskWorkspace(
-              key: const PageStorageKey('taskworkspace'),
+          )
+        : Tween<Offset>(begin: const Offset(-1.0, 0.0), end: Offset.zero).animate(
+            CurvedAnimation(
+              parent: _animationController,
+              curve: Curves.easeInOutCubicEmphasized,
+            ),
+          );
+
+    final result = Scaffold(
+      backgroundColor: Colors.transparent,
+      body: Stack(
+        children: [
+          // 1) Wallpaper background
+          Positioned.fill(
+            child: AnimatedBuilder(
+              animation: WallpaperService.instance,
+              builder: (_, __) => DecoratedBox(
+                decoration: WallpaperService.instance.backgroundDecoration,
+              ),
+            ),
+          ),
+
+          // 2) GLOBAL BLUR LAYER (applies blur ONCE to wallpaper only)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: AnimatedBuilder(
+                // Re-evaluate when wallpaper settings change OR fps/animation state changes.
+                animation: Listenable.merge([
+                  WallpaperService.instance,
+                  _fpsNotifier,
+                  _isAnimatingNotifier,
+                ]),
+                builder: (_, __) {
+                  final sigma = _effectiveGlobalWallpaperBlurSigma();
+                  if (sigma < 2.0) return const SizedBox.shrink();
+
+                  return ClipRect(
+                    child: BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
+                      child: const SizedBox.expand(),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+
+          // 3) Animated screens (UI is ABOVE blur, so UI is not blurred)
+          RepaintBoundary(
+            child: AnimatedBuilder(
+              animation: _animationController,
+              builder: (context, child) {
+                return Stack(
+                  children: [
+                    Positioned.fill(
+                      child: Visibility(
+                        visible: _currentIndex == 0 || _isAnimating,
+                        maintainState: true,
+                        maintainAnimation: true,
+                        child: SlideTransition(
+                          position: _currentIndex == 0
+                              ? incomingSlide
+                              : outgoingSlide,
+                          child: FadeTransition(
+                            opacity: _currentIndex == 0 ? _fadeIn : _fadeOut,
+                            child: const RepaintBoundary(
+                              child: DashboardScreen(
+                                key: PageStorageKey('dashboardscreen'),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    Positioned.fill(
+                      child: Visibility(
+                        visible: _currentIndex == 1 || _isAnimating,
+                        maintainState: true,
+                        maintainAnimation: true,
+                        child: SlideTransition(
+                          position: _currentIndex == 1
+                              ? incomingSlide
+                              : outgoingSlide,
+                          child: FadeTransition(
+                            opacity: _currentIndex == 1 ? _fadeIn : _fadeOut,
+                            child: RepaintBoundary(
+                              child: TaskWorkspace(
+                                key: const PageStorageKey('taskworkspace'),
+                                workspaceController: widget.workspaceController,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+
+          // Top bar
+          RepaintBoundary(
+            child: UniversalTopBar(
               workspaceController: widget.workspaceController,
+              onWallpaperSettings: pickWallpaperFromWindows,
+              onGlassSettings: openGlobalGlassSheet,
+              onSignOut: signOut,
+            ),
+          ),
+
+          // FPS counter
+          if (_showFPS)
+            Positioned(
+              top: 60,
+              right: 16,
+              child: ValueListenableBuilder<double>(
+                valueListenable: _fpsNotifier,
+                builder: (context, fps, _) {
+                  return ValueListenableBuilder<bool>(
+                    valueListenable: _isAnimatingNotifier,
+                    builder: (context, isAnimating, _) {
+                      return _FPSCounter(
+                        fps: fps,
+                        isAnimating: isAnimating,
+                        isLowEnd: _isLowEndDevice,
+                        vsyncLocked: _vsyncLockDetected,
+                        avgFrameTime: _avgFrameTimeWindow,
+                        warmupStable: PerformanceState.instance.isWarmupStable,
+                        onToggle: () => setState(() => _showFPS = !_showFPS),
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+        ],
+      ),
+    );
+
+    _lastBuildDuration = DateTime.now().difference(buildStart);
+    if (kDebugMode && _lastBuildDuration.inMilliseconds > 24) {
+      debugPrint(
+        '[BUILD] dt=${_lastBuildDuration.inMilliseconds}ms anim=${_isAnimating ? "Y" : "N"}',
+      );
+    }
+
+    return result;
+  }
+}
+
+class _FPSCounter extends StatelessWidget {
+  final double fps;
+  final bool isAnimating;
+  final bool isLowEnd;
+  final bool vsyncLocked;
+  final double avgFrameTime;
+  final bool warmupStable;
+  final VoidCallback onToggle;
+
+  const _FPSCounter({
+    required this.fps,
+    required this.isAnimating,
+    required this.isLowEnd,
+    required this.vsyncLocked,
+    required this.avgFrameTime,
+    required this.warmupStable,
+    required this.onToggle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    Color fpsColor;
+    String status;
+
+    if (fps >= 58) {
+      fpsColor = Colors.greenAccent;
+      status = 'EXCELLENT';
+    } else if (fps >= 50) {
+      fpsColor = Colors.yellowAccent;
+      status = 'GOOD';
+    } else if (fps >= 40) {
+      fpsColor = Colors.orangeAccent;
+      status = 'FAIR';
+    } else if (fps >= 28 && fps <= 32) {
+      fpsColor = Colors.redAccent;
+      status = 'VSYNC 30FPS';
+    } else {
+      fpsColor = Colors.red;
+      status = 'LOW';
+    }
+
+    return GestureDetector(
+      onTap: onToggle,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.black.withOpacity(0.85),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: fpsColor.withOpacity(0.6), width: 2),
+          boxShadow: [
+            BoxShadow(
+              color: fpsColor.withOpacity(0.25),
+              blurRadius: 14,
+              spreadRadius: 2,
             ),
           ],
         ),
-        
-        // 2. Universal Top Bar overlays on top
-        UniversalTopBar(
-          workspaceController: widget.workspaceController,
-          onWallpaperSettings: pickWallpaperFromWindows,
-          onGlassSettings: openGlobalGlassSheet,
-          onSignOut: signOut,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.speed, color: fpsColor, size: 18),
+                const SizedBox(width: 6),
+                Text(
+                  '${fps.toStringAsFixed(1)} FPS',
+                  style: TextStyle(
+                    color: fpsColor,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    fontFamily: 'monospace',
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              status,
+              style: TextStyle(
+                color: fpsColor.withOpacity(0.9),
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.5,
+              ),
+            ),
+            if (avgFrameTime > 0) ...[
+              const SizedBox(height: 4),
+              Text(
+                'Frame: ${avgFrameTime.toStringAsFixed(1)}ms',
+                style: const TextStyle(
+                  color: Colors.white70,
+                  fontSize: 10,
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ],
+            if (warmupStable) ...[
+              const SizedBox(height: 4),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.greenAccent.withOpacity(0.18),
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(
+                    color: Colors.greenAccent.withOpacity(0.45),
+                    width: 1,
+                  ),
+                ),
+                child: const Text(
+                  'WARM-UP OK',
+                  style: TextStyle(
+                    color: Colors.greenAccent,
+                    fontSize: 9,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+            if (vsyncLocked) ...[
+              const SizedBox(height: 4),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.redAccent.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: Colors.redAccent, width: 1),
+                ),
+                child: const Text(
+                  'VSYNC LOCKED',
+                  style: TextStyle(
+                    color: Colors.redAccent,
+                    fontSize: 9,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+            if (isLowEnd) ...[
+              const SizedBox(height: 4),
+              const Text(
+                'OPTIMIZED',
+                style: TextStyle(
+                  color: Colors.orangeAccent,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+            if (isAnimating) ...[
+              const SizedBox(height: 4),
+              const Text(
+                'ANIMATING',
+                style: TextStyle(
+                  color: Colors.cyanAccent,
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ],
         ),
-      ],
-    ),
-  );
-}
-
+      ),
+    );
+  }
 }
 
 ================================================================================

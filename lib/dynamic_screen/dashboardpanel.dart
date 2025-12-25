@@ -1,255 +1,299 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 
-import '../core/wallpaper_service.dart';
-import '../workspace/workspace_controller.dart';
-import '../workspace/workspace_switcher.dart';
-
-import 'dashboard_layout_persistence.dart';
-import 'dashboard_permissions.dart';
-import 'model/screen_grid.dart';
+import '../../core/glass_container.dart';
+import '../../core/wallpaper_service.dart';
 import 'model/floating_widget.dart';
-import 'dashboard_grid.dart';
-import 'dashboard_drawer.dart';
+import 'widget_factory.dart';
+import 'model/screen_grid.dart';
 
-class DashboardPanel extends StatefulWidget {
-  final WorkspaceController? workspaceController;
-
-  const DashboardPanel({super.key, this.workspaceController});
-
-  @override
-  State<DashboardPanel> createState() => DashboardPanelState();
+Widget buildGridWidget({
+  required ScreenGridWidgetSpan item,
+  required double cellW,
+  required double cellH,
+  required double maxW,
+  required double maxH,
+  required double initialLeft,
+  required double initialTop,
+  required double initialWidthPx,
+  required double initialHeightPx,
+  required double globalBlur,
+  required double globalOpacity,
+  required Color globalTint,
+  required VoidCallback onSnap,
+}) {
+  return FreeDragResizeItem(
+    key: ValueKey(item.widgetId),
+    item: item,
+    gridColumns: 24,
+    gridRows: 14,
+    cellW: cellW,
+    cellH: cellH,
+    maxW: maxW,
+    maxH: maxH,
+    initialLeft: initialLeft,
+    initialTop: initialTop,
+    initialWidthPx: initialWidthPx,
+    initialHeightPx: initialHeightPx,
+    globalBlur: globalBlur,
+    globalOpacity: globalOpacity,
+    globalTint: globalTint,
+    onSnap: onSnap,
+  );
 }
 
-class DashboardPanelState extends State<DashboardPanel> {
-  // Layout
-  final ScreenGridConfig grid = const ScreenGridConfig(columns: 24, rows: 14);
-  late List<ScreenGridWidgetSpan> items;
+/// Draggable + resizable wrapper used by the dashboard grid.
+class FreeDragResizeItem extends StatefulWidget {
+  final ScreenGridWidgetSpan item;
+  final int gridColumns;
+  final int gridRows;
 
-  // Auth / permissions
-  User? currentUser;
-  Set<String> allowedWidgetIds = {'login'};
+  final double cellW;
+  final double cellH;
+  final double maxW;
+  final double maxH;
 
-  // Layout persistence key
-  static const String prefsLayoutKey = 'screen_grid_layout';
+  final double initialLeft;
+  final double initialTop;
+  final double initialWidthPx;
+  final double initialHeightPx;
+
+  final double globalBlur;
+  final double globalOpacity;
+  final Color globalTint;
+  final VoidCallback onSnap;
+
+  const FreeDragResizeItem({
+    super.key,
+    required this.item,
+    required this.gridColumns,
+    required this.gridRows,
+    required this.cellW,
+    required this.cellH,
+    required this.maxW,
+    required this.maxH,
+    required this.initialLeft,
+    required this.initialTop,
+    required this.initialWidthPx,
+    required this.initialHeightPx,
+    required this.globalBlur,
+    required this.globalOpacity,
+    required this.globalTint,
+    required this.onSnap,
+  });
+
+  @override
+  State<FreeDragResizeItem> createState() => _FreeDragResizeItemState();
+}
+
+class _FreeDragResizeItemState extends State<FreeDragResizeItem> {
+  late double left;
+  late double top;
+  late double widthPx;
+  late double heightPx;
+
+  Offset? dragLastGlobal;
+  Offset? resizeLastGlobal;
+
+  // 🔥 FIX: Cache widget content to avoid rebuilding on every frame
+  Widget? _cachedContent;
+  String? _cachedWidgetId;
+
+  bool get isInteracting => dragLastGlobal != null || resizeLastGlobal != null;
 
   @override
   void initState() {
     super.initState();
-    // 1. Initialize with defaults temporarily
-    items = defaultItems();
+    left = widget.initialLeft;
+    top = widget.initialTop;
+    widthPx = widget.initialWidthPx;
+    heightPx = widget.initialHeightPx;
     
-    _initWallpaperService();
-    
-    // 2. Load saved layout from disk (this might overwrite items with an incomplete list!)
-    loadLayout();
-    
-    debugPrint('[DASH] initState -> attaching auth listener');
-    listenAuthState();
-  }
-
-  Future<void> _initWallpaperService() async {
-    await WallpaperService.instance.loadSettings();
-    WallpaperService.instance.addListener(_onWallpaperChanged);
-    if (mounted) setState(() {});
-  }
-
-  void _onWallpaperChanged() {
-    if (!mounted) return;
-    setState(() {});
+    // Cache the widget content
+    _buildCachedContent();
   }
 
   @override
-  void dispose() {
-    WallpaperService.instance.removeListener(_onWallpaperChanged);
-    super.dispose();
-  }
-
-  // ---------- AUTH & PERMISSIONS ----------
-
-  void listenAuthState() {
-    FirebaseAuth.instance.authStateChanges().listen((user) {
-      debugPrint('[DASH] authStateChanges user = ${user?.uid}');
-      currentUser = user;
-      if (!mounted) return;
-
-      if (user == null) {
-        debugPrint('[DASH] user == null -> login only');
-        setState(() {
-          allowedWidgetIds = {'login'};
-        });
-      } else {
-        debugPrint('[DASH] user logged in, loading permissions');
-        // Load real permissions
-        loadUserPermissions(user.uid);
-      }
-    });
-  }
-
-  Future<void> loadUserPermissions(String userId) async {
-    await DashboardPermissions.loadUserPermissions(
-      context: context,
-      userId: userId,
-      onAllowedWidgetIds: (ids) {
-        if (!mounted) return;
-        setState(() {
-          allowedWidgetIds = ids;
-
-          // ============================================================
-          // FIX: RECONCILIATION LOGIC
-          // Check if any allowed widget is MISSING from the current 'items' list
-          // because it wasn't in the saved layout.
-          // ============================================================
-          
-          // 1. What widgets do we currently have in the layout?
-          final currentLayoutIds = items.map((w) => w.widgetId).toSet();
-          
-          // 2. Which allowed widgets are missing?
-          final missingIds = ids.difference(currentLayoutIds);
-
-          if (missingIds.isNotEmpty) {
-            debugPrint('[DASH] Found missing allowed widgets: $missingIds. Restoring them now...');
-            final defaults = defaultItems();
-            
-            for (final missingId in missingIds) {
-              // Try to find the default configuration for this missing widget
-              try {
-                final defaultWidget = defaults.firstWhere((w) => w.widgetId == missingId);
-                items.add(defaultWidget);
-              } catch (e) {
-                debugPrint('[DASH] Warning: No default layout definition found for widgetId: $missingId');
-              }
-            }
-            
-            // 3. Save the repaired layout immediately so they stick
-            saveLayout();
-          }
-        });
-      },
-    );
-  }
-
-  Future<void> signOut() async {
-    await FirebaseAuth.instance.signOut();
-  }
-
-  // ---------- LAYOUT PERSISTENCE ----------
-
-  Future<void> loadLayout() async {
-    await DashboardLayoutPersistence.loadLayout(
-      prefsKey: prefsLayoutKey,
-      onLoaded: (loaded) {
-        if (!mounted) return;
-        setState(() => items = loaded);
-        
-        // Trigger a permission check again in case layout loaded AFTER auth
-        if (currentUser != null) {
-           loadUserPermissions(currentUser!.uid);
-        }
-      },
-      defaultItemsBuilder: defaultItems,
-    );
-  }
-
-  Future<void> saveLayout() async {
-    await DashboardLayoutPersistence.saveLayout(
-      prefsKey: prefsLayoutKey,
-      items: items,
-    );
-  }
-
-  List<ScreenGridWidgetSpan> defaultItems() {
-    return [
-      ScreenGridWidgetSpan(
-        widgetId: 'login',
-        col: 7,
-        row: 3,
-        colSpan: 10,
-        rowSpan: 8,
-      ),
-      ScreenGridWidgetSpan(
-        widgetId: 'createtask',
-        col: 1,
-        row: 2,
-        colSpan: 10,
-        rowSpan: 4,
-      ),
-      ScreenGridWidgetSpan(
-        widgetId: 'viewassignedtasks',
-        col: 13,
-        row: 2,
-        colSpan: 10,
-        rowSpan: 4,
-      ),
-      ScreenGridWidgetSpan(
-        widgetId: 'viewalltasks',
-        col: 1,
-        row: 8,
-        colSpan: 10,
-        rowSpan: 4,
-      ),
-      ScreenGridWidgetSpan(
-        widgetId: 'completetask',
-        col: 13,
-        row: 8,
-        colSpan: 10,
-        rowSpan: 4,
-      ),
-    ];
-  }
-
-  // ---------- WIDGET VISIBILITY ----------
-
-  void toggleWidget(String widgetId) {
-    final index = items.indexWhere((w) => w.widgetId == widgetId);
-    if (index != -1) {
-      setState(() => items.removeAt(index));
-    } else {
-      // Find default to add back
-      final defaults = defaultItems();
-      try {
-        final w = defaults.firstWhere((element) => element.widgetId == widgetId);
-        setState(() {
-          items.add(w);
-        });
-      } catch (e) {
-        debugPrint("Widget ID $widgetId not found in defaults");
-      }
+  void didUpdateWidget(covariant FreeDragResizeItem oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    
+    // Rebuild cached content if widget ID changed
+    if (oldWidget.item.widgetId != widget.item.widgetId) {
+      _buildCachedContent();
     }
-    saveLayout();
+    
+    if (!isInteracting) {
+      left = (widget.item.col * widget.cellW).clamp(0.0, widget.maxW - widget.cellW);
+      top = (widget.item.row * widget.cellH).clamp(0.0, widget.maxH - widget.cellH);
+      widthPx = (widget.item.colSpan * widget.cellW)
+          .clamp(widget.cellW * 2, widget.maxW);
+      heightPx = (widget.item.rowSpan * widget.cellH)
+          .clamp(widget.cellH * 2, widget.maxH);
+    }
   }
 
-  // ---------- BUILD ----------
+  // 🔥 FIX: Build and cache widget content once
+  void _buildCachedContent() {
+    _cachedWidgetId = widget.item.widgetId;
+    _cachedContent = RepaintBoundary(
+      child: DynamicWidgetFactory.create(widget.item.widgetId),
+    );
+  }
+
+  void snapToGridAndPersist() {
+    int col = (left / widget.cellW).round();
+    int row = (top / widget.cellH).round();
+    int colSpan = (widthPx / widget.cellW).round();
+    int rowSpan = (heightPx / widget.cellH).round();
+
+    colSpan = colSpan.clamp(2, widget.gridColumns);
+    rowSpan = rowSpan.clamp(2, widget.gridRows);
+
+    col = col.clamp(0, widget.gridColumns - colSpan);
+    row = row.clamp(0, widget.gridRows - rowSpan);
+
+    widget.item
+      ..col = col
+      ..row = row
+      ..colSpan = colSpan
+      ..rowSpan = rowSpan;
+
+    setState(() {
+      left = col * widget.cellW;
+      top = row * widget.cellH;
+      widthPx = colSpan * widget.cellW;
+      heightPx = rowSpan * widget.cellH;
+    });
+
+    widget.onSnap();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final user = currentUser ?? FirebaseAuth.instance.currentUser;
+    // 🔥 FIX: Use cached content instead of rebuilding every frame
+    final content = _cachedContent ?? const SizedBox.shrink();
 
-    // Filter widgets
-    final visibleItems = user == null
-        ? items.where((w) => w.widgetId == 'login').toList()
-        : items.where((w) => allowedWidgetIds.contains(w.widgetId)).toList();
+    // 🔥 FIX: Reduce blur during interaction for better performance
+    final effectiveBlur = isInteracting 
+        ? (widget.globalBlur * 0.5).clamp(0.0, 8.0)  // Half blur when dragging
+        : widget.globalBlur;
 
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      body: Container(
-        
-        child: SafeArea(
-          child: Stack(
-            children: [
-              // 1. THE GRID
-              DashboardGrid(
-                grid: grid,
-                items: visibleItems,
-                onSnap: saveLayout,
+    final glassCard = GlassContainer(
+      blur: effectiveBlur,
+      opacity: widget.globalOpacity,
+      tint: widget.globalTint,
+      borderRadius: BorderRadius.circular(24),
+      child: content,
+    );
+
+    const hitHandleSize = 24.0;
+
+    return Positioned(
+      left: left.clamp(0.0, widget.maxW - widthPx),
+      top: top.clamp(0.0, widget.maxH - heightPx),
+      width: widthPx.clamp(widget.cellW * 2, widget.maxW),
+      height: heightPx.clamp(widget.cellH * 2, widget.maxH),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onPanStart: (details) {
+          final local = details.localPosition;
+          final isResize =
+              local.dx > widthPx - hitHandleSize && local.dy > heightPx - hitHandleSize;
+          
+          setState(() {
+            if (isResize) {
+              resizeLastGlobal = details.globalPosition;
+            } else {
+              dragLastGlobal = details.globalPosition;
+            }
+          });
+        },
+        onPanUpdate: (details) {
+          setState(() {
+            if (resizeLastGlobal != null) {
+              final delta = details.globalPosition - resizeLastGlobal!;
+              widthPx = (widthPx + delta.dx)
+                  .clamp(widget.cellW * 2, widget.maxW - left);
+              heightPx = (heightPx + delta.dy)
+                  .clamp(widget.cellH * 2, widget.maxH - top);
+              resizeLastGlobal = details.globalPosition;
+            } else if (dragLastGlobal != null) {
+              final delta = details.globalPosition - dragLastGlobal!;
+              left = (left + delta.dx).clamp(0.0, widget.maxW - widthPx);
+              top = (top + delta.dy).clamp(0.0, widget.maxH - heightPx);
+              dragLastGlobal = details.globalPosition;
+            }
+          });
+        },
+        onPanEnd: (_) {
+          setState(() {
+            dragLastGlobal = null;
+            resizeLastGlobal = null;
+          });
+          snapToGridAndPersist();
+        },
+        onPanCancel: () {
+          setState(() {
+            dragLastGlobal = null;
+            resizeLastGlobal = null;
+          });
+          snapToGridAndPersist();
+        },
+        child: Stack(
+          children: [
+            // 🔥 FIX: Isolate glass card repaints
+            Positioned.fill(
+              child: RepaintBoundary(
+                child: glassCard,
               ),
-              
-              // 2. REMOVED: DashboardTopBar
-              // It is now handled by WorkspaceShell
-              
-              // 3. Keep Drawer if you use it, or remove if not needed
-              // const DashboardDrawer(), 
-            ],
+            ),
+            
+            // Resize handle
+            if (!isInteracting || resizeLastGlobal != null)
+              Positioned(
+                right: 4,
+                bottom: 4,
+                child: _ResizeHandle(
+                  isActive: resizeLastGlobal != null,
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// 🔥 FIX: Extract resize handle to prevent rebuilds
+class _ResizeHandle extends StatelessWidget {
+  final bool isActive;
+
+  const _ResizeHandle({required this.isActive});
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeDownRight,
+      child: Container(
+        width: 24.0,
+        height: 24.0,
+        alignment: Alignment.bottomRight,
+        color: Colors.transparent,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          width: isActive ? 16 : 14,
+          height: isActive ? 16 : 14,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(4),
+            color: isActive ? Colors.cyanAccent : Colors.cyanAccent.withOpacity(0.8),
+            boxShadow: isActive
+                ? [
+                    BoxShadow(
+                      color: Colors.cyanAccent.withOpacity(0.5),
+                      blurRadius: 8,
+                      spreadRadius: 2,
+                    ),
+                  ]
+                : null,
           ),
         ),
       ),

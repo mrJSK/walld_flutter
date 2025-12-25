@@ -1,29 +1,27 @@
 import 'package:flutter/material.dart';
 
-import 'model/screen_grid.dart';
+import 'repository/dashboard_repository.dart';
 
 class DashboardDrawer extends StatelessWidget {
   final Set<String> allowedWidgetIds;
-  final List<ScreenGridWidgetSpan> items;
-  final void Function(String widgetId) onToggleWidget;
+  final List items;
+  // No toggle callback any more.
 
   const DashboardDrawer({
     super.key,
     required this.allowedWidgetIds,
     required this.items,
-    required this.onToggleWidget,
   });
-
-  bool _isVisible(String id) {
-    return items.any((w) => w.widgetId == id);
-  }
 
   @override
   Widget build(BuildContext context) {
-    // If only login is allowed, drawer can stay hidden
+    // If you still want to hide the drawer when only login is allowed, keep this.
     if (allowedWidgetIds.length == 1 && allowedWidgetIds.contains('login')) {
       return const SizedBox.shrink();
     }
+
+    final repo = DashboardRepository();
+    final allWidgets = repo.getWidgets();
 
     return Positioned(
       left: 16,
@@ -56,29 +54,23 @@ class DashboardDrawer extends StatelessWidget {
                 Expanded(
                   child: ListView(
                     children: [
-                      if (allowedWidgetIds.contains('createtask'))
-                        _item(
-                          id: 'createtask',
-                          label: 'Create Task',
-                          icon: Icons.add_task_rounded,
-                        ),
-                      if (allowedWidgetIds.contains('viewassignedtasks'))
-                        _item(
-                          id: 'viewassignedtasks',
-                          label: 'Assigned Tasks',
-                          icon: Icons.assignment_ind_rounded,
-                        ),
-                      if (allowedWidgetIds.contains('viewalltasks'))
-                        _item(
-                          id: 'viewalltasks',
-                          label: 'All Tasks',
-                          icon: Icons.view_list_rounded,
-                        ),
-                      if (allowedWidgetIds.contains('completetask'))
-                        _item(
-                          id: 'completetask',
-                          label: 'Complete Task',
-                          icon: Icons.check_circle_rounded,
+                      for (final w in allWidgets)
+                        ListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          leading: const Icon(
+                            Icons.widgets,
+                            size: 18,
+                            color: Colors.cyanAccent,
+                          ),
+                          title: Text(
+                            w.name,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 13,
+                            ),
+                          ),
+                          // No switch / tap handler; purely informational.
                         ),
                     ],
                   ),
@@ -88,36 +80,6 @@ class DashboardDrawer extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
-
-  Widget _item({
-    required String id,
-    required String label,
-    required IconData icon,
-  }) {
-    final visible = _isVisible(id);
-    return ListTile(
-      dense: true,
-      contentPadding: EdgeInsets.zero,
-      leading: Icon(
-        icon,
-        size: 18,
-        color: visible ? Colors.cyanAccent : Colors.white70,
-      ),
-      title: Text(
-        label,
-        style: TextStyle(
-          color: visible ? Colors.cyanAccent : Colors.white70,
-          fontSize: 13,
-        ),
-      ),
-      trailing: Switch(
-        value: visible,
-        activeColor: Colors.cyanAccent,
-        onChanged: (_) => onToggleWidget(id),
-      ),
-      onTap: () => onToggleWidget(id),
     );
   }
 }

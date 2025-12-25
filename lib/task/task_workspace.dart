@@ -1,11 +1,10 @@
-
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/glass_container.dart';
 import '../core/wallpaper_service.dart';
+import '../workspace/universal_top_bar.dart';
 import '../workspace/workspace_controller.dart';
-// Removed unused WorkspaceSwitcher import
 import 'task_tabs_manifest.dart';
 import 'widgets/task_side_panel.dart';
 
@@ -18,10 +17,10 @@ class TaskWorkspace extends StatefulWidget {
   });
 
   @override
-  State<TaskWorkspace> createState() => TaskWorkspaceState();
+  State<TaskWorkspace> createState() => _TaskWorkspaceState();
 }
 
-class TaskWorkspaceState extends State<TaskWorkspace> {
+class _TaskWorkspaceState extends State<TaskWorkspace> {
   String tabId = taskTabs.first.id;
 
   double glassBlur = 18;
@@ -31,123 +30,80 @@ class TaskWorkspaceState extends State<TaskWorkspace> {
   void initState() {
     super.initState();
     _loadGlassSettings();
-    // Listen to wallpaper service changes
-    WallpaperService.instance.addListener(_onWallpaperChanged);
-  }
-
-  @override
-  void dispose() {
-    WallpaperService.instance.removeListener(_onWallpaperChanged);
-    super.dispose();
-  }
-
-  void _onWallpaperChanged() {
-    if (mounted) setState(() {});
   }
 
   Future<void> _loadGlassSettings() async {
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
     setState(() {
-      glassBlur = prefs.getDouble('task_glass_blur') ?? 18.0;
+      glassBlur = prefs.getDouble('task_glass_blur') ?? 18;
       glassOpacity = prefs.getDouble('task_glass_opacity') ?? 0.16;
     });
   }
 
-  
-
   @override
   Widget build(BuildContext context) {
-    final tab = taskTabs.firstWhere((x) => x.id == tabId);
+    final currentTab =
+        taskTabs.firstWhere((t) => t.id == tabId, orElse: () => taskTabs.first);
 
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      body: Container(
-        
-        child: SafeArea(
-          // Adjusted top padding slightly as the internal header is gone
-          // (Parent layout with UniversalTopBar should handle top spacing)
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 64, 18, 14),
-            child: Column(
-              children: [
-                // REMOVED: Internal Top Bar & Spacer
-
-                // MAIN TASK LAYOUT WITH SLIDE/FADE
-                Expanded(
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 260),
-                    switchInCurve: Curves.easeOutCubic,
-                    switchOutCurve: Curves.easeInCubic,
-                    transitionBuilder: (child, animation) {
-                      final offsetAnimation = Tween<Offset>(
-                        begin: const Offset(-0.04, 0),
-                        end: Offset.zero,
-                      ).animate(animation);
-                      return FadeTransition(
-                        opacity: animation,
-                        child: SlideTransition(
-                          position: offsetAnimation,
-                          child: child,
-                        ),
-                      );
-                    },
-                    child: Row(
-                      key: ValueKey('task-layout-$tabId'),
-                      children: [
-                        SizedBox(
-                          width: 240,
-                          child: TaskSidePanel(
-                            selectedTabId: tabId,
-                            onSelect: (id) {
-                              setState(() {
-                                tabId = id;
-                              });
-                            },
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: GlassContainer(
-                            blur: glassBlur,
-                            opacity: glassOpacity,
-                            tint: Colors.white,
-                            borderRadius: BorderRadius.circular(24),
-                            padding: const EdgeInsets.fromLTRB(
-                              18,
-                              16,
-                              18,
-                              16,
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  tab.title,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                                const SizedBox(height: 10),
-                                Expanded(
-                                  child: tab.builder(context),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
+    return Stack(
+      children: [
+        // Wallpaper background (repaints only this layer)
+        Positioned.fill(
+          child: AnimatedBuilder(
+            animation: WallpaperService.instance,
+            builder: (_, __) => DecoratedBox(
+              decoration: WallpaperService.instance.backgroundDecoration,
             ),
           ),
         ),
-      ),
+
+        Column(
+          children: [
+            UniversalTopBar(
+              workspaceController: widget.workspaceController,
+              onWallpaperSettings: () async {
+                await WallpaperService.instance.pickWallpaper();
+              },
+              onGlassSettings: () {
+                // Keep your existing glass sheet if you have one
+              },
+              onSignOut: () async {
+                // Keep your existing signOut if you have one
+              },
+            ),
+            const SizedBox(height: 10),
+
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 240,
+                      child: TaskSidePanel(
+                        selectedTabId: tabId,
+                        onSelect: (id) => setState(() => tabId = id),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: GlassContainer(
+                        blur: glassBlur,
+                        opacity: glassOpacity,
+                        tint: Colors.white,
+                        borderRadius: BorderRadius.circular(22),
+                        padding: const EdgeInsets.all(14),
+                        child: currentTab.builder(context),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
-
-  
 }

@@ -1,128 +1,251 @@
+import 'dart:async';
 import 'dart:io';
-import 'package:flutter/material.dart';
+import 'dart:math' as math;
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:path/path.dart' as p;
 
-/// Singleton service for managing app-wide wallpaper and glass settings
 class WallpaperService extends ChangeNotifier {
   static final WallpaperService instance = WallpaperService._();
   WallpaperService._();
 
-  // Keys for SharedPreferences
   static const _prefsWallpaperKey = 'wallpaper_path';
   static const _prefsGlobalOpacityKey = 'global_widget_opacity';
   static const _prefsGlobalBlurKey = 'global_widget_blur';
 
-  // State
   String? wallpaperPath;
   double globalGlassOpacity = 0.12;
   double globalGlassBlur = 16.0;
 
   bool _isLoaded = false;
 
-  /// Load settings from SharedPreferences
+  // Cached wallpaper (avoid sync decode on first frames)
+  ui.Image? _cachedDecodedImage;
+  ImageProvider? _cachedImageProvider;
+
+  // Notify throttling (prevents rebuild storms on sliders)
+  DateTime _lastNotify = DateTime.fromMillisecondsSinceEpoch(0);
+
   Future<void> loadSettings() async {
-    if (_isLoaded) return; // Load only once
-    
+    if (_isLoaded) return;
+
     final prefs = await SharedPreferences.getInstance();
     wallpaperPath = prefs.getString(_prefsWallpaperKey);
     globalGlassOpacity = prefs.getDouble(_prefsGlobalOpacityKey) ?? 0.12;
     globalGlassBlur = prefs.getDouble(_prefsGlobalBlurKey) ?? 16.0;
-    
+
+    if (wallpaperPath != null && File(wallpaperPath!).existsSync()) {
+      await _precacheWallpaper();
+    } else {
+      wallpaperPath = null;
+    }
+
     _isLoaded = true;
-    debugPrint('[WallpaperService] LOADED: wallpaper=$wallpaperPath blur=$globalGlassBlur opacity=$globalGlassOpacity');
-    notifyListeners();
+    _notifyNow();
   }
 
-  /// Save current settings to SharedPreferences
   Future<void> saveSettings() async {
     final prefs = await SharedPreferences.getInstance();
-    
+
     if (wallpaperPath != null) {
       await prefs.setString(_prefsWallpaperKey, wallpaperPath!);
     } else {
       await prefs.remove(_prefsWallpaperKey);
     }
-    
+
     await prefs.setDouble(_prefsGlobalOpacityKey, globalGlassOpacity);
     await prefs.setDouble(_prefsGlobalBlurKey, globalGlassBlur);
-    
-    debugPrint('[WallpaperService] SAVED: wallpaper=$wallpaperPath blur=$globalGlassBlur opacity=$globalGlassOpacity');
-    notifyListeners();
+
+    _notifyNow();
   }
 
-  /// Pick wallpaper from file system (Windows/Desktop)
   Future<void> pickWallpaper() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.image,
       allowMultiple: false,
+      withData: false,
     );
 
     final pickedPath = result?.files.single.path;
     if (pickedPath == null) return;
 
-    // Copy to app support directory
+    final normalizedPath = await _copyAndNormalizeWallpaper(pickedPath);
+    wallpaperPath = normalizedPath;
+
+    await _precacheWallpaper();
+    await saveSettings();
+  }
+
+  Future<void> resetWallpaper() async {
+    wallpaperPath = null;
+    _cachedImageProvider = null;
+    _cachedDecodedImage = null;
+    await saveSettings();
+  }
+
+  void setGlassBlur(double blur) {
+    globalGlassBlur = blur.clamp(0.0, 40.0);
+    _throttledNotify();
+  }
+
+  void setGlassOpacity(double opacity) {
+    globalGlassOpacity = opacity.clamp(0.02, 0.40);
+    _throttledNotify();
+  }
+
+  void _throttledNotify() {
+    final now = DateTime.now();
+    if (now.difference(_lastNotify).inMilliseconds < 16) return; // ~60fps cap
+    _lastNotify = now;
+    notifyListeners();
+  }
+
+  void _notifyNow() {
+    _lastNotify = DateTime.now();
+    notifyListeners();
+  }
+
+  /// IMPORTANT: Keep wallpaper decode async and cached.
+  Future<void> _precacheWallpaper() async {
+    final path = wallpaperPath;
+    if (path == null) return;
+
+    final file = File(path);
+    if (!file.existsSync()) {
+      wallpaperPath = null;
+      _cachedImageProvider = null;
+      _cachedDecodedImage = null;
+      return;
+    }
+
+    try {
+      _cachedImageProvider = FileImage(file);
+
+      final imageStream =
+          _cachedImageProvider!.resolve(const ImageConfiguration());
+      final completer = Completer<void>();
+
+      late final ImageStreamListener listener;
+      listener = ImageStreamListener(
+        (ImageInfo info, bool _) {
+          _cachedDecodedImage = info.image;
+          imageStream.removeListener(listener);
+          completer.complete();
+        },
+        onError: (error, stack) {
+          imageStream.removeListener(listener);
+          _cachedImageProvider = null;
+          _cachedDecodedImage = null;
+          completer.complete();
+        },
+      );
+
+      imageStream.addListener(listener);
+      await completer.future;
+    } catch (_) {
+      _cachedImageProvider = null;
+      _cachedDecodedImage = null;
+    }
+  }
+
+  /// Fixes “wallpaper problems” on desktop by normalizing huge images:
+  /// - Downscales to a max dimension (default 2560px)
+  /// - Re-encodes to PNG (fast decode and predictable)
+  Future<String> _copyAndNormalizeWallpaper(
+    String pickedPath, {
+    int maxDimension = 2560,
+  }) async {
     final appDir = await getApplicationSupportDirectory();
     final wpDir = Directory(p.join(appDir.path, 'wallpapers'));
     if (!await wpDir.exists()) {
       await wpDir.create(recursive: true);
     }
 
-    final ext = p.extension(pickedPath).isNotEmpty 
-        ? p.extension(pickedPath) 
-        : '.jpg';
-    final cachedPath = p.join(wpDir.path, 'current_wallpaper$ext');
+    // Always store as .png after normalization
+    final cachedPath = p.join(wpDir.path, 'current_wallpaper.png');
 
-    await File(pickedPath).copy(cachedPath);
+    final srcBytes = await File(pickedPath).readAsBytes();
 
-    wallpaperPath = cachedPath;
-    await saveSettings();
-  }
+    try {
+      final codec = await ui.instantiateImageCodec(srcBytes);
+      final frame = await codec.getNextFrame();
+      final img = frame.image;
 
-  /// Reset wallpaper to default gradient
-  Future<void> resetWallpaper() async {
-    wallpaperPath = null;
-    await saveSettings();
-  }
+      final srcW = img.width;
+      final srcH = img.height;
 
-  /// Update glass blur
-  void setGlassBlur(double blur) {
-    globalGlassBlur = blur.clamp(0.0, 40.0);
-    notifyListeners();
-  }
+      // Compute target size while preserving aspect ratio
+      final scale =
+          math.min(1.0, maxDimension / math.max(srcW.toDouble(), srcH.toDouble()));
+      final targetW = (srcW * scale).round();
+      final targetH = (srcH * scale).round();
 
-  /// Update glass opacity
-  void setGlassOpacity(double opacity) {
-    globalGlassOpacity = opacity.clamp(0.02, 0.40);
-    notifyListeners();
-  }
+      ui.Image outImage = img;
 
-  /// Get background decoration (wallpaper or gradient)
-  BoxDecoration get backgroundDecoration {
-    final path = wallpaperPath;
-    if (path != null) {
-      final file = File(path);
-      if (file.existsSync()) {
-        return BoxDecoration(
-          image: DecorationImage(
-            image: FileImage(file),
-            fit: BoxFit.cover,
-          ),
+      // If downscaling is needed, decode again with target sizes
+      if (scale < 1.0) {
+        codec.dispose();
+
+        final codec2 = await ui.instantiateImageCodec(
+          srcBytes,
+          targetWidth: targetW,
+          targetHeight: targetH,
         );
+        final frame2 = await codec2.getNextFrame();
+        outImage = frame2.image;
+        codec2.dispose();
+      } else {
+        codec.dispose();
       }
+
+      final byteData =
+          await outImage.toByteData(format: ui.ImageByteFormat.png);
+      final pngBytes = byteData?.buffer.asUint8List();
+
+      if (pngBytes == null) {
+        // fallback: raw copy
+        await File(pickedPath).copy(cachedPath);
+        return cachedPath;
+      }
+
+      await File(cachedPath).writeAsBytes(pngBytes, flush: true);
+
+      // Best-effort dispose
+      try {
+        outImage.dispose();
+      } catch (_) {}
+
+      return cachedPath;
+    } catch (_) {
+      // If anything fails, fallback to a normal copy
+      final ext = p.extension(pickedPath).isNotEmpty ? p.extension(pickedPath) : '.jpg';
+      final fallbackPath = p.join(wpDir.path, 'current_wallpaper$ext');
+      await File(pickedPath).copy(fallbackPath);
+      return fallbackPath;
+    }
+  }
+
+  BoxDecoration get backgroundDecoration {
+    if (_cachedImageProvider != null && _cachedDecodedImage != null) {
+      return BoxDecoration(
+        image: DecorationImage(
+          image: _cachedImageProvider!,
+          fit: BoxFit.cover,
+        ),
+      );
     }
 
-    // Default gradient
     return const BoxDecoration(
       gradient: LinearGradient(
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,
-        colors: [
-          Color(0xFF050716),
-          Color(0xFF020308),
-        ],
+        colors: [Color(0xFF050716), Color(0xFF020308)],
       ),
     );
   }
