@@ -65,6 +65,7 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
 
   Future<void> _createTaskFromPayload(Map<String, dynamic> values) async {
   final user = FirebaseAuth.instance.currentUser;
+  
   if (user == null) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -73,6 +74,7 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
         backgroundColor: Colors.redAccent,
       ),
     );
+    
     return;
   }
 
@@ -110,7 +112,8 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
     }
 
     await tasksCol.add(data);
-
+    print("Final Task Payload: $data");
+    await tasksCol.add(data);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
@@ -303,22 +306,29 @@ class _DynamicFormRendererState extends State<_DynamicFormRenderer> {
   }
   return null;
 }
-  @override
-  void initState() {
-    super.initState();
+  // lib/task/pages/create_task_page.dart
 
-    for (final field in widget.form.fields) {
-      if (field.type == 'checkbox') {
-        _checkboxValues[field.id] = false;
-      } else if (field.type == 'dropdown') {
-        _dropdownValues[field.id] =
-            field.options.isNotEmpty ? field.options.first.toString() : null;
-        _loadDropdownOptions(field);
-      } else {
-        _controllers[field.id] = TextEditingController();
-      }
+@override
+void initState() {
+  super.initState();
+
+  for (final field in widget.form.fields) {
+    if (field.type == 'checkbox') {
+      _checkboxValues[field.id] = false;
+    } else if (field.type == 'dropdown') {
+      _dropdownValues[field.id] =
+          field.options.isNotEmpty ? field.options.first.toString() : null;
+      _loadDropdownOptions(field);
+    } else if (field.type == 'date') {
+      // IMPORTANT: Do NOT create a controller for date fields.
+      // Date fields use their own internal state and return values via onChanged.
+      _values[field.id] = null; 
+    } else {
+      // Only text/email/password fields should have controllers
+      _controllers[field.id] = TextEditingController();
     }
   }
+}
 
   @override
   void dispose() {
@@ -417,7 +427,10 @@ class _DynamicFormRendererState extends State<_DynamicFormRenderer> {
     return null;
   }
 
-  Future<Map<String, dynamic>?> submitExternally() async {
+ // lib/task/pages/create_task_page.dart
+
+Future<Map<String, dynamic>?> submitExternally() async {
+
   final ok = _formKey.currentState?.validate() ?? false;
   if (!ok) return null;
 
@@ -432,21 +445,20 @@ class _DynamicFormRendererState extends State<_DynamicFormRenderer> {
     _values[entry.key] = entry.value;
   }
 
-  // 2. PRESERVE date values (don't overwrite!)
+  // 2. Ensure Date values are included in the return payload
   for (final field in widget.form.fields) {
     if (field.type == 'date') {
-      // Keep existing DateTime from onChanged, or null if none
-      final existing = _values[field.id];
-      if (existing == null) {
+      // If the user picked a date, it's already in _values[field.id] 
+      // via the onChanged callback. We just need to make sure we don't 
+      // accidentally null it out or skip it.
+      if (!_values.containsKey(field.id)) {
         _values[field.id] = null;
       }
-      // DateTime values stay intact!
     }
   }
 
   return Map<String, dynamic>.from(_values);
 }
-
 
 
   Widget _buildField(FormFieldMeta field) {
