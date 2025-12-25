@@ -80,59 +80,44 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   /// Bootstrap - load user permissions and layout
   Future<void> _bootstrap() async {
-    final user = FirebaseAuth.instance.currentUser;
-    
-    // If no user, show login only
-    if (user == null) {
-      _showLoginOnly();
-      return;
+  setState(() {
+    _loading = true;
+    _error = null;
+  });
+
+  try {
+    // Allow all widgets (or from permissions)
+    _allowedWidgetIds = widgetManifest
+      .map((w) => w['id'] as String)   // ✅ read from map key
+      .toSet();
+
+
+    await DashboardLayoutPersistence.loadLayout(
+      prefsKey: _layoutPrefsKey,
+      onLoaded: (loaded) {
+        _items
+          ..clear()
+          ..addAll(_filterToAllowed(loaded));
+      },
+      defaultItemsBuilder: _defaultItemsForAllowed,
+    );
+
+    // ✅ Only if we still have no items, use defaults once
+    if (_items.isEmpty) {
+      _items.addAll(_defaultItemsForAllowed());
     }
 
+    if (!mounted) return;
+    setState(() => _loading = false);
+  } catch (e) {
+    if (!mounted) return;
     setState(() {
-      _loading = true;
-      _error = null;
+      _loading = false;
+      _error = e.toString();
     });
-
-    try {
-      // Load user permissions from Firestore
-      await DashboardPermissions.loadUserPermissions(
-        context: context,
-        userId: user.uid,
-        onAllowedWidgetIds: (allowed) {
-          setState(() {
-            _allowedWidgetIds = allowed;
-          });
-        },
-      );
-
-      debugPrint('📋 Allowed widgets: $_allowedWidgetIds');
-
-      // Load layout from SharedPreferences
-      await DashboardLayoutPersistence.loadLayout(
-        prefsKey: _layoutPrefsKey,
-        onLoaded: (loaded) {
-          _items
-            ..clear()
-            ..addAll(_filterToAllowed(loaded));
-
-          // If no items after filtering, use defaults
-          if (_items.isEmpty) {
-            _items.addAll(_defaultItemsForAllowed());
-          }
-        },
-        defaultItemsBuilder: _defaultItemsForAllowed,
-      );
-
-      if (!mounted) return;
-      setState(() => _loading = false);
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _error = e.toString();
-      });
-    }
   }
+}
+
 
   /// Filter items to only show allowed widgets
   List<ScreenGridWidgetSpan> _filterToAllowed(

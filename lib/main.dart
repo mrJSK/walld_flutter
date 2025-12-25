@@ -107,15 +107,12 @@ class _WallDAppState extends State<WallDApp> {
         scaffoldBackgroundColor: const Color(0xFF05040A),
       ),
       home: _isLoading
-          ? LoadingScreen(
-              // FIX: only pass onLoadingComplete,
-              // because LoadingScreen(onLoadingComplete: ...) is the signature
-              onLoadingComplete: _onLoadingComplete,
-            )
-          : WorkspaceShell(
-              workspaceController: _workspaceController,
-            ),
-      //home: const DeveloperDashboardScreen(),
+        ? LoadingScreen(onLoadingComplete: _onLoadingComplete)
+        : WorkspaceShell(
+            workspaceController: _workspaceController,
+          ),
+
+      // home: const DeveloperDashboardScreen(),
     );
   }
 }

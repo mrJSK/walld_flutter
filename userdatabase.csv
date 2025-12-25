@@ -1,51 +1,69 @@
 email,password,fullName,nodeId,level,designation,employeeType
+
 mrbeast@walld.com,Beast@10093,Mrbeast,root_techvision,0,ceo,ceo
 sanjay@walld.com,Sanjay@10093,Sanjay Singh,cto_office,1,cto,cto
+
 alice@walld.com,Alice@10093,Alice Johnson,engineering_division,2,engineering_manager,head
 johnson@walld.com,Johnson@10093,Johnson,engineering_division,2,engineering_manager,manager
 Scott@walld.com,Scott@10093,Scott,engineering_division,2,engineering_manager,employee
+
 bob@walld.com,Bob@10093,Bob Brown,backend_engineering_department,3,team_lead,head
 bobassd@walld.com,Bobdsf@10093,Bob Black Red,backend_engineering_department,3,team_lead,manager
 pool@walld.com,Paula@10093,Pool Black,backend_engineering_department,3,team_lead,employee
+
 charlie@walld.com,Charlie@10093,Charlie Davis,backend_api_squad,4,team_lead,head
 davis@walld.com,Davis@10093, Davis,backend_api_squad,4,team_lead,manager
 charlieblack@walld.com,CharlieBlack@10093,Charlie Black,backend_api_squad,4,team_lead,employee
+
 david@walld.com,David@10093,David Wilson,api_junior_group,5,junior_engineer,head
 wilson@walld.com,Wilson@10093,Wilson,api_junior_group,5,junior_engineer,manager
 wilsonblack@walld.com,WilsonBlack@10093,Wilson Black,api_junior_group,5,junior_engineer,employee
+
 eva@walld.com,Eva@10093,Eva Martinez,api_senior_group,5,senior_engineer,head
 martinez@walld.com,Martinez@10093, Martinez,api_senior_group,5,senior_engineer,manager
 martinezred@walld.com,MartinezRed@10093,Martinez Red,api_senior_group,5,senior_engineer,employee
+
 frank@walld.com,Frank@10093,Frank Garcia,backend_core_team,4,team_lead,head
 garcia@walld.com,Garcia@10093,Garcia,backend_core_team,4,team_lead,manager
 garciablack@walld.com,Frank@10093,Garcia Black,backend_core_team,4,team_lead,employee
+
 grace@walld.com,Grace@10093,Grace Lee,core_junior_group,5,junior_engineer,head
 lee@walld.com,Lee@10093,Lee,core_junior_group,5,junior_engineer,manager
 leeblack@walld.com,leeblack@10093,Lee Black,core_junior_group,5,junior_engineer,employee
+
 henry@walld.com,Henry@10093,Henry Walker,core_senior_group,5,senior_engineer,head
 walker@walld.com,Walker@10093,Walker,core_senior_group,5,senior_engineer,manager
 walkerblack@walld.com,WalkerBlack@10093,Walker Black,core_senior_group,5,senior_engineer,employee
+
 isabella@walld.com,Isabella@10093,Isabella Hall,backend_database_team,4,team_lead,head
 hall@walld.com,Hall@10093,Hall,backend_database_team,4,team_lead,manager
 ballblack@walld.com,HallBlack@10093,Hall Black,backend_database_team,4,team_lead,employee
+
 jack@walld.com,Jack@10093,Jack Allen,db_junior_group,5,junior_engineer,head
 allen@walld.com,Allen@10093,Allen,db_junior_group,5,junior_engineer,manager
 allenblack@walld.com,AllenBlack@10093,Allen Black,db_junior_group,5,junior_engineer,employee
+
 kate@walld.com,Kate@10093,Kate Young,db_senior_group,5,senior_engineer,head
 young@walld.com,Kate@10093,Young,db_senior_group,5,senior_engineer,manager
 youngblack@walld.com,Kate@10093,Young Black,db_senior_group,5,senior_engineer,employee
+
 linda@walld.com,Linda@10093,Linda Hernandez,QA_Department,3,qa_lead,head
 hernandez@walld.com,Hernandez@10093,Hernandez,QA_Department,3,qa_lead,manager
 hernandezblack@walld.com,HernandezBlack@10093,Hernandez Black,QA_Department,3,qa_lead,employee
+
 mike@walld.com,Mike@10093,Mike King,automation_testing_team,4,qa_lead,head
 king@walld.com,King@10093,King,automation_testing_team,4,qa_lead,manager
 kingblack@walld.com,KingBlack@10093,King Black,automation_testing_team,4,qa_lead,employee
+
 nina@walld.com,Nina@10093,Nina Wright,at_engineers_group,5,qa_engineer,head
 wright@walld.com,Wright@10093,Wright,at_engineers_group,5,qa_engineer,manager
 walkerblack@walld.com,WrightBlack@10093,Wright Black,at_engineers_group,5,qa_engineer,employee
+
 oliver@walld.com,Oliver@10093,Oliver Scott,functional_testing_team,4,qa_lead,head
 scott@walld.com,Scott@10093,Scott,functional_testing_team,4,qa_lead,manager
 scottBlack@walld.com,ScottBlack@10093,Scott Black,functional_testing_team,4,qa_lead,employee
+
 paula@walld.com,Paula@10093,Paula Green,ft_engineers_group,5,qa_engineer,head
 Green@walld.com,Green@10093,Green,ft_engineers_group,5,qa_engineer,manager
 GreenBlack@walld.com,GreenBlack@10093,Green Black,ft_engineers_group,5,qa_engineer,employee
+
