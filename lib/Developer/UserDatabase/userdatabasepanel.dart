@@ -15,7 +15,8 @@ class UserDatabasePanel extends StatefulWidget {
 }
 
 class _UserDatabasePanelState extends State<UserDatabasePanel> {
-  static const String tenantId = 'default_tenant';
+  // Ensure this matches your Firestore structure exactly
+  static const String tenantId = 'default_tenant'; 
   final UserDatabaseRepository repo = UserDatabaseRepository();
 
   List<Map<String, dynamic>> hierarchyNodes = [];
@@ -28,6 +29,7 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
   @override
   void initState() {
     super.initState();
+    print("--- UI DEBUG: Init State - Loading Hierarchy for $tenantId ---");
     loadHierarchy();
   }
 
@@ -35,12 +37,14 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
     setState(() => loading = true);
     try {
       final nodes = await repo.loadHierarchyWithUserCounts(tenantId);
+      print("--- UI DEBUG: Hierarchy Loaded - ${nodes.length} nodes found ---");
       setState(() {
         hierarchyNodes = nodes;
         status = 'Loaded ${nodes.length} nodes';
         statusColor = Colors.greenAccent;
       });
     } catch (e) {
+      print("--- UI DEBUG: Hierarchy Error: $e ---");
       setState(() {
         status = 'Error: $e';
         statusColor = Colors.redAccent;
@@ -51,9 +55,11 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
   }
 
   Future<void> loadNodeUsers(String nodeId) async {
+    print("--- UI DEBUG: Loading Users for Node ID: $nodeId ---");
     setState(() => loading = true);
     try {
       final users = await repo.loadUsersByNode(tenantId, nodeId);
+      print("--- UI DEBUG: Node Users Loaded - ${users.length} users found ---");
       setState(() {
         selectedNodeId = nodeId;
         nodeUsers = users;
@@ -61,6 +67,7 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
         statusColor = Colors.greenAccent;
       });
     } catch (e) {
+      print("--- UI DEBUG: Node User Error: $e ---");
       setState(() {
         status = 'Error: $e';
         statusColor = Colors.redAccent;
@@ -72,6 +79,8 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
 
   Future<void> pickAndUploadCSV() async {
     try {
+      print("--- UI DEBUG: STARTING CSV PICK ---");
+      
       // Pick CSV file
       FilePickerResult? result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
@@ -79,18 +88,26 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
         withData: true,
       );
 
-      if (result == null || result.files.isEmpty) return;
+      if (result == null || result.files.isEmpty) {
+        print("--- UI DEBUG: File Picker Cancelled ---");
+        return;
+      }
 
       final csvData = result.files.first.bytes;
       if (csvData == null) {
+        print("--- UI DEBUG: Failed to read bytes from file ---");
         showError('Failed to read file');
         return;
       }
 
       // Parse CSV
       final csvString = String.fromCharCodes(csvData);
+      print("--- UI DEBUG: CSV Raw String Length: ${csvString.length} ---");
+      
       final List<List<dynamic>> csvTable =
           const CsvToListConverter().convert(csvString);
+
+      print("--- UI DEBUG: CSV Parsed Rows: ${csvTable.length} ---");
 
       if (csvTable.isEmpty || csvTable.length < 2) {
         showError('CSV file is empty or has no data rows');
@@ -102,11 +119,19 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
       for (int i = 1; i < csvTable.length; i++) {
         try {
           final row = csvTable[i].map((e) => e.toString()).toList();
+          if (row.every((e) => e.trim().isEmpty)) continue; // Skip empty lines
           users.add(CSVUserData.fromCSVRow(row));
         } catch (e) {
+          print("--- UI DEBUG: Error parsing row ${i + 1}: $e ---");
           showError('Error parsing row ${i + 1}: $e');
           return;
         }
+      }
+
+      print("--- UI DEBUG: Successfully parsed ${users.length} User Objects ---");
+      if (users.isNotEmpty) {
+        print("--- UI DEBUG: Sample User 1 Email: ${users.first.email} ---");
+        print("--- UI DEBUG: Sample User 1 Node: ${users.first.nodeId} ---");
       }
 
       if (users.isEmpty) {
@@ -120,26 +145,33 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
         status = 'Validating ${users.length} users...';
       });
 
+      print("--- UI DEBUG: Calling Repo validateCSVData ---");
       final validation = await repo.validateCSVData(tenantId, users);
+
+      print("--- UI DEBUG: VALIDATION RETURNED ---");
+      print("   > IsValid: ${validation.isValid}");
+      print("   > New Users: ${validation.newUsers.length}");
+      print("   > Updates: ${validation.usersToUpdate.length}");
+      print("   > Diffs Found: ${validation.diffs.length}");
+      print("   > Errors: ${validation.errors.length}");
 
       setState(() => loading = false);
 
       if (!validation.isValid) {
-        showValidationErrorDialog(validation, users);
+        showValidationErrorDialog(validation);
         return;
       }
 
-      // Show confirmation dialog
-      showConfirmationDialog(users, validation);
+      // Show the Diff Review Dialog instead of simple confirmation
+      showDiffReviewDialog(validation);
+
     } catch (e) {
+      print("--- UI DEBUG: FATAL EXCEPTION IN PICKER: $e ---");
       showError('Failed to process CSV: $e');
     }
   }
 
-  void showValidationErrorDialog(
-    ValidationResult validation,
-    List<CSVUserData> users,
-  ) {
+  void showValidationErrorDialog(ValidationResult validation) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -193,7 +225,7 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
                     ),
                   ),
                   const SizedBox(height: 8),
-                  ...validation.warnings.map(
+                  ...validation.warnings.take(5).map(
                     (warning) => Padding(
                       padding: const EdgeInsets.only(bottom: 8.0),
                       child: Row(
@@ -211,6 +243,14 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
                       ),
                     ),
                   ),
+                  if (validation.warnings.length > 5)
+                     Padding(
+                       padding: const EdgeInsets.only(left: 20),
+                       child: Text(
+                         '...and ${validation.warnings.length - 5} more warnings',
+                         style: const TextStyle(color: Colors.white30, fontStyle: FontStyle.italic),
+                       ),
+                     )
                 ],
               ],
             ),
@@ -226,130 +266,17 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
     );
   }
 
-  void showConfirmationDialog(
-    List<CSVUserData> users,
-    ValidationResult validation,
-  ) {
+  void showDiffReviewDialog(ValidationResult validation) {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF111118),
-        title: const Row(
-          children: [
-            Icon(Icons.check_circle_outline, color: Colors.greenAccent),
-            SizedBox(width: 12),
-            Text('Format Correct!', style: TextStyle(color: Colors.white)),
-          ],
-        ),
-        content: SizedBox(
-          width: 500,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1A1A28),
-                  borderRadius: BorderRadius.circular(8),
-                  border:
-                      Border.all(color: Colors.greenAccent.withOpacity(0.3)),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '✓ Total Users: ${users.length}',
-                      style:
-                          const TextStyle(color: Colors.white, fontSize: 14),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '✓ Valid Nodes: ${validation.validNodeIds.length}',
-                      style: const TextStyle(color: Colors.greenAccent),
-                    ),
-                    if (validation.warnings.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        '⚠ Warnings: ${validation.warnings.length}',
-                        style: const TextStyle(color: Colors.orangeAccent),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.orange.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.orange.withOpacity(0.5)),
-                ),
-                child: const Row(
-                  children: [
-                    Icon(Icons.warning_amber_rounded,
-                        color: Colors.orange, size: 20),
-                    SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'This will create Firebase Auth accounts and place users in their nodes.',
-                        style: TextStyle(color: Colors.white70, fontSize: 12),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              if (validation.warnings.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                const Text(
-                  'Warnings:',
-                  style: TextStyle(
-                    color: Colors.orangeAccent,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                ...validation.warnings.take(3).map(
-                      (w) => Padding(
-                        padding: const EdgeInsets.only(bottom: 4.0),
-                        child: Text(
-                          '• $w',
-                          style: const TextStyle(
-                            color: Colors.white70,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ),
-                    ),
-              ],
-            ],
-          ),
-        ),
-        actions: [
-          OutlinedButton.icon(
-            onPressed: () => Navigator.pop(context),
-            icon: const Icon(Icons.cancel, color: Colors.redAccent),
-            label: const Text('Cancel',
-                style: TextStyle(color: Colors.redAccent)),
-            style: OutlinedButton.styleFrom(
-              side: const BorderSide(color: Colors.redAccent),
-            ),
-          ),
-          FilledButton.icon(
-            onPressed: () {
-              Navigator.pop(context);
-              importUsers(users);
-            },
-            icon: const Icon(Icons.upload, color: Colors.black),
-            label: const Text('Import to Database'),
-            style: FilledButton.styleFrom(
-              backgroundColor: Colors.greenAccent,
-              foregroundColor: Colors.black,
-            ),
-          ),
-        ],
+      builder: (context) => DiffReviewDialog(
+        validation: validation,
+        onConfirm: () {
+          Navigator.pop(context);
+          // Only import NEW and UPDATES. Skip Conflicts.
+          importUsers([...validation.newUsers, ...validation.usersToUpdate]);
+        },
       ),
     );
   }
@@ -363,6 +290,7 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
         users: users,
         repo: repo,
         onComplete: () {
+          print("--- UI DEBUG: Import Completed, Refreshing Data ---");
           loadHierarchy();
           if (selectedNodeId != null) {
             loadNodeUsers(selectedNodeId!);
@@ -408,7 +336,7 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
                   ),
                   SizedBox(height: 8),
                   Text(
-                    'Import users via CSV and view organization hierarchy',
+                    'Import users (New or Update) via CSV',
                     style: TextStyle(color: Colors.grey),
                   ),
                 ],
@@ -657,7 +585,7 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
                                                         .toString()
                                                         .isNotEmpty)
                                                   Text(
-                                                    user['designation'],
+                                                    '${user['designation']} • ${user['employeeType'] ?? 'N/A'}',
                                                     style:
                                                         const TextStyle(
                                                       color:
@@ -716,7 +644,310 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
   }
 }
 
-/// Import progress dialog (unchanged from your file)
+// -----------------------------------------------------------------------------
+// NEW WIDGETS START HERE
+// -----------------------------------------------------------------------------
+
+class DiffReviewDialog extends StatefulWidget {
+  final ValidationResult validation;
+  final VoidCallback onConfirm;
+
+  const DiffReviewDialog({
+    super.key,
+    required this.validation,
+    required this.onConfirm,
+  });
+
+  @override
+  State<DiffReviewDialog> createState() => _DiffReviewDialogState();
+}
+
+class _DiffReviewDialogState extends State<DiffReviewDialog> {
+  String searchQuery = "";
+
+  @override
+  Widget build(BuildContext context) {
+    // 1. Filter Lists based on Search Query
+    final filteredDiffs = widget.validation.diffs
+        .where((d) => d.email.toLowerCase().contains(searchQuery.toLowerCase()))
+        .toList();
+
+    final filteredConflicts = widget.validation.authConflicts
+        .where((u) => u.email.toLowerCase().contains(searchQuery.toLowerCase()))
+        .toList();
+
+    final filteredNewUsers = widget.validation.newUsers
+        .where((u) => u.email.toLowerCase().contains(searchQuery.toLowerCase()))
+        .toList();
+
+    return AlertDialog(
+      backgroundColor: const Color(0xFF111118),
+      title: const Row(
+        children: [
+          Icon(Icons.rate_review, color: Colors.cyan),
+          SizedBox(width: 12),
+          Text('Review Import Data', style: TextStyle(color: Colors.white)),
+        ],
+      ),
+      content: SizedBox(
+        width: 600,
+        height: 500,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // 2. Summary Stats Badge Row
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  _statBadge(
+                      'Total',
+                      widget.validation.newUsers.length +
+                          widget.validation.usersToUpdate.length +
+                          widget.validation.authConflicts.length,
+                      Colors.white),
+                  const SizedBox(width: 8),
+                  _statBadge('New', widget.validation.newUsers.length,
+                      Colors.greenAccent),
+                  const SizedBox(width: 8),
+                  _statBadge('Updates', widget.validation.usersToUpdate.length,
+                      Colors.orangeAccent),
+                  const SizedBox(width: 8),
+                  _statBadge('Conflicts', widget.validation.authConflicts.length,
+                      Colors.redAccent),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // 3. Search Bar
+            TextField(
+              style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(
+                filled: true,
+                fillColor: Colors.white.withOpacity(0.05),
+                hintText: 'Search by email...',
+                hintStyle: const TextStyle(color: Colors.white30),
+                prefixIcon: const Icon(Icons.search, color: Colors.cyan),
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide.none),
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              ),
+              onChanged: (val) => setState(() => searchQuery = val),
+            ),
+            const SizedBox(height: 16),
+
+            // 4. Scrollable Content List
+            Expanded(
+              child: ListView(
+                children: [
+                  // --- SECTION: CONFLICTS (Red) ---
+                  if (filteredConflicts.isNotEmpty) ...[
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 8.0),
+                      child: Text("⚠ Auth Conflicts (Skipped)",
+                          style: TextStyle(
+                              color: Colors.redAccent,
+                              fontWeight: FontWeight.bold)),
+                    ),
+                    ...filteredConflicts.map((u) => Container(
+                          margin: const EdgeInsets.only(bottom: 4),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 8),
+                          decoration: BoxDecoration(
+                              color: Colors.redAccent.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(
+                                  color: Colors.redAccent.withOpacity(0.3))),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.warning_amber_rounded,
+                                  color: Colors.redAccent, size: 16),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                  child: Text(u.email,
+                                      style: const TextStyle(
+                                          color: Colors.white70))),
+                              const Text("Exists in Auth only",
+                                  style: TextStyle(
+                                      color: Colors.white30, fontSize: 10)),
+                            ],
+                          ),
+                        )),
+                    const SizedBox(height: 16),
+                  ],
+
+                  // --- SECTION: UPDATES (Orange) ---
+                  if (filteredDiffs.isNotEmpty) ...[
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 8.0),
+                      child: Text("Updates",
+                          style: TextStyle(
+                              color: Colors.orangeAccent,
+                              fontWeight: FontWeight.bold)),
+                    ),
+                    ...filteredDiffs.map((diff) => Container(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.05),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                                color: Colors.orangeAccent.withOpacity(0.3)),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  const Icon(Icons.edit,
+                                      color: Colors.orangeAccent, size: 14),
+                                  const SizedBox(width: 8),
+                                  Text(diff.email,
+                                      style: const TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.bold)),
+                                ],
+                              ),
+                              const Divider(color: Colors.white10),
+                              ...diff.changes.entries.map((e) => Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        vertical: 2.0),
+                                    child: Row(
+                                      children: [
+                                        Text('${e.key}: ',
+                                            style: const TextStyle(
+                                                color: Colors.white54,
+                                                fontSize: 12)),
+                                        Text('${e.value['old']}',
+                                            style: const TextStyle(
+                                                color: Colors.redAccent,
+                                                decoration:
+                                                    TextDecoration.lineThrough,
+                                                fontSize: 12)),
+                                        const Padding(
+                                          padding: EdgeInsets.symmetric(
+                                              horizontal: 4),
+                                          child: Icon(Icons.arrow_right_alt,
+                                              color: Colors.white30, size: 14),
+                                        ),
+                                        Text('${e.value['new']}',
+                                            style: const TextStyle(
+                                                color: Colors.greenAccent,
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 12)),
+                                      ],
+                                    ),
+                                  )),
+                            ],
+                          ),
+                        )),
+                    const SizedBox(height: 16),
+                  ],
+
+                  // --- SECTION: NEW USERS (Green) ---
+                  if (filteredNewUsers.isNotEmpty) ...[
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 8.0),
+                      child: Text("New Users",
+                          style: TextStyle(
+                              color: Colors.greenAccent,
+                              fontWeight: FontWeight.bold)),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.greenAccent.withOpacity(0.05),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                            color: Colors.greenAccent.withOpacity(0.2)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (searchQuery.isEmpty)
+                            Padding(
+                              padding: const EdgeInsets.all(8.0),
+                              child: Text(
+                                  "Ready to create ${filteredNewUsers.length} new users.",
+                                  style: const TextStyle(color: Colors.white70)),
+                            ),
+                          // List individual new users
+                          ...filteredNewUsers.map((u) => Padding(
+                                padding: const EdgeInsets.symmetric(
+                                    vertical: 4, horizontal: 8),
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.add_circle_outline,
+                                        color: Colors.greenAccent, size: 14),
+                                    const SizedBox(width: 8),
+                                    Text(u.email,
+                                        style: const TextStyle(
+                                            color: Colors.white60,
+                                            fontSize: 12)),
+                                  ],
+                                ),
+                              )),
+                        ],
+                      ),
+                    ),
+                  ],
+
+                  // Empty State
+                  if (filteredConflicts.isEmpty &&
+                      filteredDiffs.isEmpty &&
+                      filteredNewUsers.isEmpty)
+                    const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(32.0),
+                        child: Text("No matches found.",
+                            style: TextStyle(color: Colors.white30)),
+                      ),
+                    )
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
+        ),
+        FilledButton.icon(
+          onPressed: widget.onConfirm,
+          icon: const Icon(Icons.check, size: 18),
+          label: const Text('Confirm & Sync'),
+          style: FilledButton.styleFrom(
+              backgroundColor: Colors.cyan, foregroundColor: Colors.black),
+        ),
+      ],
+    );
+  }
+
+  Widget _statBadge(String label, int count, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+          color: color.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: color.withOpacity(0.3))),
+      child: Row(
+        children: [
+          Icon(Icons.circle, size: 8, color: color),
+          const SizedBox(width: 8),
+          Text('$label: $count',
+              style: TextStyle(
+                  color: color, fontWeight: FontWeight.bold, fontSize: 12)),
+        ],
+      ),
+    );
+  }
+}
+
 class ImportProgressDialog extends StatefulWidget {
   final String tenantId;
   final List<CSVUserData> users;

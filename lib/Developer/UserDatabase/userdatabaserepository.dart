@@ -6,140 +6,119 @@ import 'userdatabasemodel.dart';
 
 class UserDatabaseRepository {
   final FirebaseFirestore db;
+  final FirebaseAuth auth = FirebaseAuth.instance;
   static const int RATE_LIMIT_DELAY_MS = 200; // Delay between operations
 
   UserDatabaseRepository({FirebaseFirestore? db})
       : db = db ?? FirebaseFirestore.instance;
 
-  /// Validate CSV and prepare final usersToImport list
+  /// Validate CSV and separate New Users from Updates with Diff logic
   Future<ValidationResult> validateCSVData(
     String tenantId,
     List<CSVUserData> users,
   ) async {
+    print("--- DEBUG: STARTING VALIDATION ---");
+    
     List<String> errors = [];
     List<String> warnings = [];
     Set<String> validNodeIds = {};
     Set<String> invalidNodeIds = {};
 
-    // ---------- LOAD NODES ----------
-    final nodesSnap = await db
-        .collection('tenants/$tenantId/organizations')
-        .doc('hierarchy')
-        .collection('nodes')
-        .get();
+    List<CSVUserData> newUsers = [];
+    List<CSVUserData> usersToUpdate = [];
+    List<CSVUserData> authConflicts = [];
+    List<UserDiff> diffs = [];
 
+    // 1. ---------- LOAD NODES ----------
+    final nodesPath = 'tenants/$tenantId/organizations/hierarchy/nodes';
+    final nodesSnap = await db.collection(nodesPath).get();
     final existingNodeIds = nodesSnap.docs.map((doc) => doc.id).toSet();
 
-    // ---------- DEDUP INSIDE CSV ----------
-    final emailSet = <String>{};
-    final uniqueUsers = <CSVUserData>[];
+    // 2. ---------- LOAD EXISTING USERS (FETCH ALL STRATEGY) ----------
+    Map<String, Map<String, dynamic>> existingFirestoreUsers = {};
+    final userPath = 'tenants/$tenantId/users';
+    
+    print("DEBUG: Fetching ALL users to normalize email case...");
+    final allUsersSnap = await db.collection(userPath).get();
+
+    for (var doc in allUsersSnap.docs) {
+      final data = doc.data();
+      dynamic emailRaw = data['profiledata'] != null 
+          ? (data['profiledata'] as Map)['email'] 
+          : null;
+
+      if (emailRaw != null) {
+        String emailKey = emailRaw.toString().trim().toLowerCase();
+        existingFirestoreUsers[emailKey] = {'id': doc.id, ...data};
+      }
+    }
+    
+    // 3. ---------- PROCESS CSV ROWS ----------
+    Set<String> processedEmails = {};
 
     for (int i = 0; i < users.length; i++) {
       final user = users[i];
       final rowNum = i + 2;
       final emailLower = user.email.trim().toLowerCase();
 
-      // Email format
       if (!RegExp(r'^[^@]+@[^@]+\.[^@]+').hasMatch(user.email)) {
-        errors.add('Row $rowNum: Invalid email format - ${user.email}');
+        errors.add('Row $rowNum: Invalid email - ${user.email}');
         continue;
       }
 
-      // Duplicate in CSV
-      if (emailSet.contains(emailLower)) {
-        warnings.add(
-          'Row $rowNum: Duplicate email in CSV skipped - ${user.email}',
-        );
+      if (processedEmails.contains(emailLower)) {
+        warnings.add('Row $rowNum: Duplicate skipped - ${user.email}');
         continue;
       }
-      emailSet.add(emailLower);
-      uniqueUsers.add(user);
+      processedEmails.add(emailLower);
 
-      // Password
-      if (user.password.length < 8) {
-        errors.add(
-          'Row $rowNum: Password must be at least 8 characters',
-        );
-      }
-
-      // Full name
-      if (user.fullName.isEmpty || user.fullName.length < 3) {
-        errors.add(
-          'Row $rowNum: Full name must be at least 3 characters',
-        );
-      }
-
-      // Node ID
-      if (user.nodeId.isEmpty) {
-        errors.add('Row $rowNum: Node ID is required');
-      } else if (existingNodeIds.contains(user.nodeId)) {
-        validNodeIds.add(user.nodeId);
-      } else {
+      if (user.nodeId.isEmpty) errors.add('Row $rowNum: Node ID required');
+      else if (existingNodeIds.contains(user.nodeId)) validNodeIds.add(user.nodeId);
+      else {
         invalidNodeIds.add(user.nodeId);
-        errors.add(
-          'Row $rowNum: Node ID "${user.nodeId}" does not exist in organization',
-        );
+        errors.add('Row $rowNum: Invalid Node ID "${user.nodeId}"');
       }
 
-      // Level
-      if (user.level < 0) {
-        warnings.add(
-          'Row $rowNum: Invalid level value - ${user.level}',
-        );
-      }
-    }
+      if (errors.any((e) => e.startsWith('Row $rowNum'))) continue;
 
-    if (errors.isNotEmpty) {
-      return ValidationResult(
-        isValid: false,
-        errors: errors,
-        warnings: warnings,
-        validNodeIds: validNodeIds.toList(),
-        invalidNodeIds: invalidNodeIds.toList(),
-        usersToImport: const [],
-      );
-    }
+      // 4. ---------- COMPARE ----------
+      if (existingFirestoreUsers.containsKey(emailLower)) {
+        // UPDATE CASE
+        final existing = existingFirestoreUsers[emailLower]!;
+        Map<String, Map<String, dynamic>> fieldChanges = {};
 
-    // ---------- SKIP EMAILS THAT ALREADY EXIST IN FIRESTORE ----------
-    final existingEmails = <String>{};
-    final emailList =
-        uniqueUsers.map((u) => u.email.trim().toLowerCase()).toList();
+        void checkChange(String field, dynamic newVal, dynamic oldVal) {
+          if (newVal.toString() != oldVal.toString()) {
+            fieldChanges[field] = {'old': oldVal, 'new': newVal};
+          }
+        }
 
-    const int chunkSize = 10; // Firestore whereIn limit
-    for (int i = 0; i < emailList.length; i += chunkSize) {
-      final chunk = emailList.sublist(
-        i,
-        i + chunkSize > emailList.length ? emailList.length : i + chunkSize,
-      );
+        checkChange('fullName', user.fullName, existing['profiledata']?['fullName'] ?? '');
+        checkChange('designation', user.designation, existing['designation'] ?? '');
+        checkChange('employeeType', user.employeeType, existing['employeeType'] ?? ''); // New Field
+        checkChange('nodeId', user.nodeId, existing['nodeId'] ?? '');
+        checkChange('level', user.level, existing['level'] ?? 0);
 
-      final snap = await db
-          .collection('tenants/$tenantId/users')
-          .where('profiledata.email', whereIn: chunk)
-          .get();
-
-      for (final doc in snap.docs) {
-        final email =
-            (doc.data()['profiledata']?['email'] as String?)?.toLowerCase();
-        if (email != null) {
-          existingEmails.add(email);
+        if (fieldChanges.isNotEmpty) {
+          usersToUpdate.add(user);
+          diffs.add(UserDiff(email: user.email, changes: fieldChanges));
+        } else {
+          warnings.add('${user.email} is up to date.');
+        }
+      } else {
+        // NEW CASE
+        try {
+          final methods = await auth.fetchSignInMethodsForEmail(user.email);
+          if (methods.isNotEmpty) {
+            authConflicts.add(user);
+            warnings.add('User ${user.email} exists in Auth but not DB.');
+          } else {
+            newUsers.add(user);
+          }
+        } catch (e) {
+          newUsers.add(user); 
         }
       }
-    }
-
-    final usersToImport = <CSVUserData>[];
-    for (final u in uniqueUsers) {
-      final emailLower = u.email.trim().toLowerCase();
-      if (existingEmails.contains(emailLower)) {
-        warnings.add(
-          'Email already exists in Firestore users, will be skipped: ${u.email}',
-        );
-      } else {
-        usersToImport.add(u);
-      }
-    }
-
-    if (usersToImport.isEmpty) {
-      warnings.add('No new users to import after duplicate checks.');
     }
 
     return ValidationResult(
@@ -148,11 +127,15 @@ class UserDatabaseRepository {
       warnings: warnings,
       validNodeIds: validNodeIds.toList(),
       invalidNodeIds: invalidNodeIds.toList(),
-      usersToImport: usersToImport,
+      newUsers: newUsers,
+      usersToUpdate: usersToUpdate,
+      authConflicts: authConflicts,
+      diffs: diffs,
     );
   }
 
-  /// IMPORT USERS – single collection: tenants/{tenantId}/users
+  /// IMPORT OR UPDATE USERS 
+  /// FIXED: Now uses pre-fetched Map to ensure Case-Insensitive matching works
   Future<Map<String, dynamic>> importUsers(
     String tenantId,
     List<CSVUserData> users,
@@ -161,65 +144,106 @@ class UserDatabaseRepository {
     int successCount = 0;
     int failureCount = 0;
     List<String> failedUsers = [];
-    List<String> skippedExistingEmails = [];
 
+    // ---------------------------------------------------------
+    // STEP 1: PRE-FETCH EXISTING USERS TO MAP (THE FIX)
+    // ---------------------------------------------------------
+    // We must build the same map as validation to find the Doc IDs
+    // regardless of whether the email is stored as "Sanjay" or "sanjay".
+    Map<String, String> emailToDocIdMap = {};
+    
+    try {
+      final userPath = 'tenants/$tenantId/users';
+      final allUsersSnap = await db.collection(userPath).get();
+      
+      for (var doc in allUsersSnap.docs) {
+        final data = doc.data();
+        dynamic emailRaw = data['profiledata'] != null 
+            ? (data['profiledata'] as Map)['email'] 
+            : null;
+        if (emailRaw != null) {
+          // KEY = Lowercase Email, VALUE = Document ID
+          emailToDocIdMap[emailRaw.toString().trim().toLowerCase()] = doc.id;
+        }
+      }
+      print("DEBUG: Import Loop - Mapped ${emailToDocIdMap.length} existing users for lookup.");
+    } catch (e) {
+      print("DEBUG: Error mapping existing users: $e");
+    }
+
+    // ---------------------------------------------------------
+    // STEP 2: PROCESS USERS
+    // ---------------------------------------------------------
     for (int i = 0; i < users.length; i++) {
       final user = users[i];
-      progressCallback(i + 1, users.length, 'Processing ${user.email}...');
+      final emailLower = user.email.trim().toLowerCase();
+      
+      progressCallback(i + 1, users.length, 'Syncing ${user.email}...');
+
+      if (i > 0 && i % 10 == 0) await Future.delayed(const Duration(milliseconds: RATE_LIMIT_DELAY_MS));
 
       try {
-        // Simple rate limit
-        if (i > 0 && i % 10 == 0) {
-          await Future.delayed(
-            const Duration(milliseconds: RATE_LIMIT_DELAY_MS),
-          );
+        // CHECK MAP INSTEAD OF QUERYING DB AGAIN
+        if (emailToDocIdMap.containsKey(emailLower)) {
+          // ============================================
+          // UPDATE EXISTING USER
+          // ============================================
+          final docId = emailToDocIdMap[emailLower]!;
+          
+          print("DEBUG: Updating existing user $docId (${user.email})");
+          
+          await db.collection('tenants/$tenantId/users').doc(docId).update({
+            'profiledata.fullName': user.fullName,
+            'designation': user.designation,
+            'employeeType': user.employeeType, // This will now correctly update
+            'nodeId': user.nodeId,
+            'level': user.level,
+            // DO NOT update status or password here
+          });
+          
+          successCount++;
+        } else {
+          // ============================================
+          // CREATE NEW USER
+          // ============================================
+          print("DEBUG: Creating NEW user (${user.email})");
+          
+          UserCredential? credential;
+          try {
+            credential = await FirebaseAuth.instance.createUserWithEmailAndPassword(
+              email: user.email,
+              password: user.password,
+            );
+
+            final userId = credential.user!.uid;
+            await db.collection('tenants/$tenantId/users').doc(userId).set({
+              'profiledata': {
+                'email': user.email,
+                'fullName': user.fullName,
+              },
+              'designation': user.designation,
+              'employeeType': user.employeeType, // New Field
+              'status': 'active',
+              'createdat': FieldValue.serverTimestamp(),
+              'nodeId': user.nodeId,
+              'level': user.level,
+              'importedFromCSV': true,
+            });
+            successCount++;
+
+          } on FirebaseAuthException catch (e) {
+            if (e.code == 'email-already-in-use') {
+              failureCount++;
+              failedUsers.add('${user.email}: Exists in Auth but missing in DB (Conflict)');
+            } else {
+              rethrow;
+            }
+          }
         }
-
-        // Skip if already registered in Auth
-        final methods = await FirebaseAuth.instance
-            .fetchSignInMethodsForEmail(user.email.trim());
-        if (methods.isNotEmpty) {
-          skippedExistingEmails.add(user.email);
-          continue;
-        }
-
-        // Create Firebase Auth user
-        final userCredential =
-            await FirebaseAuth.instance.createUserWithEmailAndPassword(
-          email: user.email,
-          password: user.password,
-        );
-
-        final userId = userCredential.user!.uid;
-
-        // SINGLE SOURCE OF TRUTH: tenants/{tenantId}/users/{userId}
-        await db
-            .collection('tenants/$tenantId/users')
-            .doc(userId)
-            .set({
-          'profiledata': {
-            'email': user.email,
-            'fullName': user.fullName,
-          },
-          'designation': user.designation, // top-level
-          'status': 'active',
-          'createdat': FieldValue.serverTimestamp(),
-          'nodeId': user.nodeId,          // top-level
-          'level': user.level,            // top-level
-          'importedFromCSV': true,
-        }, SetOptions(merge: true));
-
-        successCount++;
-      } on FirebaseAuthException catch (e) {
-        if (e.code == 'email-already-in-use') {
-          skippedExistingEmails.add(user.email);
-          continue;
-        }
-        failureCount++;
-        failedUsers.add('${user.email}: ${e.code} - ${e.message}');
       } catch (e) {
         failureCount++;
         failedUsers.add('${user.email}: $e');
+        print("DEBUG: Error processing ${user.email}: $e");
       }
     }
 
@@ -227,7 +251,6 @@ class UserDatabaseRepository {
       'success': successCount,
       'failed': failureCount,
       'failedUsers': failedUsers,
-      'skippedExistingEmails': skippedExistingEmails,
     };
   }
 
