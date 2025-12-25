@@ -7,7 +7,10 @@ import 'task_tabs_manifest.dart';
 import 'widgets/task_side_panel.dart';
 
 class TaskWorkspace extends StatefulWidget {
-  const TaskWorkspace({super.key, required this.workspaceController});
+  const TaskWorkspace({
+    super.key,
+    required this.workspaceController,
+  });
 
   final WorkspaceController workspaceController;
 
@@ -22,8 +25,8 @@ class _TaskWorkspaceState extends State<TaskWorkspace> {
   Widget build(BuildContext context) {
     final wallpaper = WallpaperService.instance;
 
-    // Only react to global wallpaper/glass changes; the outer shell already
-    // draws the wallpaper and top bar.
+    // React to global wallpaper/glass changes so both side panel and
+    // main content update when sliders move.
     return AnimatedBuilder(
       animation: wallpaper,
       builder: (context, _) {
@@ -32,14 +35,15 @@ class _TaskWorkspaceState extends State<TaskWorkspace> {
           orElse: () => taskTabs.first,
         );
 
-        final glassBlur = wallpaper.globalGlassBlur;
-        final glassOpacity = wallpaper.globalGlassOpacity;
+        final double glassBlur = wallpaper.globalGlassBlur;
+        final double glassOpacity = wallpaper.globalGlassOpacity;
 
         return Padding(
+          // Top padding to clear the UniversalTopBar drawn by WorkspaceShell.
           padding: const EdgeInsets.fromLTRB(18, 70, 18, 18),
-          // Top padding to clear the global UniversalTopBar that WorkspaceShell draws.
           child: Row(
             children: [
+              // LEFT: Tab list + info
               SizedBox(
                 width: 240,
                 child: TaskSidePanel(
@@ -48,6 +52,8 @@ class _TaskWorkspaceState extends State<TaskWorkspace> {
                 ),
               ),
               const SizedBox(width: 12),
+
+              // RIGHT: Main glass content area for current tab
               Expanded(
                 child: GlassContainer(
                   blur: glassBlur,
@@ -55,6 +61,10 @@ class _TaskWorkspaceState extends State<TaskWorkspace> {
                   tint: Colors.white,
                   borderRadius: BorderRadius.circular(22),
                   padding: const EdgeInsets.all(14),
+                  // When interacting inside the page, keep quality auto.
+                  blurMode: GlassBlurMode.auto,
+                  qualityMode: GlassQualityMode.auto,
+                  isInteracting: false,
                   child: currentTab.builder(context),
                 ),
               ),
