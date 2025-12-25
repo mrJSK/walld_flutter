@@ -1,22 +1,67 @@
-email,password,fullName,nodeId,level,designation
-mrbeast@WallD.com,Beast@10093,Mrbeast,root_techvision,0,ceo
-sanjay@WallD.com,Sanjay@10093,Sanjay Singh,cto_office,1,cto
-alice@WallD.com,Alice@10093,Alice Johnson,engineering_division,2,engineering_manager
-Scott@WallD.com,Scott@10093,Scott,engineering_division,2,engineering_manager
-bob@WallD.com,Bob@10093,Bob Brown,backend_engineering_department,3,team_lead
-bobassd@WallD.com,Bobdsf@10093,Bob Black Red,backend_engineering_department,3,team_lead
-pool@WallD.com,Paula@10093,Pool Black,backend_engineering_department,3,team_lead
-charlie@WallD.com,Charlie@10093,Charlie Davis,backend_api_squad,4,team_lead
-david@WallD.com,David@10093,David Wilson,api_junior_group,5,junior_engineer
-eva@WallD.com,Eva@10093,Eva Martinez,api_senior_group,5,senior_engineer
-frank@WallD.com,Frank@10093,Frank Garcia,backend_core_team,4,team_lead
-grace@WallD.com,Grace@10093,Grace Lee,core_junior_group,5,junior_engineer
-henry@WallD.com,Henry@10093,Henry Walker,core_senior_group,5,senior_engineer
-isabella@WallD.com,Isabella@10093,Isabella Hall,backend_database_team,4,team_lead
-jack@WallD.com,Jack@10093,Jack Allen,db_junior_group,5,junior_engineer
-kate@WallD.com,Kate@10093,Kate Young,db_senior_group,5,senior_engineer
-linda@WallD.com,Linda@10093,Linda Hernandez,QA_Department,3,qa_lead
-mike@WallD.com,Mike@10093,Mike King,automation_testing_team,4,qa_lead
-nina@WallD.com,Nina@10093,Nina Wright,at_engineers_group,5,qa_engineer
-oliver@WallD.com,Oliver@10093,Oliver Scott,functional_testing_team,4,qa_lead
-paula@WallD.com,Paula@10093,Paula Green,ft_engineers_group,5,qa_engineer
+email,password,fullName,nodeId,level,designation,employeeType
+mrbeast@WallD.com,Beast@10093,Mrbeast,root_techvision,0,ceo,ceo
+sanjay@WallD.com,Sanjay@10093,Sanjay Singh,cto_office,1,cto,cto
+
+alice@WallD.com,Alice@10093,Alice Johnson,engineering_division,2,engineering_manager,head
+johnson@WallD.com,Johnson@10093,Johnson,engineering_division,2,engineering_manager,manager
+Scott@WallD.com,Scott@10093,Scott,engineering_division,2,engineering_manager,employee
+
+bob@WallD.com,Bob@10093,Bob Brown,backend_engineering_department,3,team_lead,head
+bobassd@WallD.com,Bobdsf@10093,Bob Black Red,backend_engineering_department,3,team_lead,manager
+pool@WallD.com,Paula@10093,Pool Black,backend_engineering_department,3,team_lead,employee
+
+charlie@WallD.com,Charlie@10093,Charlie Davis,backend_api_squad,4,team_lead,head
+davis@WallD.com,Davis@10093, Davis,backend_api_squad,4,team_lead,manager
+charlieblack@WallD.com,CharlieBlack@10093,Charlie Black,backend_api_squad,4,team_lead,employee
+
+david@WallD.com,David@10093,David Wilson,api_junior_group,5,junior_engineer,head
+wilson@WallD.com,Wilson@10093,Wilson,api_junior_group,5,junior_engineer,manager
+wilsonblack@WallD.com,WilsonBlack@10093,Wilson Black,api_junior_group,5,junior_engineer,employee
+
+eva@WallD.com,Eva@10093,Eva Martinez,api_senior_group,5,senior_engineer,head
+martinez@WallD.com,Martinez@10093, Martinez,api_senior_group,5,senior_engineer,manager
+martinezred@WallD.com,MartinezRed@10093,Martinez Red,api_senior_group,5,senior_engineer,employee
+
+frank@WallD.com,Frank@10093,Frank Garcia,backend_core_team,4,team_lead,head
+garcia@WallD.com,Garcia@10093,Garcia,backend_core_team,4,team_lead,manager
+garciablack@WallD.com,Frank@10093,Garcia Black,backend_core_team,4,team_lead,employee
+
+grace@WallD.com,Grace@10093,Grace Lee,core_junior_group,5,junior_engineer,head
+lee@WallD.com,Lee@10093,Lee,core_junior_group,5,junior_engineer,manager
+leeblack@WallD.com,leeblack@10093,Lee Black,core_junior_group,5,junior_engineer,employee
+
+henry@WallD.com,Henry@10093,Henry Walker,core_senior_group,5,senior_engineer,head
+walker@WallD.com,Walker@10093,Walker,core_senior_group,5,senior_engineer,manager
+walkerblack@WallD.com,WalkerBlack@10093,Walker Black,core_senior_group,5,senior_engineer,employee
+
+isabella@WallD.com,Isabella@10093,Isabella Hall,backend_database_team,4,team_lead,head
+hall@WallD.com,Hall@10093,Hall,backend_database_team,4,team_lead,manager
+ballblack@WallD.com,HallBlack@10093,Hall Black,backend_database_team,4,team_lead,employee
+
+jack@WallD.com,Jack@10093,Jack Allen,db_junior_group,5,junior_engineer,head
+allen@WallD.com,Allen@10093,Allen,db_junior_group,5,junior_engineer,manager
+allenblack@WallD.com,AllenBlack@10093,Allen Black,db_junior_group,5,junior_engineer,employee
+
+kate@WallD.com,Kate@10093,Kate Young,db_senior_group,5,senior_engineer,head
+young@WallD.com,Kate@10093,Young,db_senior_group,5,senior_engineer,manager
+youngblack@WallD.com,Kate@10093,Young Black,db_senior_group,5,senior_engineer,employee
+
+linda@WallD.com,Linda@10093,Linda Hernandez,QA_Department,3,qa_lead,head
+hernandez@WallD.com,Hernandez@10093,Hernandez,QA_Department,3,qa_lead,manager
+hernandezblack@WallD.com,HernandezBlack@10093,Hernandez Black,QA_Department,3,qa_lead,employee
+
+mike@WallD.com,Mike@10093,Mike King,automation_testing_team,4,qa_lead,head
+king@WallD.com,King@10093,King,automation_testing_team,4,qa_lead,manager
+kingblack@WallD.com,KingBlack@10093,King Black,automation_testing_team,4,qa_lead,employee
+
+nina@WallD.com,Nina@10093,Nina Wright,at_engineers_group,5,qa_engineer,head
+wright@WallD.com,Wright@10093,Wright,at_engineers_group,5,qa_engineer,manager
+walkerblack@WallD.com,WrightBlack@10093,Wright Black,at_engineers_group,5,qa_engineer,employee
+
+oliver@WallD.com,Oliver@10093,Oliver Scott,functional_testing_team,4,qa_lead,head
+Scott@WallD.com,Scott@10093,Scott,functional_testing_team,4,qa_lead,manager
+ScottBlack@WallD.com,ScottBlack@10093,Scott Black,functional_testing_team,4,qa_lead,employee
+
+paula@WallD.com,Paula@10093,Paula Green,ft_engineers_group,5,qa_engineer,head
+Green@WallD.com,Green@10093,Green,ft_engineers_group,5,qa_engineer,manager
+GreenBlack@WallD.com,GreenBlack@10093,Green Black,ft_engineers_group,5,qa_engineer,employee
