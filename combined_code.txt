@@ -486,7 +486,7 @@ class GlassContainer extends StatelessWidget {
     required GlassQualityMode q,
     required double blurSigma,
   }) {
-    if (blurSigma < 2.0) return false;
+    if (blurSigma < 0) return false;
 
     switch (blurMode) {
       case GlassBlurMode.none:
@@ -508,9 +508,9 @@ class GlassContainer extends StatelessWidget {
   Widget build(BuildContext context) {
     final q = _resolveQualityMode();
 
-    final blurSigma = _effectiveBlur(q, blur);
+    //final blurSigma = _effectiveBlur(q, blur);
     final a = _effectiveOpacity(q, opacity);
-
+    final blurSigma = blur.clamp(0.0, 30.0);
     // Tint fill
     final fill = tint.withOpacity(a);
 
@@ -5969,30 +5969,28 @@ class _ResizeHandle extends StatelessWidget {
 // File: lib\dynamic_screen\dashboard_drawer.dart
 import 'package:flutter/material.dart';
 
-import 'model/screen_grid.dart';
+import 'repository/dashboard_repository.dart';
 
 class DashboardDrawer extends StatelessWidget {
   final Set<String> allowedWidgetIds;
-  final List<ScreenGridWidgetSpan> items;
-  final void Function(String widgetId) onToggleWidget;
+  final List items;
+  // No toggle callback any more.
 
   const DashboardDrawer({
     super.key,
     required this.allowedWidgetIds,
     required this.items,
-    required this.onToggleWidget,
   });
-
-  bool _isVisible(String id) {
-    return items.any((w) => w.widgetId == id);
-  }
 
   @override
   Widget build(BuildContext context) {
-    // If only login is allowed, drawer can stay hidden
+    // If you still want to hide the drawer when only login is allowed, keep this.
     if (allowedWidgetIds.length == 1 && allowedWidgetIds.contains('login')) {
       return const SizedBox.shrink();
     }
+
+    final repo = DashboardRepository();
+    final allWidgets = repo.getWidgets();
 
     return Positioned(
       left: 16,
@@ -6025,29 +6023,23 @@ class DashboardDrawer extends StatelessWidget {
                 Expanded(
                   child: ListView(
                     children: [
-                      if (allowedWidgetIds.contains('createtask'))
-                        _item(
-                          id: 'createtask',
-                          label: 'Create Task',
-                          icon: Icons.add_task_rounded,
-                        ),
-                      if (allowedWidgetIds.contains('viewassignedtasks'))
-                        _item(
-                          id: 'viewassignedtasks',
-                          label: 'Assigned Tasks',
-                          icon: Icons.assignment_ind_rounded,
-                        ),
-                      if (allowedWidgetIds.contains('viewalltasks'))
-                        _item(
-                          id: 'viewalltasks',
-                          label: 'All Tasks',
-                          icon: Icons.view_list_rounded,
-                        ),
-                      if (allowedWidgetIds.contains('completetask'))
-                        _item(
-                          id: 'completetask',
-                          label: 'Complete Task',
-                          icon: Icons.check_circle_rounded,
+                      for (final w in allWidgets)
+                        ListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          leading: const Icon(
+                            Icons.widgets,
+                            size: 18,
+                            color: Colors.cyanAccent,
+                          ),
+                          title: Text(
+                            w.name,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 13,
+                            ),
+                          ),
+                          // No switch / tap handler; purely informational.
                         ),
                     ],
                   ),
@@ -6059,118 +6051,70 @@ class DashboardDrawer extends StatelessWidget {
       ),
     );
   }
-
-  Widget _item({
-    required String id,
-    required String label,
-    required IconData icon,
-  }) {
-    final visible = _isVisible(id);
-    return ListTile(
-      dense: true,
-      contentPadding: EdgeInsets.zero,
-      leading: Icon(
-        icon,
-        size: 18,
-        color: visible ? Colors.cyanAccent : Colors.white70,
-      ),
-      title: Text(
-        label,
-        style: TextStyle(
-          color: visible ? Colors.cyanAccent : Colors.white70,
-          fontSize: 13,
-        ),
-      ),
-      trailing: Switch(
-        value: visible,
-        activeColor: Colors.cyanAccent,
-        onChanged: (_) => onToggleWidget(id),
-      ),
-      onTap: () => onToggleWidget(id),
-    );
-  }
 }
 
 ================================================================================
 
 // File: lib\dynamic_screen\dashboard_grid.dart
+// lib/dynamic_screen/dashboard_grid.dart
 import 'package:flutter/material.dart';
 
 import '../core/wallpaper_service.dart';
 import 'model/screen_grid.dart';
 import 'widgets/widgets.dart';
 
-/// Dashboard grid renderer.
-///
-/// FPS fixes:
-/// - Wrap the whole grid in a RepaintBoundary so repaint damage doesn't climb up.
-/// - Wrap EACH item in a RepaintBoundary so moving one tile doesn't repaint others.
-/// - Clip the grid area to reduce overdraw outside bounds (desktop especially).
-///
-/// Notes:
-/// - This doesn't remove translucent blending cost (glass over wallpaper), but it
-///   reduces *how much* of the scene repaints when one item animates/moves.
-/// - A true "canvas-style" solution would require a different architecture
-///   (CustomPainter/scene graph) and is intentionally not forced here.
 class DashboardGrid extends StatelessWidget {
   final ScreenGridConfig grid;
   final List<ScreenGridWidgetSpan> items;
   final VoidCallback onSnap;
+
+  // NEW: glass settings for widgets
+  final double globalBlur;
+  final double globalOpacity;
 
   const DashboardGrid({
     super.key,
     required this.grid,
     required this.items,
     required this.onSnap,
+    required this.globalBlur,
+    required this.globalOpacity,
   });
 
   @override
   Widget build(BuildContext context) {
-    return RepaintBoundary(
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final cellW = constraints.maxWidth / grid.columns;
-          final cellH = constraints.maxHeight / grid.rows;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final cellW = constraints.maxWidth / grid.columns;
+        final cellH = constraints.maxHeight / grid.rows;
 
-          // Read once per build (avoid repeated static singleton lookups).
-          final globalBlur = WallpaperService.instance.globalGlassBlur;
-          final globalOpacity = WallpaperService.instance.globalGlassOpacity;
-          const globalTint = Color(0xFFFFFFFF);
+        // No blur/opacity logic here; only pass through.
+        const globalTint = Color(0xFFFFFFFF);
 
-          return ClipRect(
-            child: Stack(
-              clipBehavior: Clip.hardEdge,
-              children: items.map((item) {
-                final left = cellW * item.col;
-                final top = cellH * item.row;
-                final widthPx = cellW * item.colSpan;
-                final heightPx = cellH * item.rowSpan;
-
-                // IMPORTANT: isolate each tile’s glass/shadow/content composition.
-                // Even if the inner widget already uses RepaintBoundary, this
-                // guarantees the Positioned subtree itself is also isolated.
-                return RepaintBoundary(
-                  child: buildGridWidget(
-                    item: item,
-                    cellW: cellW,
-                    cellH: cellH,
-                    maxW: constraints.maxWidth,
-                    maxH: constraints.maxHeight,
-                    initialLeft: left,
-                    initialTop: top,
-                    initialWidthPx: widthPx,
-                    initialHeightPx: heightPx,
-                    globalBlur: globalBlur,
-                    globalOpacity: globalOpacity,
-                    globalTint: globalTint,
-                    onSnap: onSnap,
-                  ),
-                );
-              }).toList(),
-            ),
-          );
-        },
-      ),
+        return ClipRect(
+          child: Stack(
+            clipBehavior: Clip.hardEdge,
+            children: [
+              for (final item in items)
+                buildGridWidget(
+                  item: item,
+                  cellW: cellW,
+                  cellH: cellH,
+                  maxW: constraints.maxWidth,
+                  maxH: constraints.maxHeight,
+                  initialLeft: cellW * item.col,
+                  initialTop: cellH * item.row,
+                  initialWidthPx: cellW * item.colSpan,
+                  initialHeightPx: cellH * item.rowSpan,
+                  globalBlur: globalBlur,
+                  globalOpacity: globalOpacity,
+                  globalTint: globalTint,
+                  onSnap: onSnap,
+                ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
@@ -6365,6 +6309,7 @@ class DashboardPermissions {
 ================================================================================
 
 // File: lib\dynamic_screen\dashboard_screen.dart
+// lib/dynamic_screen/dashboard_screen.dart
 import 'dart:async';
 
 import 'package:firebase_auth/firebase_auth.dart';
@@ -6375,11 +6320,9 @@ import 'package:walld_flutter/dynamic_screen/dashboard_layout_persistence.dart';
 import 'package:walld_flutter/dynamic_screen/model/screen_grid.dart'
     show ScreenGridWidgetSpan, ScreenGridConfig;
 
-import '../core/permissions_cache.dart';
 import '../core/wallpaper_service.dart';
-import 'dashboard_drawer.dart';
 import 'dashboard_grid.dart';
-import 'dashboard_permissions.dart' show DashboardPermissions;
+import 'widget_manifest.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -6413,30 +6356,11 @@ class DashboardScreenState extends State<DashboardScreen> {
     });
 
     try {
-      // 1) Permissions (prefer cache)
-      final uid = FirebaseAuth.instance.currentUser?.uid;
-      if (uid == null) {
-        allowedWidgetIds = const {'login'};
-      } else {
-        final cache = PermissionsCache.instance;
+      // Allow ALL widgets; no per-user filtering.
+      allowedWidgetIds = widgetManifest
+          .map((w) => w['id'] as String)
+          .toSet();
 
-        // Single call to cache abstraction.
-        final cached = cache.getCachedPermissions(uid);
-        if (cached != null && cached.isNotEmpty) {
-          allowedWidgetIds = cached;
-        } else {
-          await DashboardPermissions.loadUserPermissions(
-            context: context,
-            userId: uid,
-            onAllowedWidgetIds: (set) {
-              allowedWidgetIds = set;
-              cache.setCachedPermissions(uid, set);
-            },
-          );
-        }
-      }
-
-      // 2) Layout
       await DashboardLayoutPersistence.loadLayout(
         prefsKey: _layoutPrefsKey,
         onLoaded: (loaded) {
@@ -6531,33 +6455,6 @@ class DashboardScreenState extends State<DashboardScreen> {
     unawaited(_saveLayout());
   }
 
-  void _toggleWidget(String widgetId) {
-    final idx = items.indexWhere((w) => w.widgetId == widgetId);
-    if (idx >= 0) {
-      setState(() => items.removeAt(idx));
-      unawaited(_saveLayout());
-      return;
-    }
-
-    final count = items.length;
-    final col = (count * 6) % grid.columns;
-    final row = ((count * 6) ~/ grid.columns) * 5;
-
-    setState(() {
-      items.add(
-        ScreenGridWidgetSpan(
-          widgetId: widgetId,
-          col: col.clamp(0, grid.columns - 6),
-          row: row.clamp(0, grid.rows - 5),
-          colSpan: 6,
-          rowSpan: 5,
-        ),
-      );
-    });
-
-    unawaited(_saveLayout());
-  }
-
   @override
   Widget build(BuildContext context) {
     if (loading) {
@@ -6579,24 +6476,34 @@ class DashboardScreenState extends State<DashboardScreen> {
       );
     }
 
+    final wallpaper = WallpaperService.instance;
+
     return AnimatedBuilder(
-      animation: WallpaperService.instance,
+      animation: wallpaper,
       builder: (context, _) {
+        // Read glass settings here and pass them into DashboardGrid.
+        final glassBlur = wallpaper.globalGlassBlur;
+        final glassOpacity = wallpaper.globalGlassOpacity;
+
         return Stack(
           children: [
+            // Wallpaper is just the background image, no blur/opacity logic here.
+            Positioned.fill(
+              child: DecoratedBox(
+                decoration: wallpaper.backgroundDecoration,
+              ),
+            ),
+            // Foreground widgets; glass is applied inside each widget via GlassContainer.
             Positioned.fill(
               child: RepaintBoundary(
                 child: DashboardGrid(
                   grid: grid,
                   items: items,
                   onSnap: _onSnap,
+                  globalBlur: glassBlur,
+                  globalOpacity: glassOpacity,
                 ),
               ),
-            ),
-            DashboardDrawer(
-              allowedWidgetIds: allowedWidgetIds,
-              items: items,
-              onToggleWidget: _toggleWidget,
             ),
             if (kDebugMode)
               Positioned(
@@ -8718,23 +8625,20 @@ BoxDecoration backgroundDecoration() {
 ================================================================================
 
 // File: lib\task\task_workspace.dart
+// lib/task/task_workspace.dart
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
-import '../core/glass_container.dart';
 import '../core/wallpaper_service.dart';
+import '../core/glass_container.dart';
 import '../workspace/universal_top_bar.dart';
 import '../workspace/workspace_controller.dart';
 import 'task_tabs_manifest.dart';
 import 'widgets/task_side_panel.dart';
 
 class TaskWorkspace extends StatefulWidget {
-  final WorkspaceController workspaceController;
+  const TaskWorkspace({super.key, required this.workspaceController});
 
-  const TaskWorkspace({
-    super.key,
-    required this.workspaceController,
-  });
+  final WorkspaceController workspaceController;
 
   @override
   State<TaskWorkspace> createState() => _TaskWorkspaceState();
@@ -8743,87 +8647,83 @@ class TaskWorkspace extends StatefulWidget {
 class _TaskWorkspaceState extends State<TaskWorkspace> {
   String tabId = taskTabs.first.id;
 
-  double glassBlur = 18;
-  double glassOpacity = 0.16;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadGlassSettings();
-  }
-
-  Future<void> _loadGlassSettings() async {
-    final prefs = await SharedPreferences.getInstance();
-    if (!mounted) return;
-    setState(() {
-      glassBlur = prefs.getDouble('task_glass_blur') ?? 18;
-      glassOpacity = prefs.getDouble('task_glass_opacity') ?? 0.16;
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
-    final currentTab =
-        taskTabs.firstWhere((t) => t.id == tabId, orElse: () => taskTabs.first);
+    final wallpaper = WallpaperService.instance;
 
-    return Stack(
-      children: [
-        // Wallpaper background (repaints only this layer)
-        Positioned.fill(
-          child: AnimatedBuilder(
-            animation: WallpaperService.instance,
-            builder: (_, __) => DecoratedBox(
-              decoration: WallpaperService.instance.backgroundDecoration,
-            ),
-          ),
-        ),
+    return AnimatedBuilder(
+      animation: wallpaper,
+      builder: (context, _) {
+        final currentTab = taskTabs.firstWhere(
+          (t) => t.id == tabId,
+          orElse: () => taskTabs.first,
+        );
 
-        Column(
+        // Glass settings come only from WallpaperService and are applied
+        // to foreground widgets (side panel + main card), not the wallpaper.
+        //final glassBlur = wallpaper.globalGlassBlur;
+        final glassOpacity = wallpaper.globalGlassOpacity;
+        final glassBlur = 2000.0; 
+
+        return Stack(
           children: [
-            UniversalTopBar(
-              workspaceController: widget.workspaceController,
-              onWallpaperSettings: () async {
-                await WallpaperService.instance.pickWallpaper();
-              },
-              onGlassSettings: () {
-                // Keep your existing glass sheet if you have one
-              },
-              onSignOut: () async {
-                // Keep your existing signOut if you have one
-              },
-            ),
-            const SizedBox(height: 10),
-
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
-                child: Row(
-                  children: [
-                    SizedBox(
-                      width: 240,
-                      child: TaskSidePanel(
-                        selectedTabId: tabId,
-                        onSelect: (id) => setState(() => tabId = id),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: GlassContainer(
-                        blur: glassBlur,
-                        opacity: glassOpacity,
-                        tint: Colors.white,
-                        borderRadius: BorderRadius.circular(22),
-                        padding: const EdgeInsets.all(14),
-                        child: currentTab.builder(context),
-                      ),
-                    ),
-                  ],
-                ),
+            // Plain wallpaper background (no per-widget blur here).
+            Positioned.fill(
+              child: DecoratedBox(
+                decoration: wallpaper.backgroundDecoration,
               ),
             ),
+
+            // Foreground UI with glass widgets.
+            Column(
+              children: [
+                UniversalTopBar(
+                  workspaceController: widget.workspaceController,
+                  onWallpaperSettings: () async {
+                    await wallpaper.pickWallpaper();
+                  },
+                  onGlassSettings: () {
+                    // open your shared glass settings UI here
+                  },
+                  onSignOut: () async {
+                    // your sign-out logic
+                  },
+                ),
+                const SizedBox(height: 10),
+
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
+                    child: Row(
+                      children: [
+                        SizedBox(
+                          width: 240,
+                          child: TaskSidePanel(
+                            selectedTabId: tabId,
+                            onSelect: (id) => setState(() => tabId = id),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: GlassContainer(
+                            // Apply blur/opacity only to this card.
+                            blur: glassBlur,
+                            opacity: glassOpacity,
+                            tint: Colors.white,
+                            borderRadius: BorderRadius.circular(22),
+                            padding: const EdgeInsets.all(14),
+                            child: currentTab.builder(context),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ],
-        ),
-      ],
+        );
+      },
     );
   }
 }
@@ -8897,6 +8797,7 @@ class ViewAssignedTasksPage extends StatelessWidget {
 // File: lib\task\widgets\task_side_panel.dart
 import 'package:flutter/material.dart';
 import '../../core/glass_container.dart';
+import '../../core/wallpaper_service.dart';
 import '../task_tabs_manifest.dart';
 
 class TaskSidePanel extends StatelessWidget {
@@ -8908,12 +8809,12 @@ class TaskSidePanel extends StatelessWidget {
     required this.selectedTabId,
     required this.onSelect,
   });
-
   @override
   Widget build(BuildContext context) {
+    final wallpaper = WallpaperService.instance;
     return GlassContainer(
-      blur: 16,
-      opacity: 0.10,
+      blur: wallpaper.globalGlassBlur,
+      opacity: wallpaper.globalGlassOpacity * 0.7,
       tint: Colors.white,
       borderRadius: BorderRadius.circular(20),
       padding: const EdgeInsets.symmetric(vertical: 10),

@@ -158,7 +158,7 @@ class GlassContainer extends StatelessWidget {
     required GlassQualityMode q,
     required double blurSigma,
   }) {
-    if (blurSigma < 2.0) return false;
+    if (blurSigma < 0) return false;
 
     switch (blurMode) {
       case GlassBlurMode.none:
@@ -180,9 +180,9 @@ class GlassContainer extends StatelessWidget {
   Widget build(BuildContext context) {
     final q = _resolveQualityMode();
 
-    final blurSigma = _effectiveBlur(q, blur);
+    //final blurSigma = _effectiveBlur(q, blur);
     final a = _effectiveOpacity(q, opacity);
-
+    final blurSigma = blur.clamp(0.0, 30.0);
     // Tint fill
     final fill = tint.withOpacity(a);
 

@@ -1,3 +1,4 @@
+// lib/dynamic_screen/dashboard_screen.dart
 import 'dart:async';
 
 import 'package:firebase_auth/firebase_auth.dart';
@@ -8,10 +9,9 @@ import 'package:walld_flutter/dynamic_screen/dashboard_layout_persistence.dart';
 import 'package:walld_flutter/dynamic_screen/model/screen_grid.dart'
     show ScreenGridWidgetSpan, ScreenGridConfig;
 
-import 'widget_manifest.dart';
 import '../core/wallpaper_service.dart';
-// import 'dashboard_drawer.dart';
 import 'dashboard_grid.dart';
+import 'widget_manifest.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -45,12 +45,11 @@ class DashboardScreenState extends State<DashboardScreen> {
     });
 
     try {
-      // 1) Allow ALL widgets, no per-user filtering.
+      // Allow ALL widgets; no per-user filtering.
       allowedWidgetIds = widgetManifest
           .map((w) => w['id'] as String)
           .toSet();
 
-      // 2) Layout
       await DashboardLayoutPersistence.loadLayout(
         prefsKey: _layoutPrefsKey,
         onLoaded: (loaded) {
@@ -146,60 +145,73 @@ class DashboardScreenState extends State<DashboardScreen> {
   }
 
   @override
-Widget build(BuildContext context) {
-  if (loading) {
-    return const Center(
-      child: SizedBox(
-        width: 28,
-        height: 28,
-        child: CircularProgressIndicator(color: Colors.cyan),
-      ),
-    );
-  }
+  Widget build(BuildContext context) {
+    if (loading) {
+      return const Center(
+        child: SizedBox(
+          width: 28,
+          height: 28,
+          child: CircularProgressIndicator(color: Colors.cyan),
+        ),
+      );
+    }
 
-  if (error != null) {
-    return Center(
-      child: Text(
-        'Dashboard error: $error',
-        style: const TextStyle(color: Colors.redAccent),
-      ),
-    );
-  }
+    if (error != null) {
+      return Center(
+        child: Text(
+          'Dashboard error: $error',
+          style: const TextStyle(color: Colors.redAccent),
+        ),
+      );
+    }
 
-  return AnimatedBuilder(
-    animation: WallpaperService.instance,
-    builder: (context, _) {
-      return Stack(
-        children: [
-          // Only the grid (and optional debug label) remain.
-          Positioned.fill(
-            child: RepaintBoundary(
-              child: DashboardGrid(
-                grid: grid,
-                items: items,
-                onSnap: _onSnap,
+    final wallpaper = WallpaperService.instance;
+
+    return AnimatedBuilder(
+      animation: wallpaper,
+      builder: (context, _) {
+        // Read glass settings here and pass them into DashboardGrid.
+        final glassBlur = wallpaper.globalGlassBlur;
+        final glassOpacity = wallpaper.globalGlassOpacity;
+
+        return Stack(
+          children: [
+            // Wallpaper is just the background image, no blur/opacity logic here.
+            Positioned.fill(
+              child: DecoratedBox(
+                decoration: wallpaper.backgroundDecoration,
               ),
             ),
-          ),
-          if (kDebugMode)
-            Positioned(
-              left: 12,
-              bottom: 10,
-              child: IgnorePointer(
-                child: Text(
-                  'Widgets: ${items.length} | Allowed: ${allowedWidgetIds.length}',
-                  style: const TextStyle(
-                    color: Colors.white54,
-                    fontSize: 11,
-                    fontFamily: 'monospace',
-                  ),
+            // Foreground widgets; glass is applied inside each widget via GlassContainer.
+            Positioned.fill(
+              child: RepaintBoundary(
+                child: DashboardGrid(
+                  grid: grid,
+                  items: items,
+                  onSnap: _onSnap,
+                  globalBlur: glassBlur,
+                  globalOpacity: glassOpacity,
                 ),
               ),
             ),
-        ],
-      );
-    },
-  );
-}
-
+            if (kDebugMode)
+              Positioned(
+                left: 12,
+                bottom: 10,
+                child: IgnorePointer(
+                  child: Text(
+                    'Widgets: ${items.length} | Allowed: ${allowedWidgetIds.length}',
+                    style: const TextStyle(
+                      color: Colors.white54,
+                      fontSize: 11,
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
 }

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/glass_container.dart';
+import '../../core/wallpaper_service.dart';
 import '../task_tabs_manifest.dart';
 
 class TaskSidePanel extends StatelessWidget {
@@ -11,12 +12,12 @@ class TaskSidePanel extends StatelessWidget {
     required this.selectedTabId,
     required this.onSelect,
   });
-
   @override
   Widget build(BuildContext context) {
+    final wallpaper = WallpaperService.instance;
     return GlassContainer(
-      blur: 16,
-      opacity: 0.10,
+      blur: wallpaper.globalGlassBlur,
+      opacity: wallpaper.globalGlassOpacity * 0.7,
       tint: Colors.white,
       borderRadius: BorderRadius.circular(20),
       padding: const EdgeInsets.symmetric(vertical: 10),
