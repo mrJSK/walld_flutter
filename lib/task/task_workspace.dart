@@ -1,9 +1,7 @@
-// lib/task/task_workspace.dart
 import 'package:flutter/material.dart';
 
 import '../core/wallpaper_service.dart';
 import '../core/glass_container.dart';
-import '../workspace/universal_top_bar.dart';
 import '../workspace/workspace_controller.dart';
 import 'task_tabs_manifest.dart';
 import 'widgets/task_side_panel.dart';
@@ -24,6 +22,8 @@ class _TaskWorkspaceState extends State<TaskWorkspace> {
   Widget build(BuildContext context) {
     final wallpaper = WallpaperService.instance;
 
+    // Only react to global wallpaper/glass changes; the outer shell already
+    // draws the wallpaper and top bar.
     return AnimatedBuilder(
       animation: wallpaper,
       builder: (context, _) {
@@ -32,69 +32,34 @@ class _TaskWorkspaceState extends State<TaskWorkspace> {
           orElse: () => taskTabs.first,
         );
 
-        // Glass settings come only from WallpaperService and are applied
-        // to foreground widgets (side panel + main card), not the wallpaper.
-        //final glassBlur = wallpaper.globalGlassBlur;
+        final glassBlur = wallpaper.globalGlassBlur;
         final glassOpacity = wallpaper.globalGlassOpacity;
-        final glassBlur = 2000.0; 
 
-        return Stack(
-          children: [
-            // Plain wallpaper background (no per-widget blur here).
-            Positioned.fill(
-              child: DecoratedBox(
-                decoration: wallpaper.backgroundDecoration,
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(18, 70, 18, 18),
+          // Top padding to clear the global UniversalTopBar that WorkspaceShell draws.
+          child: Row(
+            children: [
+              SizedBox(
+                width: 240,
+                child: TaskSidePanel(
+                  selectedTabId: tabId,
+                  onSelect: (id) => setState(() => tabId = id),
+                ),
               ),
-            ),
-
-            // Foreground UI with glass widgets.
-            Column(
-              children: [
-                UniversalTopBar(
-                  workspaceController: widget.workspaceController,
-                  onWallpaperSettings: () async {
-                    await wallpaper.pickWallpaper();
-                  },
-                  onGlassSettings: () {
-                    // open your shared glass settings UI here
-                  },
-                  onSignOut: () async {
-                    // your sign-out logic
-                  },
+              const SizedBox(width: 12),
+              Expanded(
+                child: GlassContainer(
+                  blur: glassBlur,
+                  opacity: glassOpacity,
+                  tint: Colors.white,
+                  borderRadius: BorderRadius.circular(22),
+                  padding: const EdgeInsets.all(14),
+                  child: currentTab.builder(context),
                 ),
-                const SizedBox(height: 10),
-
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
-                    child: Row(
-                      children: [
-                        SizedBox(
-                          width: 240,
-                          child: TaskSidePanel(
-                            selectedTabId: tabId,
-                            onSelect: (id) => setState(() => tabId = id),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: GlassContainer(
-                            // Apply blur/opacity only to this card.
-                            blur: glassBlur,
-                            opacity: glassOpacity,
-                            tint: Colors.white,
-                            borderRadius: BorderRadius.circular(22),
-                            padding: const EdgeInsets.all(14),
-                            child: currentTab.builder(context),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ],
+              ),
+            ],
+          ),
         );
       },
     );
