@@ -5,6 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:walld_flutter/core/wallpaper_service.dart';
 
+import '../../workspace/workspace_controller.dart';
+import '../../workspace/workspace_shell.dart';
+
 class LoginWidget extends StatefulWidget {
   const LoginWidget({super.key});
 
@@ -19,39 +22,51 @@ class _LoginWidgetState extends State<LoginWidget> {
   bool _isLoading = false;
   String? _errorMessage;
 
-  Future<void> _signIn() async {
-    if (!(_formKey.currentState?.validate() ?? false)) return;
+  Future<void> signIn() async {
+  if (!(_formKey.currentState?.validate() ?? false)) return;
 
+  setState(() {
+    _isLoading = true;
+    _errorMessage = null;
+  });
+
+  try {
+    final cred = await FirebaseAuth.instance.signInWithEmailAndPassword(
+      email: _emailController.text.trim(),
+      password: _passwordController.text.trim(),
+    );
+
+    debugPrint('[LOGIN] ✅ Signed in as ${cred.user?.uid}');
+
+    if (!mounted) return;
+
+    // Navigate to WorkspaceShell after successful login
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(
+        builder: (context) => WorkspaceShell(
+          workspaceController: WorkspaceController(),
+        ),
+      ),
+    );
+  } on FirebaseAuthException catch (e) {
+    debugPrint('[LOGIN] ❌ error: ${e.code} ${e.message}');
     setState(() {
-      _isLoading = true;
-      _errorMessage = null;
+      _errorMessage = _getErrorMessage(e.code);
     });
-
-    try {
-      final cred = await FirebaseAuth.instance.signInWithEmailAndPassword(
-        email: _emailController.text.trim(),
-        password: _passwordController.text.trim(),
-      );
-      debugPrint('[LOGIN] Signed in as ${cred.user?.uid}');
-      // No navigation here; outer workspace listens to auth.
-    } on FirebaseAuthException catch (e) {
-      debugPrint('[LOGIN] error: ${e.code} ${e.message}');
+  } catch (e) {
+    debugPrint('[LOGIN] ❌ unknown error: $e');
+    setState(() {
+      _errorMessage = 'Unexpected error. Please try again.';
+    });
+  } finally {
+    if (mounted) {
       setState(() {
-        _errorMessage = _getErrorMessage(e.code);
+        _isLoading = false;
       });
-    } catch (e) {
-      debugPrint('[LOGIN] unknown error: $e');
-      setState(() {
-        _errorMessage = 'Unexpected error. Please try again.';
-      });
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
     }
   }
+}
+
 
   String _getErrorMessage(String code) {
     switch (code) {
@@ -292,7 +307,7 @@ class _LoginWidgetState extends State<LoginWidget> {
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton(
-                        onPressed: _isLoading ? null : _signIn,
+                        onPressed: _isLoading ? null : signIn,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.cyanAccent,
                           foregroundColor: Colors.black,

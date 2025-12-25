@@ -106,16 +106,16 @@ class _WallDAppState extends State<WallDApp> {
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF05040A),
       ),
-      // home: _isLoading
-      //     ? LoadingScreen(
-      //         // FIX: only pass onLoadingComplete,
-      //         // because LoadingScreen(onLoadingComplete: ...) is the signature
-      //         onLoadingComplete: _onLoadingComplete,
-      //       )
-      //     : WorkspaceShell(
-      //         workspaceController: _workspaceController,
-      //       ),
-      home: const DeveloperDashboardScreen(),
+      home: _isLoading
+          ? LoadingScreen(
+              // FIX: only pass onLoadingComplete,
+              // because LoadingScreen(onLoadingComplete: ...) is the signature
+              onLoadingComplete: _onLoadingComplete,
+            )
+          : WorkspaceShell(
+              workspaceController: _workspaceController,
+            ),
+      //home: const DeveloperDashboardScreen(),
     );
   }
 }

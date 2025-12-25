@@ -184,6 +184,7 @@ class DefaultFirebaseOptions {
 // File: lib\main.dart
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:walld_flutter/Developer/developer_dashboard_screen.dart';
 import 'package:window_manager/window_manager.dart';
 import 'dart:io' show Platform;
 
@@ -289,15 +290,16 @@ class _WallDAppState extends State<WallDApp> {
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF05040A),
       ),
-      home: _isLoading
-          ? LoadingScreen(
-              // FIX: only pass onLoadingComplete,
-              // because LoadingScreen(onLoadingComplete: ...) is the signature
-              onLoadingComplete: _onLoadingComplete,
-            )
-          : WorkspaceShell(
-              workspaceController: _workspaceController,
-            ),
+      // home: _isLoading
+      //     ? LoadingScreen(
+      //         // FIX: only pass onLoadingComplete,
+      //         // because LoadingScreen(onLoadingComplete: ...) is the signature
+      //         onLoadingComplete: _onLoadingComplete,
+      //       )
+      //     : WorkspaceShell(
+      //         workspaceController: _workspaceController,
+      //       ),
+      home: const DeveloperDashboardScreen(),
     );
   }
 }
@@ -4422,13 +4424,16 @@ class _RolePermissionTabState extends State<RolePermissionTab> {
 ================================================================================
 
 // File: lib\Developer\UserDatabase\userdatabasemodel.dart
+// lib/Screen/Developer/UserDatabase/userdatabasemodel.dart
+
 class CSVUserData {
   String email;
   String password;
   String fullName;
   String nodeId;
   int level;
-  String designation; // New field
+  String designation;
+  String employeeType; // New 7th Column
 
   CSVUserData({
     required this.email,
@@ -4436,12 +4441,14 @@ class CSVUserData {
     required this.fullName,
     required this.nodeId,
     required this.level,
-    required this.designation, // New field
+    required this.designation,
+    required this.employeeType,
   });
 
   factory CSVUserData.fromCSVRow(List<String> row) {
-    if (row.length < 6) { // Now requires 6 columns
-      throw Exception('CSV row must have 6 columns: email, password, fullName, nodeId, level, designation');
+    // Now requires 7 columns
+    if (row.length < 7) {
+      throw Exception('CSV row must have 7 columns: email, password, fullName, nodeId, level, designation, employeeType');
     }
     return CSVUserData(
       email: row[0].trim(),
@@ -4449,7 +4456,8 @@ class CSVUserData {
       fullName: row[2].trim(),
       nodeId: row[3].trim(),
       level: int.tryParse(row[4].trim()) ?? 0,
-      designation: row[5].trim(), // New field
+      designation: row[5].trim(),
+      employeeType: row[6].trim(),
     );
   }
 
@@ -4460,9 +4468,18 @@ class CSVUserData {
       'fullName': fullName,
       'nodeId': nodeId,
       'level': level,
-      'designation': designation, // New field
+      'designation': designation,
+      'employeeType': employeeType,
     };
   }
+}
+
+/// Helper class to store Old vs New values for UI display
+class UserDiff {
+  final String email;
+  final Map<String, Map<String, dynamic>> changes; // Key: fieldName, Value: {'old': ..., 'new': ...}
+
+  UserDiff({required this.email, required this.changes});
 }
 
 class ValidationResult {
@@ -4471,7 +4488,12 @@ class ValidationResult {
   List<String> warnings;
   List<String> validNodeIds;
   List<String> invalidNodeIds;
-  List<CSVUserData> usersToImport; // only unique + not in Firestore
+  
+  // Lists for processing
+  List<CSVUserData> newUsers;
+  List<CSVUserData> usersToUpdate;
+  List<CSVUserData> authConflicts;
+  List<UserDiff> diffs; // Specific changes for the UI
 
   ValidationResult({
     required this.isValid,
@@ -4479,7 +4501,10 @@ class ValidationResult {
     required this.warnings,
     required this.validNodeIds,
     required this.invalidNodeIds,
-    required this.usersToImport,
+    required this.newUsers,
+    required this.usersToUpdate,
+    required this.diffs,
+    required this.authConflicts
   });
 }
 
@@ -4503,7 +4528,8 @@ class UserDatabasePanel extends StatefulWidget {
 }
 
 class _UserDatabasePanelState extends State<UserDatabasePanel> {
-  static const String tenantId = 'default_tenant';
+  // Ensure this matches your Firestore structure exactly
+  static const String tenantId = 'default_tenant'; 
   final UserDatabaseRepository repo = UserDatabaseRepository();
 
   List<Map<String, dynamic>> hierarchyNodes = [];
@@ -4516,6 +4542,7 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
   @override
   void initState() {
     super.initState();
+    print("--- UI DEBUG: Init State - Loading Hierarchy for $tenantId ---");
     loadHierarchy();
   }
 
@@ -4523,12 +4550,14 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
     setState(() => loading = true);
     try {
       final nodes = await repo.loadHierarchyWithUserCounts(tenantId);
+      print("--- UI DEBUG: Hierarchy Loaded - ${nodes.length} nodes found ---");
       setState(() {
         hierarchyNodes = nodes;
         status = 'Loaded ${nodes.length} nodes';
         statusColor = Colors.greenAccent;
       });
     } catch (e) {
+      print("--- UI DEBUG: Hierarchy Error: $e ---");
       setState(() {
         status = 'Error: $e';
         statusColor = Colors.redAccent;
@@ -4539,9 +4568,11 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
   }
 
   Future<void> loadNodeUsers(String nodeId) async {
+    print("--- UI DEBUG: Loading Users for Node ID: $nodeId ---");
     setState(() => loading = true);
     try {
       final users = await repo.loadUsersByNode(tenantId, nodeId);
+      print("--- UI DEBUG: Node Users Loaded - ${users.length} users found ---");
       setState(() {
         selectedNodeId = nodeId;
         nodeUsers = users;
@@ -4549,6 +4580,7 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
         statusColor = Colors.greenAccent;
       });
     } catch (e) {
+      print("--- UI DEBUG: Node User Error: $e ---");
       setState(() {
         status = 'Error: $e';
         statusColor = Colors.redAccent;
@@ -4560,6 +4592,8 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
 
   Future<void> pickAndUploadCSV() async {
     try {
+      print("--- UI DEBUG: STARTING CSV PICK ---");
+      
       // Pick CSV file
       FilePickerResult? result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
@@ -4567,18 +4601,26 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
         withData: true,
       );
 
-      if (result == null || result.files.isEmpty) return;
+      if (result == null || result.files.isEmpty) {
+        print("--- UI DEBUG: File Picker Cancelled ---");
+        return;
+      }
 
       final csvData = result.files.first.bytes;
       if (csvData == null) {
+        print("--- UI DEBUG: Failed to read bytes from file ---");
         showError('Failed to read file');
         return;
       }
 
       // Parse CSV
       final csvString = String.fromCharCodes(csvData);
+      print("--- UI DEBUG: CSV Raw String Length: ${csvString.length} ---");
+      
       final List<List<dynamic>> csvTable =
           const CsvToListConverter().convert(csvString);
+
+      print("--- UI DEBUG: CSV Parsed Rows: ${csvTable.length} ---");
 
       if (csvTable.isEmpty || csvTable.length < 2) {
         showError('CSV file is empty or has no data rows');
@@ -4590,11 +4632,19 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
       for (int i = 1; i < csvTable.length; i++) {
         try {
           final row = csvTable[i].map((e) => e.toString()).toList();
+          if (row.every((e) => e.trim().isEmpty)) continue; // Skip empty lines
           users.add(CSVUserData.fromCSVRow(row));
         } catch (e) {
+          print("--- UI DEBUG: Error parsing row ${i + 1}: $e ---");
           showError('Error parsing row ${i + 1}: $e');
           return;
         }
+      }
+
+      print("--- UI DEBUG: Successfully parsed ${users.length} User Objects ---");
+      if (users.isNotEmpty) {
+        print("--- UI DEBUG: Sample User 1 Email: ${users.first.email} ---");
+        print("--- UI DEBUG: Sample User 1 Node: ${users.first.nodeId} ---");
       }
 
       if (users.isEmpty) {
@@ -4608,26 +4658,33 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
         status = 'Validating ${users.length} users...';
       });
 
+      print("--- UI DEBUG: Calling Repo validateCSVData ---");
       final validation = await repo.validateCSVData(tenantId, users);
+
+      print("--- UI DEBUG: VALIDATION RETURNED ---");
+      print("   > IsValid: ${validation.isValid}");
+      print("   > New Users: ${validation.newUsers.length}");
+      print("   > Updates: ${validation.usersToUpdate.length}");
+      print("   > Diffs Found: ${validation.diffs.length}");
+      print("   > Errors: ${validation.errors.length}");
 
       setState(() => loading = false);
 
       if (!validation.isValid) {
-        showValidationErrorDialog(validation, users);
+        showValidationErrorDialog(validation);
         return;
       }
 
-      // Show confirmation dialog
-      showConfirmationDialog(users, validation);
+      // Show the Diff Review Dialog instead of simple confirmation
+      showDiffReviewDialog(validation);
+
     } catch (e) {
+      print("--- UI DEBUG: FATAL EXCEPTION IN PICKER: $e ---");
       showError('Failed to process CSV: $e');
     }
   }
 
-  void showValidationErrorDialog(
-    ValidationResult validation,
-    List<CSVUserData> users,
-  ) {
+  void showValidationErrorDialog(ValidationResult validation) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -4681,7 +4738,7 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
                     ),
                   ),
                   const SizedBox(height: 8),
-                  ...validation.warnings.map(
+                  ...validation.warnings.take(5).map(
                     (warning) => Padding(
                       padding: const EdgeInsets.only(bottom: 8.0),
                       child: Row(
@@ -4699,6 +4756,14 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
                       ),
                     ),
                   ),
+                  if (validation.warnings.length > 5)
+                     Padding(
+                       padding: const EdgeInsets.only(left: 20),
+                       child: Text(
+                         '...and ${validation.warnings.length - 5} more warnings',
+                         style: const TextStyle(color: Colors.white30, fontStyle: FontStyle.italic),
+                       ),
+                     )
                 ],
               ],
             ),
@@ -4714,130 +4779,17 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
     );
   }
 
-  void showConfirmationDialog(
-    List<CSVUserData> users,
-    ValidationResult validation,
-  ) {
+  void showDiffReviewDialog(ValidationResult validation) {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF111118),
-        title: const Row(
-          children: [
-            Icon(Icons.check_circle_outline, color: Colors.greenAccent),
-            SizedBox(width: 12),
-            Text('Format Correct!', style: TextStyle(color: Colors.white)),
-          ],
-        ),
-        content: SizedBox(
-          width: 500,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1A1A28),
-                  borderRadius: BorderRadius.circular(8),
-                  border:
-                      Border.all(color: Colors.greenAccent.withOpacity(0.3)),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '✓ Total Users: ${users.length}',
-                      style:
-                          const TextStyle(color: Colors.white, fontSize: 14),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '✓ Valid Nodes: ${validation.validNodeIds.length}',
-                      style: const TextStyle(color: Colors.greenAccent),
-                    ),
-                    if (validation.warnings.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        '⚠ Warnings: ${validation.warnings.length}',
-                        style: const TextStyle(color: Colors.orangeAccent),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.orange.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.orange.withOpacity(0.5)),
-                ),
-                child: const Row(
-                  children: [
-                    Icon(Icons.warning_amber_rounded,
-                        color: Colors.orange, size: 20),
-                    SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'This will create Firebase Auth accounts and place users in their nodes.',
-                        style: TextStyle(color: Colors.white70, fontSize: 12),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              if (validation.warnings.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                const Text(
-                  'Warnings:',
-                  style: TextStyle(
-                    color: Colors.orangeAccent,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                ...validation.warnings.take(3).map(
-                      (w) => Padding(
-                        padding: const EdgeInsets.only(bottom: 4.0),
-                        child: Text(
-                          '• $w',
-                          style: const TextStyle(
-                            color: Colors.white70,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ),
-                    ),
-              ],
-            ],
-          ),
-        ),
-        actions: [
-          OutlinedButton.icon(
-            onPressed: () => Navigator.pop(context),
-            icon: const Icon(Icons.cancel, color: Colors.redAccent),
-            label: const Text('Cancel',
-                style: TextStyle(color: Colors.redAccent)),
-            style: OutlinedButton.styleFrom(
-              side: const BorderSide(color: Colors.redAccent),
-            ),
-          ),
-          FilledButton.icon(
-            onPressed: () {
-              Navigator.pop(context);
-              importUsers(users);
-            },
-            icon: const Icon(Icons.upload, color: Colors.black),
-            label: const Text('Import to Database'),
-            style: FilledButton.styleFrom(
-              backgroundColor: Colors.greenAccent,
-              foregroundColor: Colors.black,
-            ),
-          ),
-        ],
+      builder: (context) => DiffReviewDialog(
+        validation: validation,
+        onConfirm: () {
+          Navigator.pop(context);
+          // Only import NEW and UPDATES. Skip Conflicts.
+          importUsers([...validation.newUsers, ...validation.usersToUpdate]);
+        },
       ),
     );
   }
@@ -4851,6 +4803,7 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
         users: users,
         repo: repo,
         onComplete: () {
+          print("--- UI DEBUG: Import Completed, Refreshing Data ---");
           loadHierarchy();
           if (selectedNodeId != null) {
             loadNodeUsers(selectedNodeId!);
@@ -4896,7 +4849,7 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
                   ),
                   SizedBox(height: 8),
                   Text(
-                    'Import users via CSV and view organization hierarchy',
+                    'Import users (New or Update) via CSV',
                     style: TextStyle(color: Colors.grey),
                   ),
                 ],
@@ -5145,7 +5098,7 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
                                                         .toString()
                                                         .isNotEmpty)
                                                   Text(
-                                                    user['designation'],
+                                                    '${user['designation']} • ${user['employeeType'] ?? 'N/A'}',
                                                     style:
                                                         const TextStyle(
                                                       color:
@@ -5204,7 +5157,310 @@ class _UserDatabasePanelState extends State<UserDatabasePanel> {
   }
 }
 
-/// Import progress dialog (unchanged from your file)
+// -----------------------------------------------------------------------------
+// NEW WIDGETS START HERE
+// -----------------------------------------------------------------------------
+
+class DiffReviewDialog extends StatefulWidget {
+  final ValidationResult validation;
+  final VoidCallback onConfirm;
+
+  const DiffReviewDialog({
+    super.key,
+    required this.validation,
+    required this.onConfirm,
+  });
+
+  @override
+  State<DiffReviewDialog> createState() => _DiffReviewDialogState();
+}
+
+class _DiffReviewDialogState extends State<DiffReviewDialog> {
+  String searchQuery = "";
+
+  @override
+  Widget build(BuildContext context) {
+    // 1. Filter Lists based on Search Query
+    final filteredDiffs = widget.validation.diffs
+        .where((d) => d.email.toLowerCase().contains(searchQuery.toLowerCase()))
+        .toList();
+
+    final filteredConflicts = widget.validation.authConflicts
+        .where((u) => u.email.toLowerCase().contains(searchQuery.toLowerCase()))
+        .toList();
+
+    final filteredNewUsers = widget.validation.newUsers
+        .where((u) => u.email.toLowerCase().contains(searchQuery.toLowerCase()))
+        .toList();
+
+    return AlertDialog(
+      backgroundColor: const Color(0xFF111118),
+      title: const Row(
+        children: [
+          Icon(Icons.rate_review, color: Colors.cyan),
+          SizedBox(width: 12),
+          Text('Review Import Data', style: TextStyle(color: Colors.white)),
+        ],
+      ),
+      content: SizedBox(
+        width: 600,
+        height: 500,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // 2. Summary Stats Badge Row
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  _statBadge(
+                      'Total',
+                      widget.validation.newUsers.length +
+                          widget.validation.usersToUpdate.length +
+                          widget.validation.authConflicts.length,
+                      Colors.white),
+                  const SizedBox(width: 8),
+                  _statBadge('New', widget.validation.newUsers.length,
+                      Colors.greenAccent),
+                  const SizedBox(width: 8),
+                  _statBadge('Updates', widget.validation.usersToUpdate.length,
+                      Colors.orangeAccent),
+                  const SizedBox(width: 8),
+                  _statBadge('Conflicts', widget.validation.authConflicts.length,
+                      Colors.redAccent),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // 3. Search Bar
+            TextField(
+              style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(
+                filled: true,
+                fillColor: Colors.white.withOpacity(0.05),
+                hintText: 'Search by email...',
+                hintStyle: const TextStyle(color: Colors.white30),
+                prefixIcon: const Icon(Icons.search, color: Colors.cyan),
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide.none),
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              ),
+              onChanged: (val) => setState(() => searchQuery = val),
+            ),
+            const SizedBox(height: 16),
+
+            // 4. Scrollable Content List
+            Expanded(
+              child: ListView(
+                children: [
+                  // --- SECTION: CONFLICTS (Red) ---
+                  if (filteredConflicts.isNotEmpty) ...[
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 8.0),
+                      child: Text("⚠ Auth Conflicts (Skipped)",
+                          style: TextStyle(
+                              color: Colors.redAccent,
+                              fontWeight: FontWeight.bold)),
+                    ),
+                    ...filteredConflicts.map((u) => Container(
+                          margin: const EdgeInsets.only(bottom: 4),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 8),
+                          decoration: BoxDecoration(
+                              color: Colors.redAccent.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(
+                                  color: Colors.redAccent.withOpacity(0.3))),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.warning_amber_rounded,
+                                  color: Colors.redAccent, size: 16),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                  child: Text(u.email,
+                                      style: const TextStyle(
+                                          color: Colors.white70))),
+                              const Text("Exists in Auth only",
+                                  style: TextStyle(
+                                      color: Colors.white30, fontSize: 10)),
+                            ],
+                          ),
+                        )),
+                    const SizedBox(height: 16),
+                  ],
+
+                  // --- SECTION: UPDATES (Orange) ---
+                  if (filteredDiffs.isNotEmpty) ...[
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 8.0),
+                      child: Text("Updates",
+                          style: TextStyle(
+                              color: Colors.orangeAccent,
+                              fontWeight: FontWeight.bold)),
+                    ),
+                    ...filteredDiffs.map((diff) => Container(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.05),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                                color: Colors.orangeAccent.withOpacity(0.3)),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  const Icon(Icons.edit,
+                                      color: Colors.orangeAccent, size: 14),
+                                  const SizedBox(width: 8),
+                                  Text(diff.email,
+                                      style: const TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.bold)),
+                                ],
+                              ),
+                              const Divider(color: Colors.white10),
+                              ...diff.changes.entries.map((e) => Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        vertical: 2.0),
+                                    child: Row(
+                                      children: [
+                                        Text('${e.key}: ',
+                                            style: const TextStyle(
+                                                color: Colors.white54,
+                                                fontSize: 12)),
+                                        Text('${e.value['old']}',
+                                            style: const TextStyle(
+                                                color: Colors.redAccent,
+                                                decoration:
+                                                    TextDecoration.lineThrough,
+                                                fontSize: 12)),
+                                        const Padding(
+                                          padding: EdgeInsets.symmetric(
+                                              horizontal: 4),
+                                          child: Icon(Icons.arrow_right_alt,
+                                              color: Colors.white30, size: 14),
+                                        ),
+                                        Text('${e.value['new']}',
+                                            style: const TextStyle(
+                                                color: Colors.greenAccent,
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 12)),
+                                      ],
+                                    ),
+                                  )),
+                            ],
+                          ),
+                        )),
+                    const SizedBox(height: 16),
+                  ],
+
+                  // --- SECTION: NEW USERS (Green) ---
+                  if (filteredNewUsers.isNotEmpty) ...[
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 8.0),
+                      child: Text("New Users",
+                          style: TextStyle(
+                              color: Colors.greenAccent,
+                              fontWeight: FontWeight.bold)),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.greenAccent.withOpacity(0.05),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                            color: Colors.greenAccent.withOpacity(0.2)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (searchQuery.isEmpty)
+                            Padding(
+                              padding: const EdgeInsets.all(8.0),
+                              child: Text(
+                                  "Ready to create ${filteredNewUsers.length} new users.",
+                                  style: const TextStyle(color: Colors.white70)),
+                            ),
+                          // List individual new users
+                          ...filteredNewUsers.map((u) => Padding(
+                                padding: const EdgeInsets.symmetric(
+                                    vertical: 4, horizontal: 8),
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.add_circle_outline,
+                                        color: Colors.greenAccent, size: 14),
+                                    const SizedBox(width: 8),
+                                    Text(u.email,
+                                        style: const TextStyle(
+                                            color: Colors.white60,
+                                            fontSize: 12)),
+                                  ],
+                                ),
+                              )),
+                        ],
+                      ),
+                    ),
+                  ],
+
+                  // Empty State
+                  if (filteredConflicts.isEmpty &&
+                      filteredDiffs.isEmpty &&
+                      filteredNewUsers.isEmpty)
+                    const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(32.0),
+                        child: Text("No matches found.",
+                            style: TextStyle(color: Colors.white30)),
+                      ),
+                    )
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
+        ),
+        FilledButton.icon(
+          onPressed: widget.onConfirm,
+          icon: const Icon(Icons.check, size: 18),
+          label: const Text('Confirm & Sync'),
+          style: FilledButton.styleFrom(
+              backgroundColor: Colors.cyan, foregroundColor: Colors.black),
+        ),
+      ],
+    );
+  }
+
+  Widget _statBadge(String label, int count, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+          color: color.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: color.withOpacity(0.3))),
+      child: Row(
+        children: [
+          Icon(Icons.circle, size: 8, color: color),
+          const SizedBox(width: 8),
+          Text('$label: $count',
+              style: TextStyle(
+                  color: color, fontWeight: FontWeight.bold, fontSize: 12)),
+        ],
+      ),
+    );
+  }
+}
+
 class ImportProgressDialog extends StatefulWidget {
   final String tenantId;
   final List<CSVUserData> users;
@@ -5396,140 +5652,119 @@ import 'userdatabasemodel.dart';
 
 class UserDatabaseRepository {
   final FirebaseFirestore db;
+  final FirebaseAuth auth = FirebaseAuth.instance;
   static const int RATE_LIMIT_DELAY_MS = 200; // Delay between operations
 
   UserDatabaseRepository({FirebaseFirestore? db})
       : db = db ?? FirebaseFirestore.instance;
 
-  /// Validate CSV and prepare final usersToImport list
+  /// Validate CSV and separate New Users from Updates with Diff logic
   Future<ValidationResult> validateCSVData(
     String tenantId,
     List<CSVUserData> users,
   ) async {
+    print("--- DEBUG: STARTING VALIDATION ---");
+    
     List<String> errors = [];
     List<String> warnings = [];
     Set<String> validNodeIds = {};
     Set<String> invalidNodeIds = {};
 
-    // ---------- LOAD NODES ----------
-    final nodesSnap = await db
-        .collection('tenants/$tenantId/organizations')
-        .doc('hierarchy')
-        .collection('nodes')
-        .get();
+    List<CSVUserData> newUsers = [];
+    List<CSVUserData> usersToUpdate = [];
+    List<CSVUserData> authConflicts = [];
+    List<UserDiff> diffs = [];
 
+    // 1. ---------- LOAD NODES ----------
+    final nodesPath = 'tenants/$tenantId/organizations/hierarchy/nodes';
+    final nodesSnap = await db.collection(nodesPath).get();
     final existingNodeIds = nodesSnap.docs.map((doc) => doc.id).toSet();
 
-    // ---------- DEDUP INSIDE CSV ----------
-    final emailSet = <String>{};
-    final uniqueUsers = <CSVUserData>[];
+    // 2. ---------- LOAD EXISTING USERS (FETCH ALL STRATEGY) ----------
+    Map<String, Map<String, dynamic>> existingFirestoreUsers = {};
+    final userPath = 'tenants/$tenantId/users';
+    
+    print("DEBUG: Fetching ALL users to normalize email case...");
+    final allUsersSnap = await db.collection(userPath).get();
+
+    for (var doc in allUsersSnap.docs) {
+      final data = doc.data();
+      dynamic emailRaw = data['profiledata'] != null 
+          ? (data['profiledata'] as Map)['email'] 
+          : null;
+
+      if (emailRaw != null) {
+        String emailKey = emailRaw.toString().trim().toLowerCase();
+        existingFirestoreUsers[emailKey] = {'id': doc.id, ...data};
+      }
+    }
+    
+    // 3. ---------- PROCESS CSV ROWS ----------
+    Set<String> processedEmails = {};
 
     for (int i = 0; i < users.length; i++) {
       final user = users[i];
       final rowNum = i + 2;
       final emailLower = user.email.trim().toLowerCase();
 
-      // Email format
       if (!RegExp(r'^[^@]+@[^@]+\.[^@]+').hasMatch(user.email)) {
-        errors.add('Row $rowNum: Invalid email format - ${user.email}');
+        errors.add('Row $rowNum: Invalid email - ${user.email}');
         continue;
       }
 
-      // Duplicate in CSV
-      if (emailSet.contains(emailLower)) {
-        warnings.add(
-          'Row $rowNum: Duplicate email in CSV skipped - ${user.email}',
-        );
+      if (processedEmails.contains(emailLower)) {
+        warnings.add('Row $rowNum: Duplicate skipped - ${user.email}');
         continue;
       }
-      emailSet.add(emailLower);
-      uniqueUsers.add(user);
+      processedEmails.add(emailLower);
 
-      // Password
-      if (user.password.length < 8) {
-        errors.add(
-          'Row $rowNum: Password must be at least 8 characters',
-        );
-      }
-
-      // Full name
-      if (user.fullName.isEmpty || user.fullName.length < 3) {
-        errors.add(
-          'Row $rowNum: Full name must be at least 3 characters',
-        );
-      }
-
-      // Node ID
-      if (user.nodeId.isEmpty) {
-        errors.add('Row $rowNum: Node ID is required');
-      } else if (existingNodeIds.contains(user.nodeId)) {
-        validNodeIds.add(user.nodeId);
-      } else {
+      if (user.nodeId.isEmpty) errors.add('Row $rowNum: Node ID required');
+      else if (existingNodeIds.contains(user.nodeId)) validNodeIds.add(user.nodeId);
+      else {
         invalidNodeIds.add(user.nodeId);
-        errors.add(
-          'Row $rowNum: Node ID "${user.nodeId}" does not exist in organization',
-        );
+        errors.add('Row $rowNum: Invalid Node ID "${user.nodeId}"');
       }
 
-      // Level
-      if (user.level < 0) {
-        warnings.add(
-          'Row $rowNum: Invalid level value - ${user.level}',
-        );
-      }
-    }
+      if (errors.any((e) => e.startsWith('Row $rowNum'))) continue;
 
-    if (errors.isNotEmpty) {
-      return ValidationResult(
-        isValid: false,
-        errors: errors,
-        warnings: warnings,
-        validNodeIds: validNodeIds.toList(),
-        invalidNodeIds: invalidNodeIds.toList(),
-        usersToImport: const [],
-      );
-    }
+      // 4. ---------- COMPARE ----------
+      if (existingFirestoreUsers.containsKey(emailLower)) {
+        // UPDATE CASE
+        final existing = existingFirestoreUsers[emailLower]!;
+        Map<String, Map<String, dynamic>> fieldChanges = {};
 
-    // ---------- SKIP EMAILS THAT ALREADY EXIST IN FIRESTORE ----------
-    final existingEmails = <String>{};
-    final emailList =
-        uniqueUsers.map((u) => u.email.trim().toLowerCase()).toList();
+        void checkChange(String field, dynamic newVal, dynamic oldVal) {
+          if (newVal.toString() != oldVal.toString()) {
+            fieldChanges[field] = {'old': oldVal, 'new': newVal};
+          }
+        }
 
-    const int chunkSize = 10; // Firestore whereIn limit
-    for (int i = 0; i < emailList.length; i += chunkSize) {
-      final chunk = emailList.sublist(
-        i,
-        i + chunkSize > emailList.length ? emailList.length : i + chunkSize,
-      );
+        checkChange('fullName', user.fullName, existing['profiledata']?['fullName'] ?? '');
+        checkChange('designation', user.designation, existing['designation'] ?? '');
+        checkChange('employeeType', user.employeeType, existing['employeeType'] ?? ''); // New Field
+        checkChange('nodeId', user.nodeId, existing['nodeId'] ?? '');
+        checkChange('level', user.level, existing['level'] ?? 0);
 
-      final snap = await db
-          .collection('tenants/$tenantId/users')
-          .where('profiledata.email', whereIn: chunk)
-          .get();
-
-      for (final doc in snap.docs) {
-        final email =
-            (doc.data()['profiledata']?['email'] as String?)?.toLowerCase();
-        if (email != null) {
-          existingEmails.add(email);
+        if (fieldChanges.isNotEmpty) {
+          usersToUpdate.add(user);
+          diffs.add(UserDiff(email: user.email, changes: fieldChanges));
+        } else {
+          warnings.add('${user.email} is up to date.');
+        }
+      } else {
+        // NEW CASE
+        try {
+          final methods = await auth.fetchSignInMethodsForEmail(user.email);
+          if (methods.isNotEmpty) {
+            authConflicts.add(user);
+            warnings.add('User ${user.email} exists in Auth but not DB.');
+          } else {
+            newUsers.add(user);
+          }
+        } catch (e) {
+          newUsers.add(user); 
         }
       }
-    }
-
-    final usersToImport = <CSVUserData>[];
-    for (final u in uniqueUsers) {
-      final emailLower = u.email.trim().toLowerCase();
-      if (existingEmails.contains(emailLower)) {
-        warnings.add(
-          'Email already exists in Firestore users, will be skipped: ${u.email}',
-        );
-      } else {
-        usersToImport.add(u);
-      }
-    }
-
-    if (usersToImport.isEmpty) {
-      warnings.add('No new users to import after duplicate checks.');
     }
 
     return ValidationResult(
@@ -5538,11 +5773,15 @@ class UserDatabaseRepository {
       warnings: warnings,
       validNodeIds: validNodeIds.toList(),
       invalidNodeIds: invalidNodeIds.toList(),
-      usersToImport: usersToImport,
+      newUsers: newUsers,
+      usersToUpdate: usersToUpdate,
+      authConflicts: authConflicts,
+      diffs: diffs,
     );
   }
 
-  /// IMPORT USERS – single collection: tenants/{tenantId}/users
+  /// IMPORT OR UPDATE USERS 
+  /// FIXED: Now uses pre-fetched Map to ensure Case-Insensitive matching works
   Future<Map<String, dynamic>> importUsers(
     String tenantId,
     List<CSVUserData> users,
@@ -5551,65 +5790,106 @@ class UserDatabaseRepository {
     int successCount = 0;
     int failureCount = 0;
     List<String> failedUsers = [];
-    List<String> skippedExistingEmails = [];
 
+    // ---------------------------------------------------------
+    // STEP 1: PRE-FETCH EXISTING USERS TO MAP (THE FIX)
+    // ---------------------------------------------------------
+    // We must build the same map as validation to find the Doc IDs
+    // regardless of whether the email is stored as "Sanjay" or "sanjay".
+    Map<String, String> emailToDocIdMap = {};
+    
+    try {
+      final userPath = 'tenants/$tenantId/users';
+      final allUsersSnap = await db.collection(userPath).get();
+      
+      for (var doc in allUsersSnap.docs) {
+        final data = doc.data();
+        dynamic emailRaw = data['profiledata'] != null 
+            ? (data['profiledata'] as Map)['email'] 
+            : null;
+        if (emailRaw != null) {
+          // KEY = Lowercase Email, VALUE = Document ID
+          emailToDocIdMap[emailRaw.toString().trim().toLowerCase()] = doc.id;
+        }
+      }
+      print("DEBUG: Import Loop - Mapped ${emailToDocIdMap.length} existing users for lookup.");
+    } catch (e) {
+      print("DEBUG: Error mapping existing users: $e");
+    }
+
+    // ---------------------------------------------------------
+    // STEP 2: PROCESS USERS
+    // ---------------------------------------------------------
     for (int i = 0; i < users.length; i++) {
       final user = users[i];
-      progressCallback(i + 1, users.length, 'Processing ${user.email}...');
+      final emailLower = user.email.trim().toLowerCase();
+      
+      progressCallback(i + 1, users.length, 'Syncing ${user.email}...');
+
+      if (i > 0 && i % 10 == 0) await Future.delayed(const Duration(milliseconds: RATE_LIMIT_DELAY_MS));
 
       try {
-        // Simple rate limit
-        if (i > 0 && i % 10 == 0) {
-          await Future.delayed(
-            const Duration(milliseconds: RATE_LIMIT_DELAY_MS),
-          );
+        // CHECK MAP INSTEAD OF QUERYING DB AGAIN
+        if (emailToDocIdMap.containsKey(emailLower)) {
+          // ============================================
+          // UPDATE EXISTING USER
+          // ============================================
+          final docId = emailToDocIdMap[emailLower]!;
+          
+          print("DEBUG: Updating existing user $docId (${user.email})");
+          
+          await db.collection('tenants/$tenantId/users').doc(docId).update({
+            'profiledata.fullName': user.fullName,
+            'designation': user.designation,
+            'employeeType': user.employeeType, // This will now correctly update
+            'nodeId': user.nodeId,
+            'level': user.level,
+            // DO NOT update status or password here
+          });
+          
+          successCount++;
+        } else {
+          // ============================================
+          // CREATE NEW USER
+          // ============================================
+          print("DEBUG: Creating NEW user (${user.email})");
+          
+          UserCredential? credential;
+          try {
+            credential = await FirebaseAuth.instance.createUserWithEmailAndPassword(
+              email: user.email,
+              password: user.password,
+            );
+
+            final userId = credential.user!.uid;
+            await db.collection('tenants/$tenantId/users').doc(userId).set({
+              'profiledata': {
+                'email': user.email,
+                'fullName': user.fullName,
+              },
+              'designation': user.designation,
+              'employeeType': user.employeeType, // New Field
+              'status': 'active',
+              'createdat': FieldValue.serverTimestamp(),
+              'nodeId': user.nodeId,
+              'level': user.level,
+              'importedFromCSV': true,
+            });
+            successCount++;
+
+          } on FirebaseAuthException catch (e) {
+            if (e.code == 'email-already-in-use') {
+              failureCount++;
+              failedUsers.add('${user.email}: Exists in Auth but missing in DB (Conflict)');
+            } else {
+              rethrow;
+            }
+          }
         }
-
-        // Skip if already registered in Auth
-        final methods = await FirebaseAuth.instance
-            .fetchSignInMethodsForEmail(user.email.trim());
-        if (methods.isNotEmpty) {
-          skippedExistingEmails.add(user.email);
-          continue;
-        }
-
-        // Create Firebase Auth user
-        final userCredential =
-            await FirebaseAuth.instance.createUserWithEmailAndPassword(
-          email: user.email,
-          password: user.password,
-        );
-
-        final userId = userCredential.user!.uid;
-
-        // SINGLE SOURCE OF TRUTH: tenants/{tenantId}/users/{userId}
-        await db
-            .collection('tenants/$tenantId/users')
-            .doc(userId)
-            .set({
-          'profiledata': {
-            'email': user.email,
-            'fullName': user.fullName,
-          },
-          'designation': user.designation, // top-level
-          'status': 'active',
-          'createdat': FieldValue.serverTimestamp(),
-          'nodeId': user.nodeId,          // top-level
-          'level': user.level,            // top-level
-          'importedFromCSV': true,
-        }, SetOptions(merge: true));
-
-        successCount++;
-      } on FirebaseAuthException catch (e) {
-        if (e.code == 'email-already-in-use') {
-          skippedExistingEmails.add(user.email);
-          continue;
-        }
-        failureCount++;
-        failedUsers.add('${user.email}: ${e.code} - ${e.message}');
       } catch (e) {
         failureCount++;
         failedUsers.add('${user.email}: $e');
+        print("DEBUG: Error processing ${user.email}: $e");
       }
     }
 
@@ -5617,7 +5897,6 @@ class UserDatabaseRepository {
       'success': successCount,
       'failed': failureCount,
       'failedUsers': failedUsers,
-      'skippedExistingEmails': skippedExistingEmails,
     };
   }
 
@@ -7020,6 +7299,7 @@ class CompleteTaskWidget extends StatelessWidget {
 // File: lib\dynamic_screen\widgets\create_task_widget.dart
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:walld_flutter/core/wallpaper_service.dart';
 
 /// Simple non-interactive card widget (no create-task logic).
 class CreateTaskWidget extends StatelessWidget {
@@ -7027,79 +7307,87 @@ class CreateTaskWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final maxW = constraints.maxWidth;
-        final maxH = constraints.maxHeight;
-        final shortest = math.min(maxW, maxH);
+    return AnimatedBuilder(
+      animation: WallpaperService.instance, // same as CompleteTaskWidget [file:4]
+      builder: (context, _) {
+        final ws = WallpaperService.instance; // [file:4]
+        // Same glass color as CompleteTaskWidget
+        final Color bgColor = const Color(0xFF11111C)
+            .withOpacity((ws.globalGlassOpacity * 3).clamp(0.05, 0.45)); // [file:4]
 
-        final double unit = (shortest / 8.0).clamp(10.0, 48.0);
-        final double radius = (unit * 0.85).clamp(12.0, 42.0);
-        final double margin = (unit * 0.25).clamp(4.0, 12.0);
-        final EdgeInsets padding =
-            EdgeInsets.all((unit * 0.75).clamp(8.0, 28.0));
-        final double titleFont = (unit * 1.05).clamp(12.0, 26.0);
-        final double bodyFont = (unit * 0.70).clamp(10.0, 18.0);
-        final double smallFont = (unit * 0.60).clamp(9.0, 16.0);
-        final double gap = (unit * 0.60).clamp(6.0, 18.0);
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final maxW = constraints.maxWidth;
+            final maxH = constraints.maxHeight;
+            final shortest = math.min(maxW, maxH); // [file:3]
+            final double unit = (shortest / 8.0).clamp(10.0, 48.0);
+            final double radius = (unit * 0.85).clamp(12.0, 42.0);
+            final double margin = (unit * 0.25).clamp(4.0, 12.0);
+            final EdgeInsets padding =
+                EdgeInsets.all((unit * 0.75).clamp(8.0, 28.0));
+            final double titleFont = (unit * 1.05).clamp(12.0, 26.0);
+            final double bodyFont = (unit * 0.70).clamp(10.0, 18.0);
+            final double smallFont = (unit * 0.60).clamp(9.0, 16.0);
+            final double gap = (unit * 0.60).clamp(6.0, 18.0); // [file:3]
 
-        return Container(
-          margin: EdgeInsets.all(margin),
-          decoration: BoxDecoration(
-            // CHANGED background color (more neutral glass-like)
-            color: const Color(0xCC0B0F1C),
-            borderRadius: BorderRadius.circular(radius),
-            border: Border.all(color: const Color(0x33FFFFFF)),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x44000000),
-                blurRadius: 18,
-                offset: Offset(0, 10),
-              ),
-            ],
-          ),
-          padding: padding,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Task Panel',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: titleFont,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              SizedBox(height: gap),
-              Expanded(
-                child: Text(
-                  'This area can be used to show summary or status of tasks. '
-                  'Creation flow has been removed.',
-                  maxLines: 4,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: Colors.white70,
-                    fontSize: bodyFont,
-                    height: 1.2,
+            return Container(
+              margin: EdgeInsets.all(margin),
+              decoration: BoxDecoration(
+                color: bgColor,
+                borderRadius: BorderRadius.circular(radius),
+                border: Border.all(color: const Color(0x22FFFFFF)),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x33000000),
+                    blurRadius: 18,
+                    offset: Offset(0, 10),
                   ),
-                ),
+                ],
+              ), // same decoration as CompleteTaskWidget except min differences [file:4]
+              padding: padding,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Task Panel',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: titleFont,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ), // [file:3]
+                  SizedBox(height: gap),
+                  Expanded(
+                    child: Text(
+                      'This area can be used to show summary or status of tasks. '
+                      'Creation flow has been removed.',
+                      maxLines: 4,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: bodyFont,
+                        height: 1.2,
+                      ),
+                    ),
+                  ), // [file:3]
+                  Align(
+                    alignment: Alignment.bottomRight,
+                    child: Text(
+                      'Static widget',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.cyanAccent.withOpacity(0.85),
+                        fontSize: smallFont,
+                      ),
+                    ),
+                  ), // [file:3]
+                ],
               ),
-              Align(
-                alignment: Alignment.bottomRight,
-                child: Text(
-                  'Static widget',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: Colors.cyanAccent.withOpacity(0.85),
-                    fontSize: smallFont,
-                  ),
-                ),
-              ),
-            ],
-          ),
+            );
+          },
         );
       },
     );
@@ -7110,10 +7398,11 @@ class CreateTaskWidget extends StatelessWidget {
 
 // File: lib\dynamic_screen\widgets\login_widget.dart
 // lib/dynamic_screen/widgets/login_widget.dart
-import 'dart:math' as math;
 
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:walld_flutter/core/wallpaper_service.dart';
 
 class LoginWidget extends StatefulWidget {
   const LoginWidget({super.key});
@@ -7126,7 +7415,6 @@ class _LoginWidgetState extends State<LoginWidget> {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
-
   bool _isLoading = false;
   String? _errorMessage;
 
@@ -7190,260 +7478,264 @@ class _LoginWidgetState extends State<LoginWidget> {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final maxW = constraints.maxWidth;
-        final maxH = constraints.maxHeight;
-        final shortest = math.min(maxW, maxH);
+    return AnimatedBuilder(
+      animation: WallpaperService.instance,
+      builder: (context, _) {
+        final ws = WallpaperService.instance;
+        // Glass color derived from global glass opacity [file:6]
+        final Color bgColor = const Color(0xFF11111C)
+            .withOpacity((ws.globalGlassOpacity * 3).clamp(0.05, 0.45));
 
-        // When the box is short, compress everything a bit
-        final double compress =
-            shortest < 360 ? 0.85 : shortest < 420 ? 0.92 : 1.0;
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final maxW = constraints.maxWidth;
+            final maxH = constraints.maxHeight;
+            final shortest = math.min(maxW, maxH);
+            // When the box is short, compress everything a bit
+            final double compress =
+                shortest < 360 ? 0.85 : shortest < 420 ? 0.92 : 1.0;
+            final double unit =
+                (shortest / 11.0).clamp(10.0, 32.0) * compress;
+            final double radius = (unit * 0.9).clamp(12.0, 24.0);
+            final double margin = (unit * 0.22).clamp(6.0, 14.0);
+            final EdgeInsets padding =
+                EdgeInsets.all((unit * 0.65 * compress).clamp(8.0, 20.0));
+            final double titleFont = (unit * 1.1).clamp(18.0, 26.0);
+            final double subtitleFont = (unit * 0.72).clamp(11.0, 16.0);
+            final double fieldFont = (unit * 0.80).clamp(12.0, 18.0);
+            final double smallFont = (unit * 0.70).clamp(10.0, 14.0);
+            final double gap = (unit * 0.40 * compress).clamp(4.0, 12.0);
+            final double fieldVerticalPad =
+                (unit * 0.30 * compress).clamp(4.0, 8.0);
+            final double fieldHorizontalPad =
+                (unit * 0.75).clamp(10.0, 18.0);
+            final double fieldRadius = (unit * 0.70).clamp(10.0, 20.0);
 
-        final double unit =
-            (shortest / 11.0).clamp(10.0, 32.0) * compress;
-        final double radius = (unit * 0.9).clamp(12.0, 24.0);
-        final double margin = (unit * 0.22).clamp(6.0, 14.0);
-        final EdgeInsets padding =
-            EdgeInsets.all((unit * 0.65 * compress).clamp(8.0, 20.0));
-
-        final double titleFont = (unit * 1.1).clamp(18.0, 26.0);
-        final double subtitleFont = (unit * 0.72).clamp(11.0, 16.0);
-        final double fieldFont = (unit * 0.80).clamp(12.0, 18.0);
-        final double smallFont = (unit * 0.70).clamp(10.0, 14.0);
-        final double gap = (unit * 0.40 * compress).clamp(4.0, 12.0);
-
-        final double fieldVerticalPad =
-            (unit * 0.30 * compress).clamp(4.0, 8.0);
-        final double fieldHorizontalPad =
-            (unit * 0.75).clamp(10.0, 18.0);
-        final double fieldRadius = (unit * 0.70).clamp(10.0, 20.0);
-
-        return Container(
-          margin: EdgeInsets.all(margin),
-          decoration: BoxDecoration(
-            // CHANGED BACKGROUND COLOR
-            color: const Color(0xCC0B0F1C),
-            borderRadius: BorderRadius.circular(radius),
-            border: Border.all(color: const Color(0x22FFFFFF)),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x33000000),
-                blurRadius: 18,
-                offset: Offset(0, 10),
-              ),
-            ],
-          ),
-          padding: padding,
-          child: Form(
-            key: _formKey,
-            child: Column(
-              mainAxisSize: MainAxisSize.min, // allows tight packing
-              mainAxisAlignment: MainAxisAlignment.start,
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                // Branding
-                Icon(
-                  Icons.wallpaper,
-                  size: unit * 1.7 * compress,
-                  color: Colors.cyanAccent,
-                ),
-                SizedBox(height: gap * 0.5),
-                Text(
-                  'Wall‑D',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: titleFont,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 2,
+            return Container(
+              margin: EdgeInsets.all(margin),
+              decoration: BoxDecoration(
+                color: bgColor, // Updated to match CompleteTaskWidget [file:6]
+                borderRadius: BorderRadius.circular(radius),
+                border: Border.all(color: const Color(0x22FFFFFF)),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x33000000),
+                    blurRadius: 18,
+                    offset: Offset(0, 10),
                   ),
-                ),
-                SizedBox(height: gap * 0.3),
-                Text(
-                  'Sign in with your work account',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: Colors.white70,
-                    fontSize: subtitleFont,
-                  ),
-                ),
-                SizedBox(height: gap),
-
-                // Email field
-                TextFormField(
-                  controller: _emailController,
-                  keyboardType: TextInputType.emailAddress,
-                  style: TextStyle(fontSize: fieldFont),
-                  decoration: InputDecoration(
-                    labelText: 'Work Email',
-                    prefixIcon: const Icon(
-                      Icons.email_outlined,
-                      color: Colors.cyan,
-                      size: 18,
-                    ),
-                    filled: true,
-                    fillColor: Colors.grey[900],
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(fieldRadius),
-                      borderSide: BorderSide(
-                        color: Colors.grey[800] ?? Colors.grey,
-                      ),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(fieldRadius),
-                      borderSide: const BorderSide(
-                        color: Colors.cyan,
-                        width: 2,
-                      ),
-                    ),
-                    contentPadding: EdgeInsets.symmetric(
-                      horizontal: fieldHorizontalPad,
-                      vertical: fieldVerticalPad,
-                    ),
-                  ),
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'Email required';
-                    }
-                    final regex = RegExp(
-                        r'^[\w\-\.]+@([\w\-]+\.)+[\w\-]{2,4}$');
-                    if (!regex.hasMatch(value)) {
-                      return 'Enter valid work email';
-                    }
-                    return null;
-                  },
-                ),
-                SizedBox(height: gap),
-
-                // Password field
-                TextFormField(
-                  controller: _passwordController,
-                  obscureText: true,
-                  style: TextStyle(fontSize: fieldFont),
-                  decoration: InputDecoration(
-                    labelText: 'Password',
-                    prefixIcon: const Icon(
-                      Icons.lock_outline,
-                      color: Colors.cyan,
-                      size: 18,
-                    ),
-                    filled: true,
-                    fillColor: Colors.grey[900],
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(fieldRadius),
-                      borderSide: BorderSide(
-                        color: Colors.grey[800] ?? Colors.grey,
-                      ),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(fieldRadius),
-                      borderSide: const BorderSide(
-                        color: Colors.cyan,
-                        width: 2,
-                      ),
-                    ),
-                    contentPadding: EdgeInsets.symmetric(
-                      horizontal: fieldHorizontalPad,
-                      vertical: fieldVerticalPad,
-                    ),
-                  ),
-                  validator: (value) {
-                    if (value == null || value.isEmpty) {
-                      return 'Password required';
-                    }
-                    return null;
-                  },
-                ),
-                SizedBox(height: gap),
-
-                // Error message (optional)
-                if (_errorMessage != null) ...[
-                  Container(
-                    width: double.infinity,
-                    padding: EdgeInsets.all(unit * 0.35),
-                    decoration: BoxDecoration(
-                      color: Colors.red[900],
-                      borderRadius: BorderRadius.circular(fieldRadius),
-                      border: Border.all(
-                        color: Colors.red[700] ?? Colors.red,
-                      ),
-                    ),
-                    child: Row(
-                      children: [
-                        const Icon(
-                          Icons.error_outline,
-                          color: Colors.redAccent,
-                          size: 16,
-                        ),
-                        SizedBox(width: unit * 0.3),
-                        Expanded(
-                          child: Text(
-                            _errorMessage!,
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: smallFont,
-                            ),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  SizedBox(height: gap),
                 ],
-
-                // Sign in button
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: _isLoading ? null : _signIn,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.cyanAccent,
-                      foregroundColor: Colors.black,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(fieldRadius),
-                      ),
-                      padding: EdgeInsets.symmetric(
-                        vertical: fieldVerticalPad + 1,
-                      ),
-                      elevation: 8,
+              ),
+              padding: padding,
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min, // allows tight packing
+                  mainAxisAlignment: MainAxisAlignment.start,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    // Branding
+                    Icon(
+                      Icons.wallpaper,
+                      size: unit * 1.7 * compress,
+                      color: Colors.cyanAccent,
                     ),
-                    child: _isLoading
-                        ? SizedBox(
-                            height: unit,
-                            width: unit,
-                            child: const CircularProgressIndicator(
-                              color: Colors.black,
-                              strokeWidth: 2,
-                            ),
-                          )
-                        : Text(
-                            'Sign In',
-                            style: TextStyle(
-                              fontSize: fieldFont,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                  ),
-                ),
+                    SizedBox(height: gap * 0.5),
+                    Text(
+                      'Wall‑D',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: titleFont,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 2,
+                      ),
+                    ),
+                    SizedBox(height: gap * 0.3),
+                    Text(
+                      'Sign in with your work account',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: subtitleFont,
+                      ),
+                    ),
+                    SizedBox(height: gap),
 
-                SizedBox(height: gap),
-                Text(
-                  'You\'ll see your dashboard after login',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: smallFont,
-                    color: Colors.white38,
-                  ),
+                    // Email field
+                    TextFormField(
+                      controller: _emailController,
+                      keyboardType: TextInputType.emailAddress,
+                      style: TextStyle(fontSize: fieldFont),
+                      decoration: InputDecoration(
+                        labelText: 'Work Email',
+                        prefixIcon: const Icon(
+                          Icons.email_outlined,
+                          color: Colors.cyan,
+                          size: 18,
+                        ),
+                        filled: true,
+                        fillColor: Colors.grey[900],
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(fieldRadius),
+                          borderSide: BorderSide(
+                            color: Colors.grey[800] ?? Colors.grey,
+                          ),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(fieldRadius),
+                          borderSide: const BorderSide(
+                            color: Colors.cyan,
+                            width: 2,
+                          ),
+                        ),
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: fieldHorizontalPad,
+                          vertical: fieldVerticalPad,
+                        ),
+                      ),
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Email required';
+                        }
+                        final regex = RegExp(
+                            r'^[\w\-\.]+@([\w\-]+\.)+[\w\-]{2,4}$');
+                        if (!regex.hasMatch(value)) {
+                          return 'Enter valid work email';
+                        }
+                        return null;
+                      },
+                    ),
+                    SizedBox(height: gap),
+
+                    // Password field
+                    TextFormField(
+                      controller: _passwordController,
+                      obscureText: true,
+                      style: TextStyle(fontSize: fieldFont),
+                      decoration: InputDecoration(
+                        labelText: 'Password',
+                        prefixIcon: const Icon(
+                          Icons.lock_outline,
+                          color: Colors.cyan,
+                          size: 18,
+                        ),
+                        filled: true,
+                        fillColor: Colors.grey[900],
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(fieldRadius),
+                          borderSide: BorderSide(
+                            color: Colors.grey[800] ?? Colors.grey,
+                          ),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(fieldRadius),
+                          borderSide: const BorderSide(
+                            color: Colors.cyan,
+                            width: 2,
+                          ),
+                        ),
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: fieldHorizontalPad,
+                          vertical: fieldVerticalPad,
+                        ),
+                      ),
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Password required';
+                        }
+                        return null;
+                      },
+                    ),
+                    SizedBox(height: gap),
+
+                    // Error message (optional)
+                    if (_errorMessage != null) ...[
+                      Container(
+                        width: double.infinity,
+                        padding: EdgeInsets.all(unit * 0.35),
+                        decoration: BoxDecoration(
+                          color: Colors.red[900],
+                          borderRadius: BorderRadius.circular(fieldRadius),
+                          border: Border.all(
+                            color: Colors.red[700] ?? Colors.red,
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(
+                              Icons.error_outline,
+                              color: Colors.redAccent,
+                              size: 16,
+                            ),
+                            SizedBox(width: unit * 0.3),
+                            Expanded(
+                              child: Text(
+                                _errorMessage!,
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: smallFont,
+                                ),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      SizedBox(height: gap),
+                    ],
+
+                    // Sign in button
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: _isLoading ? null : _signIn,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.cyanAccent,
+                          foregroundColor: Colors.black,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(fieldRadius),
+                          ),
+                          padding: EdgeInsets.symmetric(
+                            vertical: fieldVerticalPad + 1,
+                          ),
+                          elevation: 8,
+                        ),
+                        child: _isLoading
+                            ? SizedBox(
+                                height: unit,
+                                width: unit,
+                                child: const CircularProgressIndicator(
+                                  color: Colors.black,
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : Text(
+                                'Sign In',
+                                style: TextStyle(
+                                  fontSize: fieldFont,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                      ),
+                    ),
+                    SizedBox(height: gap),
+                    Text(
+                      'You\'ll see your dashboard after login',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: smallFont,
+                        color: Colors.white38,
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-          ),
+              ),
+            );
+          },
         );
       },
     );
@@ -7453,88 +7745,97 @@ class _LoginWidgetState extends State<LoginWidget> {
 ================================================================================
 
 // File: lib\dynamic_screen\widgets\view_all_tasks_widget.dart
+// lib/dynamic_screen/widgets/view_all_tasks_widget.dart
+
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:walld_flutter/core/wallpaper_service.dart';
 
 class ViewAllTasksWidget extends StatelessWidget {
   const ViewAllTasksWidget({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final maxW = constraints.maxWidth;
-        final maxH = constraints.maxHeight;
-        final shortest = math.min(maxW, maxH);
+    return AnimatedBuilder(
+      animation: WallpaperService.instance, // same reactive glass source [file:9]
+      builder: (context, _) {
+        final ws = WallpaperService.instance;
+        // Same glass color formula as CompleteTaskWidget [file:9]
+        final Color bgColor = const Color(0xFF11111C)
+            .withOpacity((ws.globalGlassOpacity * 3).clamp(0.05, 0.45));
 
-        final double unit = (shortest / 8.0).clamp(10.0, 48.0);
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final maxW = constraints.maxWidth;
+            final maxH = constraints.maxHeight;
+            final shortest = math.min(maxW, maxH);
+            final double unit = (shortest / 8.0).clamp(10.0, 48.0);
+            final double radius = (unit * 0.85).clamp(12.0, 42.0);
+            final double margin = (unit * 0.25).clamp(4.0, 12.0);
+            final EdgeInsets padding =
+                EdgeInsets.all((unit * 0.75).clamp(8.0, 28.0));
+            final double titleFont = (unit * 1.00).clamp(12.0, 24.0);
+            final double bodyFont = (unit * 0.66).clamp(10.0, 17.0);
+            final double smallFont = (unit * 0.55).clamp(9.0, 15.0);
+            final double gap = (unit * 0.60).clamp(6.0, 18.0); // [file:8]
 
-        final double radius = (unit * 0.85).clamp(12.0, 42.0);
-        final double margin = (unit * 0.25).clamp(4.0, 12.0);
-        final EdgeInsets padding =
-            EdgeInsets.all((unit * 0.75).clamp(8.0, 28.0));
-
-        final double titleFont = (unit * 1.00).clamp(12.0, 24.0);
-        final double bodyFont = (unit * 0.66).clamp(10.0, 17.0);
-        final double smallFont = (unit * 0.55).clamp(9.0, 15.0);
-        final double gap = (unit * 0.60).clamp(6.0, 18.0);
-
-        return Container(
-          margin: EdgeInsets.all(margin),
-          decoration: BoxDecoration(
-            // CHANGED BG COLOR
-            color: const Color(0xCC0B0F1C),
-            borderRadius: BorderRadius.circular(radius),
-            border: Border.all(color: const Color(0x33FFFFFF)),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x33000000),
-                blurRadius: 18,
-                offset: Offset(0, 10),
-              ),
-            ],
-          ),
-          padding: padding,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'View All Tasks',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: titleFont,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              SizedBox(height: gap),
-              Expanded(
-                child: Text(
-                  'Summary view of all tasks (demo).',
-                  maxLines: 4,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: Colors.white70,
-                    fontSize: bodyFont,
-                    height: 1.2,
+            return Container(
+              margin: EdgeInsets.all(margin),
+              decoration: BoxDecoration(
+                color: bgColor, // updated to dynamic glass color [file:9]
+                borderRadius: BorderRadius.circular(radius),
+                border: Border.all(color: const Color(0x22FFFFFF)),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x33000000),
+                    blurRadius: 18,
+                    offset: Offset(0, 10),
                   ),
-                ),
+                ],
               ),
-              Align(
-                alignment: Alignment.bottomRight,
-                child: Text(
-                  'Demo widget content',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: Colors.white38,
-                    fontSize: smallFont,
+              padding: padding,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'View All Tasks',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: titleFont,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
-                ),
+                  SizedBox(height: gap),
+                  Expanded(
+                    child: Text(
+                      'Summary view of all tasks (demo).',
+                      maxLines: 4,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: bodyFont,
+                        height: 1.2,
+                      ),
+                    ),
+                  ),
+                  Align(
+                    alignment: Alignment.bottomRight,
+                    child: Text(
+                      'Demo widget content',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.white38,
+                        fontSize: smallFont,
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            ],
-          ),
+            );
+          },
         );
       },
     );
@@ -7544,93 +7845,102 @@ class ViewAllTasksWidget extends StatelessWidget {
 ================================================================================
 
 // File: lib\dynamic_screen\widgets\view_assigned_tasks_widget.dart
+// lib/dynamic_screen/widgets/view_assigned_tasks_widget.dart
+
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:walld_flutter/core/wallpaper_service.dart';
 
 class ViewAssignedTasksWidget extends StatelessWidget {
   const ViewAssignedTasksWidget({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final maxW = constraints.maxWidth;
-        final maxH = constraints.maxHeight;
-        final shortest = math.min(maxW, maxH);
+    return AnimatedBuilder(
+      animation: WallpaperService.instance, // same as CompleteTaskWidget [file:11]
+      builder: (context, _) {
+        final ws = WallpaperService.instance;
+        // Same glass color formula as CompleteTaskWidget [file:11]
+        final Color bgColor = const Color(0xFF11111C)
+            .withOpacity((ws.globalGlassOpacity * 3).clamp(0.05, 0.45));
 
-        final double unit = (shortest / 9.0).clamp(10.0, 48.0);
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final maxW = constraints.maxWidth;
+            final maxH = constraints.maxHeight;
+            final shortest = math.min(maxW, maxH);
+            final double unit = (shortest / 9.0).clamp(10.0, 48.0);
+            final double radius = (unit * 0.90).clamp(12.0, 44.0);
+            final double margin = (unit * 0.25).clamp(4.0, 12.0);
+            final EdgeInsets padding = EdgeInsets.symmetric(
+              horizontal: (unit * 0.90).clamp(10.0, 30.0),
+              vertical: (unit * 0.70).clamp(8.0, 24.0),
+            );
+            final double titleFont = (unit * 1.10).clamp(12.0, 26.0);
+            final double bodyFont = (unit * 0.72).clamp(10.0, 18.0);
+            final double smallFont = (unit * 0.60).clamp(9.0, 16.0);
+            final double gap = (unit * 0.60).clamp(6.0, 18.0); // [file:10]
 
-        final double radius = (unit * 0.90).clamp(12.0, 44.0);
-        final double margin = (unit * 0.25).clamp(4.0, 12.0);
-        final EdgeInsets padding = EdgeInsets.symmetric(
-          horizontal: (unit * 0.90).clamp(10.0, 30.0),
-          vertical: (unit * 0.70).clamp(8.0, 24.0),
-        );
-
-        final double titleFont = (unit * 1.10).clamp(12.0, 26.0);
-        final double bodyFont = (unit * 0.72).clamp(10.0, 18.0);
-        final double smallFont = (unit * 0.60).clamp(9.0, 16.0);
-        final double gap = (unit * 0.60).clamp(6.0, 18.0);
-
-        return Container(
-          margin: EdgeInsets.all(margin),
-          decoration: BoxDecoration(
-            // CHANGED BG COLOR
-            color: const Color(0xCC0B0F1C),
-            borderRadius: BorderRadius.circular(radius),
-            border: Border.all(color: const Color(0x33FFFFFF)),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x33000000),
-                blurRadius: 18,
-                offset: Offset(0, 10),
+            return Container(
+              margin: EdgeInsets.all(margin),
+              decoration: BoxDecoration(
+                color: bgColor, // updated from 0xCC0B0F1C to glass color [file:10][file:11]
+                borderRadius: BorderRadius.circular(radius),
+                border: Border.all(color: const Color(0x22FFFFFF)),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x33000000),
+                    blurRadius: 18,
+                    offset: Offset(0, 10),
+                  ),
+                ],
               ),
-            ],
-          ),
-          padding: padding,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'View Assigned Tasks',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: titleFont,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              SizedBox(height: gap),
-              Expanded(
-                child: Align(
-                  alignment: Alignment.topLeft,
-                  child: Text(
-                    'Tasks currently assigned to you will appear here (demo).',
-                    maxLines: 4,
+              padding: padding,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'View Assigned Tasks',
+                    maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      color: Colors.white70,
-                      fontSize: bodyFont,
-                      height: 1.2,
+                      color: Colors.white,
+                      fontSize: titleFont,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
-                ),
-              ),
-              Align(
-                alignment: Alignment.bottomRight,
-                child: Text(
-                  'Demo widget content',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: Colors.white38,
-                    fontSize: smallFont,
+                  SizedBox(height: gap),
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.topLeft,
+                      child: Text(
+                        'Tasks currently assigned to you will appear here (demo).',
+                        maxLines: 4,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Colors.white70,
+                          fontSize: bodyFont,
+                          height: 1.2,
+                        ),
+                      ),
+                    ),
                   ),
-                ),
+                  Align(
+                    alignment: Alignment.bottomRight,
+                    child: Text(
+                      'Demo widget content',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.white38,
+                        fontSize: smallFont,
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            ],
-          ),
+            );
+          },
         );
       },
     );
@@ -8150,74 +8460,117 @@ BoxDecoration backgroundDecoration() {
 ================================================================================
 
 // File: lib\task\task_workspace.dart
+// lib/task/task_workspace.dart
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-import '../core/wallpaper_service.dart';
 import '../core/glass_container.dart';
-import '../workspace/workspace_controller.dart';
+import '../core/wallpaper_service.dart';
+
+import 'pages/complete_task_page.dart';
+import 'pages/create_task_page.dart';
+import 'pages/view_all_tasks_page.dart';
+import 'pages/view_assigned_tasks_page.dart';
+
 import 'task_tabs_manifest.dart';
 import 'widgets/task_side_panel.dart';
 
 class TaskWorkspace extends StatefulWidget {
-  const TaskWorkspace({
-    super.key,
-    required this.workspaceController,
-  });
-
-  final WorkspaceController workspaceController;
+  const TaskWorkspace({super.key});
 
   @override
-  State<TaskWorkspace> createState() => _TaskWorkspaceState();
+  State<TaskWorkspace> createState() => TaskWorkspaceState();
 }
 
-class _TaskWorkspaceState extends State<TaskWorkspace> {
-  String tabId = taskTabs.first.id;
+class TaskWorkspaceState extends State<TaskWorkspace> {
+  // Match TaskTabIds from task_tabs_manifest.dart
+  String selectedTabId = TaskTabIds.viewAssigned;
+
+  TaskTabDef get _currentTab =>
+      taskTabs.firstWhere((t) => t.id == selectedTabId, orElse: () => taskTabs.first);
 
   @override
   Widget build(BuildContext context) {
-    final wallpaper = WallpaperService.instance;
-
-    // React to global wallpaper/glass changes so both side panel and
-    // main content update when sliders move.
     return AnimatedBuilder(
-      animation: wallpaper,
+      animation: WallpaperService.instance,
       builder: (context, _) {
-        final currentTab = taskTabs.firstWhere(
-          (t) => t.id == tabId,
-          orElse: () => taskTabs.first,
-        );
-
-        final double glassBlur = wallpaper.globalGlassBlur;
-        final double glassOpacity = wallpaper.globalGlassOpacity;
+        final double glassBlur = WallpaperService.instance.globalGlassBlur;
+        final double glassOpacity = WallpaperService.instance.globalGlassOpacity;
 
         return Padding(
-          // Top padding to clear the UniversalTopBar drawn by WorkspaceShell.
           padding: const EdgeInsets.fromLTRB(18, 70, 18, 18),
           child: Row(
             children: [
-              // LEFT: Tab list + info
+              // LEFT: side panel – API fixed to match TaskSidePanel
               SizedBox(
                 width: 240,
                 child: TaskSidePanel(
-                  selectedTabId: tabId,
-                  onSelect: (id) => setState(() => tabId = id),
+                  selectedTabId: selectedTabId,
+                  onSelect: (id) {
+                    setState(() {
+                      selectedTabId = id;
+                    });
+                  },
                 ),
               ),
-              const SizedBox(width: 12),
 
-              // RIGHT: Main glass content area for current tab
+              const SizedBox(width: 18),
+
+              // RIGHT: main glass content
               Expanded(
                 child: GlassContainer(
                   blur: glassBlur,
                   opacity: glassOpacity,
                   tint: Colors.white,
-                  borderRadius: BorderRadius.circular(22),
-                  padding: const EdgeInsets.all(14),
-                  // When interacting inside the page, keep quality auto.
-                  blurMode: GlassBlurMode.auto,
-                  qualityMode: GlassQualityMode.auto,
-                  isInteracting: false,
-                  child: currentTab.builder(context),
+                  borderRadius: BorderRadius.circular(24),
+                  padding: const EdgeInsets.all(24),
+                  // OLD:
+                  // blurMode: GlassBlurMode.auto,
+                  // NEW: force blur for this panel
+                  blurMode: GlassBlurMode.perWidget,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Header uses TaskTabDef.title/icon (no .name)
+                      Row(
+                        children: [
+                          Icon(
+                            _currentTab.icon,
+                            color: Colors.cyan,
+                            size: 28,
+                          ),
+                          const SizedBox(width: 12),
+                          Text(
+                            _currentTab.title,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const Spacer(),
+                          if (kDebugMode)
+                            Text(
+                              'Blur: ${glassBlur.toStringAsFixed(1)}  |  '
+                              'Opacity: ${(glassOpacity * 100).toStringAsFixed(0)}%',
+                              style: const TextStyle(
+                                color: Colors.white54,
+                                fontSize: 12,
+                                fontFamily: 'monospace',
+                              ),
+                            ),
+                        ],
+                      ),
+
+                      const SizedBox(height: 24),
+
+                      // Body: use builder from TaskTabDef so pages stay single‑sourced
+                      Expanded(
+                        child: _currentTab.builder(context),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ],
@@ -8247,18 +8600,814 @@ class CompleteTaskPage extends StatelessWidget {
 ================================================================================
 
 // File: lib\task\pages\create_task_page.dart
+import 'dart:math' as math;
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
-class CreateTaskPage extends StatelessWidget {
+import '../../Developer/DynamicForms/dynamic_forms_repository.dart';
+import '../../Developer/DynamicForms/form_models.dart';
+import '../../core/glass_container.dart';
+
+class CreateTaskPage extends StatefulWidget {
   const CreateTaskPage({super.key});
 
   @override
+  State<CreateTaskPage> createState() => _CreateTaskPageState();
+}
+
+class _CreateTaskPageState extends State<CreateTaskPage> {
+  static const String tenantId = 'default_tenant';
+
+  static FormSchemaMeta? _cachedTaskCreationForm;
+  static Object? _cachedLoadError;
+
+  final DynamicFormsRepository _repo = DynamicFormsRepository();
+  final GlobalKey<_DynamicFormRendererState> _rendererKey =
+      GlobalKey<_DynamicFormRendererState>();
+
+  FormSchemaMeta? _form;
+  bool _loading = true;
+  bool _submitting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (_cachedTaskCreationForm != null || _cachedLoadError != null) {
+      _form = _cachedTaskCreationForm;
+      _loading = false;
+    } else {
+      _loadFormOnce();
+    }
+  }
+
+  Future<void> _loadFormOnce() async {
+    try {
+      final forms = await _repo.loadForms(tenantId);
+      final found = forms.firstWhere(
+        (f) => f.formId == 'task_creation',
+        orElse: () => forms.first,
+      );
+      _cachedTaskCreationForm = found;
+      _cachedLoadError = null;
+      if (!mounted) return;
+      setState(() {
+        _form = found;
+        _loading = false;
+      });
+    } catch (e) {
+      _cachedLoadError = e;
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _createTaskFromPayload(Map<String, dynamic> values) async {
+  final user = FirebaseAuth.instance.currentUser;
+  
+  if (user == null) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('You must be logged in to create a task'),
+        backgroundColor: Colors.redAccent,
+      ),
+    );
+    
+    return;
+  }
+
+  setState(() => _submitting = true);
+  try {
+    final now = DateTime.now();
+    final tasksCol = FirebaseFirestore.instance
+        .collection('tenants')
+        .doc(tenantId)
+        .collection('tasks');
+
+    final data = <String, dynamic>{
+      'title': values['title'] ?? '',
+      'description': values['description'] ?? '',
+      'status': 'PENDING',
+      'created_by': user.uid,
+      'created_at': now.toIso8601String(),
+      'updated_at': now.toIso8601String(),
+      'custom_fields': values,
+    };
+
+    // Use the dynamic form's first date field as canonical due date
+    final renderer = _rendererKey.currentState;
+    DateTime? due = renderer?.getSelectedDueDate();
+
+    if (due != null) {
+      // Store normalized due date at top level
+      data['due_date'] = due.toIso8601String();
+
+      // Mirror back into payload under the schema field id (e.g. "due_date")
+      final key = renderer?.firstDateFieldKey;
+      if (key != null) {
+        values[key] = due;
+      }
+    }
+
+    await tasksCol.add(data);
+    print("Final Task Payload: $data");
+    await tasksCol.add(data);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Task created successfully'),
+        backgroundColor: Colors.cyan,
+      ),
+    );
+
+    // Reset form
+    _rendererKey.currentState?.resetForm();
+  } catch (e) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Failed to create task: $e'),
+        backgroundColor: Colors.redAccent,
+      ),
+    );
+  } finally {
+    if (mounted) setState(() => _submitting = false);
+  }
+}
+
+
+  Future<void> _onCreatePressed() async {
+    final state = _rendererKey.currentState;
+    if (state == null) return;
+    final payload = await state.submitExternally();
+    if (payload == null) return;
+    await _createTaskFromPayload(payload);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return const Center(
-      child: Text('Create Task (full-screen page placeholder)', style: TextStyle(color: Colors.white70)),
+    final loadError = _cachedLoadError;
+
+    if (_loading) {
+      return const Center(
+        child: CircularProgressIndicator(
+          valueColor: AlwaysStoppedAnimation<Color>(Colors.cyanAccent),
+        ),
+      );
+    }
+
+    if (_form == null) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(
+              Icons.error_outline_rounded,
+              color: Colors.redAccent,
+              size: 48,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              loadError == null
+                  ? 'Create Task form config not available.'
+                  : 'Failed to load form',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            if (loadError != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                loadError.toString(),
+                style: const TextStyle(
+                  color: Colors.white70,
+                  fontSize: 12,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Form description
+        if (_form!.description.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: Text(
+              _form!.description,
+              style: const TextStyle(
+                color: Colors.white70,
+                fontSize: 14,
+              ),
+            ),
+          ),
+
+        // Form fields
+        Expanded(
+          child: _DynamicFormRenderer(
+            key: _rendererKey,
+            tenantId: tenantId,
+            form: _form!,
+          ),
+        ),
+
+        const SizedBox(height: 16),
+
+        // Action buttons
+        Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            OutlinedButton(
+              onPressed: _submitting
+                  ? null
+                  : () {
+                      _rendererKey.currentState?.resetForm();
+                    },
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.white70,
+                side: const BorderSide(color: Colors.white24),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              ),
+              child: const Text('Reset'),
+            ),
+            const SizedBox(width: 12),
+            ElevatedButton(
+              onPressed: _submitting ? null : _onCreatePressed,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.cyanAccent,
+                foregroundColor: Colors.black,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
+                elevation: 0,
+              ),
+              child: _submitting
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(Colors.black),
+                      ),
+                    )
+                  : const Text(
+                      'Create Task',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 }
+
+class _DynamicFormRenderer extends StatefulWidget {
+  final String tenantId;
+  final FormSchemaMeta form;
+
+  const _DynamicFormRenderer({
+    super.key,
+    required this.tenantId,
+    required this.form,
+  });
+
+  @override
+  State<_DynamicFormRenderer> createState() => _DynamicFormRendererState();
+}
+
+class _DynamicFormRendererState extends State<_DynamicFormRenderer> {
+  final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
+
+  final Map<String, TextEditingController> _controllers = {};
+  final Map<String, dynamic> _values = {};
+  final Map<String, bool> _checkboxValues = {};
+  final Map<String, String?> _dropdownValues = {};
+  final Map<String, List<DropdownMenuItem<String>>> _dropdownItems = {};
+  final Map<String, bool> _loadingDropdown = {};
+  DateTime? getSelectedDueDate() {
+    final key = firstDateFieldKey;
+    if (key == null) return null;
+    final v = _values[key];
+    return v is DateTime ? v : null;
+  }
+  String? get firstDateFieldKey {
+  for (final f in widget.form.fields) {
+    if (f.type == 'date') return f.id; // e.g. "due_date"
+  }
+  return null;
+}
+  // lib/task/pages/create_task_page.dart
+
+@override
+void initState() {
+  super.initState();
+
+  for (final field in widget.form.fields) {
+    if (field.type == 'checkbox') {
+      _checkboxValues[field.id] = false;
+    } else if (field.type == 'dropdown') {
+      _dropdownValues[field.id] =
+          field.options.isNotEmpty ? field.options.first.toString() : null;
+      _loadDropdownOptions(field);
+    } else if (field.type == 'date') {
+      // IMPORTANT: Do NOT create a controller for date fields.
+      // Date fields use their own internal state and return values via onChanged.
+      _values[field.id] = null; 
+    } else {
+      // Only text/email/password fields should have controllers
+      _controllers[field.id] = TextEditingController();
+    }
+  }
+}
+
+  @override
+  void dispose() {
+    for (final c in _controllers.values) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  void resetForm() {
+    _formKey.currentState?.reset();
+    for (final c in _controllers.values) {
+      c.clear();
+    }
+    for (final key in _checkboxValues.keys) {
+      _checkboxValues[key] = false;
+    }
+    for (final field in widget.form.fields) {
+      if (field.type == 'dropdown' && field.options.isNotEmpty) {
+        _dropdownValues[field.id] = field.options.first.toString();
+      }
+    }
+    _values.clear();
+    setState(() {});
+  }
+
+  Future<void> _loadDropdownOptions(FormFieldMeta field) async {
+    final canLoadFromFirestore = field.dataSource == 'firestore' &&
+        field.collection != null &&
+        field.displayField != null &&
+        field.valueField != null;
+
+    if (!canLoadFromFirestore) {
+      _dropdownItems[field.id] = field.options
+          .map(
+            (o) => DropdownMenuItem<String>(
+              value: o.toString(),
+              child: Text(
+                o.toString(),
+                style: const TextStyle(color: Colors.white),
+              ),
+            ),
+          )
+          .toList();
+      if (mounted) setState(() {});
+      return;
+    }
+
+    if (mounted) setState(() => _loadingDropdown[field.id] = true);
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('tenants/${widget.tenantId}/${field.collection}')
+          .get();
+
+      final items = snap.docs.map((doc) {
+        final data = doc.data();
+        final value = (data[field.valueField] ?? doc.id).toString();
+        final label = (data[field.displayField] ?? value).toString();
+        return DropdownMenuItem<String>(
+          value: value,
+          child: Text(
+            label,
+            style: const TextStyle(color: Colors.white),
+          ),
+        );
+      }).toList();
+
+      _dropdownItems[field.id] = items;
+      if (_dropdownValues[field.id] == null && items.isNotEmpty) {
+        _dropdownValues[field.id] = items.first.value;
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _loadingDropdown[field.id] = false);
+      }
+    }
+  }
+
+  String? _runValidation(FormFieldMeta field, String value) {
+    if (field.required && value.isEmpty) {
+      return '${field.label} is required';
+    }
+
+    if (field.type == 'email' && value.isNotEmpty) {
+      final ok = RegExp(r'^[^@]+@[^@]+\.[^@]+$').hasMatch(value);
+      if (!ok) return 'Invalid email';
+    }
+
+    if (field.validation != null && value.isNotEmpty) {
+      final re = RegExp(field.validation!);
+      if (!re.hasMatch(value)) {
+        return 'Invalid ${field.label}';
+      }
+    }
+
+    return null;
+  }
+
+ // lib/task/pages/create_task_page.dart
+
+Future<Map<String, dynamic>?> submitExternally() async {
+
+  final ok = _formKey.currentState?.validate() ?? false;
+  if (!ok) return null;
+
+  // 1. Capture controllers/checkboxes/dropdowns
+  for (final entry in _controllers.entries) {
+    _values[entry.key] = entry.value.text.trim();
+  }
+  for (final entry in _checkboxValues.entries) {
+    _values[entry.key] = entry.value;
+  }
+  for (final entry in _dropdownValues.entries) {
+    _values[entry.key] = entry.value;
+  }
+
+  // 2. Ensure Date values are included in the return payload
+  for (final field in widget.form.fields) {
+    if (field.type == 'date') {
+      // If the user picked a date, it's already in _values[field.id] 
+      // via the onChanged callback. We just need to make sure we don't 
+      // accidentally null it out or skip it.
+      if (!_values.containsKey(field.id)) {
+        _values[field.id] = null;
+      }
+    }
+  }
+
+  return Map<String, dynamic>.from(_values);
+}
+
+
+  Widget _buildField(FormFieldMeta field) {
+    switch (field.type) {
+      case 'email':
+      case 'text':
+      case 'password':
+         return Padding(
+        padding: const EdgeInsets.only(bottom: 16.0),
+        child: TextFormField(
+          controller: _controllers[field.id],
+          obscureText: field.type == 'password',
+          style: const TextStyle(color: Colors.white),
+          decoration: InputDecoration(
+            labelText: field.label,
+            labelStyle: const TextStyle(color: Colors.white70),
+            floatingLabelStyle: const TextStyle(color: Colors.cyanAccent),
+            enabledBorder: OutlineInputBorder(
+              borderSide: const BorderSide(color: Colors.white24),
+              borderRadius: BorderRadius.circular(18),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderSide:
+                  const BorderSide(color: Colors.cyanAccent, width: 2),
+              borderRadius: BorderRadius.circular(18),
+            ),
+            errorBorder: OutlineInputBorder(
+              borderSide: const BorderSide(color: Colors.redAccent),
+              borderRadius: BorderRadius.circular(18),
+            ),
+            focusedErrorBorder: OutlineInputBorder(
+              borderSide:
+                  const BorderSide(color: Colors.redAccent, width: 2),
+              borderRadius: BorderRadius.circular(18),
+            ),
+            filled: true,
+            // glass‑like dark layer
+            fillColor: Colors.white.withOpacity(0.04),
+          ),
+          validator: (v) => _runValidation(field, (v ?? '').trim()),
+        ),
+      );
+
+    case 'dropdown':
+  final loading = _loadingDropdown[field.id] ?? false;
+  final options = _dropdownItems[field.id] ??
+      field.options
+          .map(
+            (o) => DropdownMenuItem<String>(
+              value: o.toString(),
+              child: Text(o.toString()),
+            ),
+          )
+          .toList();
+
+  return Padding(
+    padding: const EdgeInsets.only(bottom: 16.0),
+    child: PopupMenuButton<String>(
+      color: Colors.transparent,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+      ),
+      offset: const Offset(0, 8),
+      child: InputDecorator(
+        decoration: InputDecoration(
+          labelText: field.label,
+          labelStyle: const TextStyle(color: Colors.white70),
+          floatingLabelStyle: const TextStyle(color: Colors.cyanAccent),
+          enabledBorder: OutlineInputBorder(
+            borderSide: const BorderSide(color: Colors.white24),
+            borderRadius: BorderRadius.circular(18),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderSide: const BorderSide(color: Colors.cyanAccent, width: 2),
+            borderRadius: BorderRadius.circular(18),
+          ),
+          filled: true,
+          fillColor: Colors.white.withOpacity(0.04),
+          suffixIcon: const Icon(Icons.arrow_drop_down, color: Colors.cyanAccent),
+        ),
+        child: Text(
+          _dropdownValues[field.id] ?? 'Select ${field.label}',
+          style: const TextStyle(color: Colors.white),
+        ),
+      ),
+      itemBuilder: (context) => options
+          .map(
+            (item) => PopupMenuItem<String>(
+              value: item.value,
+              padding: EdgeInsets.zero,
+              child: GlassContainer(
+                blur: 28,
+                opacity: 0.3,
+                tint: Colors.black,
+                blurMode: GlassBlurMode.perWidget,
+                borderRadius: BorderRadius.circular(10),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                child: SizedBox(
+                  width: 200,
+                  child: item.child,
+                ),
+              ),
+            ),
+          )
+          .toList(),
+      onSelected: (v) {
+        setState(() => _dropdownValues[field.id] = v);
+      },
+    ),
+  );
+
+
+      case 'checkbox':
+        return Padding(
+        padding: const EdgeInsets.only(bottom: 12.0),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.04),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: Colors.white24),
+          ),
+          child: CheckboxListTile(
+            value: _checkboxValues[field.id] ?? false,
+            onChanged: (v) {
+              setState(() => _checkboxValues[field.id] = v ?? false);
+            },
+            title: Text(
+              field.label,
+              style: const TextStyle(color: Colors.white),
+            ),
+            activeColor: Colors.cyanAccent,
+            checkColor: Colors.black,
+            controlAffinity: ListTileControlAffinity.leading,
+          ),
+        ),
+      );
+
+    case 'date':
+      // UPDATED DUE DATE FIELD: no past date, includes time
+      return _DynamicDateField(
+        label: field.label,
+        required: field.required,
+        onChanged: (value) => _values[field.id] = value,
+      );
+
+    default:
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 16.0),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.redAccent.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.redAccent),
+          ),
+          child: Text(
+            'Unsupported field type: ${field.type}',
+            style: const TextStyle(color: Colors.redAccent),
+          ),
+        ),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.form.fields.isEmpty) {
+      return const Center(
+        child: Text(
+          'This form has no fields.',
+          style: TextStyle(color: Colors.white70),
+        ),
+      );
+    }
+
+    return Form(
+      key: _formKey,
+      child: ListView(
+        children: [
+          ...widget.form.fields.map(_buildField),
+        ],
+      ),
+    );
+  }
+}
+
+
+class _DynamicDateField extends StatefulWidget {
+  final String label;
+  final bool required;
+  final ValueChanged<DateTime> onChanged;
+
+  const _DynamicDateField({
+    required this.label,
+    required this.required,
+    required this.onChanged,
+  });
+
+  @override
+  State<_DynamicDateField> createState() => _DynamicDateFieldState();
+}
+
+class _DynamicDateFieldState extends State<_DynamicDateField> {
+  DateTime? _value;
+
+  @override
+  Widget build(BuildContext context) {
+    final display = _value == null
+        ? 'Select date & time'
+        : '${_value!.year}-${_value!.month.toString().padLeft(2, '0')}-${_value!.day.toString().padLeft(2, '0')} '
+          '${_value!.hour.toString().padLeft(2, '0')}:${_value!.minute.toString().padLeft(2, '0')}';
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16.0),
+      child: InkWell(
+        onTap: _pickDateTime,
+        borderRadius: BorderRadius.circular(18),
+        child: InputDecorator(
+          decoration: InputDecoration(
+            labelText: widget.label,
+            labelStyle: const TextStyle(color: Colors.white70),
+            floatingLabelStyle: const TextStyle(color: Colors.cyanAccent),
+            enabledBorder: OutlineInputBorder(
+              borderSide: const BorderSide(color: Colors.white24),
+              borderRadius: BorderRadius.circular(18),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderSide: const BorderSide(color: Colors.cyanAccent, width: 2),
+              borderRadius: BorderRadius.circular(18),
+            ),
+            errorBorder: OutlineInputBorder(
+              borderSide: const BorderSide(color: Colors.redAccent),
+              borderRadius: BorderRadius.circular(18),
+            ),
+            focusedErrorBorder: OutlineInputBorder(
+              borderSide: const BorderSide(color: Colors.redAccent, width: 2),
+              borderRadius: BorderRadius.circular(18),
+            ),
+            filled: true,
+            fillColor: Colors.white.withOpacity(0.04),
+            suffixIcon: const Icon(Icons.calendar_today,
+                color: Colors.cyanAccent),
+          ),
+          child: Text(
+            display,
+            style: TextStyle(
+              color: _value == null ? Colors.white38 : Colors.white,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickDateTime() async {
+  final now = DateTime.now();
+  final initial = _value ?? now;
+
+  const double dialogBlur = 30;
+  const double dialogOpacity = 0.32;
+
+  Widget wrapGlass(BuildContext context, Widget dialogChild) {
+    return Stack(
+      children: [
+        // full‑screen blurred dark sheet
+        Positioned.fill(
+          child: GlassContainer(
+            blur: dialogBlur,
+            opacity: dialogOpacity,
+            tint: Colors.black,
+            blurMode: GlassBlurMode.perWidget,
+            borderRadius: BorderRadius.zero,
+            padding: EdgeInsets.zero,
+            child: const SizedBox.expand(),
+          ),
+        ),
+        // dialog itself
+        Center(
+          child: dialogChild,
+        ),
+      ],
+    );
+  }
+
+  // DATE (no past)
+  final pickedDate = await showDatePicker(
+    context: context,
+    initialDate: initial.isBefore(now) ? now : initial,
+    firstDate: DateTime(now.year, now.month, now.day),
+    lastDate: DateTime(now.year + 5),
+    builder: (context, child) {
+      return Theme(
+        data: ThemeData.dark().copyWith(
+          colorScheme: const ColorScheme.dark(
+            primary: Colors.cyanAccent,
+            onPrimary: Colors.black,
+            surface: Colors.transparent,
+            onSurface: Colors.white,
+          ),
+          dialogBackgroundColor: Colors.transparent,
+        ),
+        child: wrapGlass(context, child!),
+      );
+    },
+  );
+  if (pickedDate == null) return;
+
+  // TIME
+  final pickedTime = await showTimePicker(
+    context: context,
+    initialTime: TimeOfDay.fromDateTime(initial),
+    builder: (context, child) {
+      return Theme(
+        data: ThemeData.dark().copyWith(
+          colorScheme: const ColorScheme.dark(
+            primary: Colors.cyanAccent,
+            onPrimary: Colors.black,
+            surface: Colors.transparent,
+            onSurface: Colors.white,
+          ),
+          dialogBackgroundColor: Colors.transparent,
+        ),
+        child: wrapGlass(context, child!),
+      );
+    },
+  );
+  if (pickedTime == null) return;
+
+  final combined = DateTime(
+    pickedDate.year,
+    pickedDate.month,
+    pickedDate.day,
+    pickedTime.hour,
+    pickedTime.minute,
+  );
+
+  final clamped = combined.isBefore(now) ? now : combined;
+
+  setState(() => _value = clamped);
+  widget.onChanged(clamped);
+  
+}
+
+
+}
+
+
 
 ================================================================================
 
@@ -8326,11 +9475,13 @@ class TaskSidePanel extends StatelessWidget {
         final double glassOpacity = wallpaper.globalGlassOpacity;
 
         return GlassContainer(
-          blur: glassBlur,
-          opacity: glassOpacity * 0.7,
-          tint: Colors.white,
-          borderRadius: BorderRadius.circular(20),
-          padding: const EdgeInsets.symmetric(vertical: 10),
+            blur: glassBlur,
+            opacity: glassOpacity * 0.7,
+            tint: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            // ADD THIS:
+            blurMode: GlassBlurMode.perWidget,
           child: Column(
             children: [
               const SizedBox(height: 6),
@@ -8732,12 +9883,12 @@ class UniversalTopBar extends StatelessWidget {
             child: SizedBox(
               height: 40,
               child: GlassContainer(
-                blur: glassBlur,
-                opacity: glassOpacity,
+                blur: glassBlur,  // NOW REACTIVE
+                opacity: glassOpacity,  // NOW REACTIVE
                 tint: Colors.white,
                 borderRadius: BorderRadius.circular(20),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+                blurMode: GlassBlurMode.perWidget,  // FORCE BLUR (top bar is tiny)
                 child: Stack(
                   alignment: Alignment.center,
                   children: [
@@ -9402,9 +10553,8 @@ class _WorkspaceShellState extends State<WorkspaceShell>
                           child: FadeTransition(
                             opacity: _currentIndex == 1 ? _fadeIn : _fadeOut,
                             child: RepaintBoundary(
-                              child: TaskWorkspace(
-                                key: const PageStorageKey('taskworkspace'),
-                                workspaceController: widget.workspaceController,
+                              child: const TaskWorkspace(
+                                key: PageStorageKey('taskworkspace'),
                               ),
                             ),
                           ),

@@ -7,6 +7,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:walld_flutter/core/permissions_cache.dart';
 
 import '../core/performance_state.dart';
 import '../core/wallpaper_service.dart';
@@ -314,8 +316,66 @@ class _WorkspaceShellState extends State<WorkspaceShell>
   }
 
   Future<void> signOut() async {
+  try {
+    debugPrint('🔒 Starting logout process...');
+    
+    // 1. Clear PermissionsCache
+    PermissionsCache.instance.clearCache();
+    debugPrint('✅ Permissions cache cleared');
+    
+    // 2. Clear SharedPreferences (layout, wallpaper, form cache, etc.)
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.clear();
+    debugPrint('✅ SharedPreferences cleared');
+    
+    // 3. Reset WallpaperService
+    WallpaperService.instance.wallpaperPath = null;
+    WallpaperService.instance.globalGlassOpacity = 0.12;
+    WallpaperService.instance.globalGlassBlur = 16.0;
+    debugPrint('✅ WallpaperService reset');
+    
+    // 4. Sign out from Firebase Auth
     await FirebaseAuth.instance.signOut();
+    debugPrint('✅ Firebase Auth signed out');
+    
+    if (!mounted) return;
+    
+    // 5. Navigate to DashboardScreen (it will automatically show login due to auth listener)
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(
+        builder: (context) => const DashboardScreen(),
+      ),
+      (route) => false, // Remove all previous routes
+    );
+    
+    debugPrint('✅ Navigated to login screen');
+    
+    // 6. Show success message
+    Future.delayed(const Duration(milliseconds: 500), () {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Signed out successfully'),
+            backgroundColor: Colors.cyan,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    });
+  } catch (e) {
+    debugPrint('❌ Sign out error: $e');
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Sign out failed: $e'),
+          backgroundColor: Colors.redAccent,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
   }
+}
+
 
   Future<void> openGlobalGlassSheet() async {
     final service = WallpaperService.instance;
