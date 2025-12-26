@@ -120,18 +120,34 @@ class ChatShell extends StatelessWidget {
           onSend: (text) => repo.sendTextMessage(
             conversationId: conversation.conversationId,
             channel: channel,
-            senderId: currentUserId,
-            senderRole: _roleForCurrentUser(),
+            senderId: currentUserId,             // sender_id = current user
+            senderRole: roleForCurrentUser(),
             text: text,
+            sendTo: _resolveSendTo(),           // NEW
           ),
         ),
+
+
       ],
     );
   }
 
-  String _roleForCurrentUser() {
-    if (currentUserId == conversation.assignedByUid) return 'manager';
-    if (currentUserId == conversation.leadMemberUid) return 'lead';
-    return 'member';
+  String _resolveSendTo() {
+  // For manager chat, always send to the assigned_by user
+  if (channel == ChatChannel.assignedBy) {
+    return conversation.assignedByUid;
   }
+
+  // For teamMembers channel you can choose semantics:
+  // maybe broadcast / no specific target
+  return conversation.assignedByUid; // or '' / some other UID as needed
+}
+
+String roleForCurrentUser() {
+  if (currentUserId == conversation.assignedByUid) return 'manager';
+  if (currentUserId == conversation.leadMemberUid) return 'lead';
+  return 'member';
+}
+
+
 }

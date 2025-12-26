@@ -9,7 +9,7 @@ Root: lib (lib)
 │   │   ├── chat_conversation.dart
 │   │   └── chat_message.dart
 │   ├── repositories/
-│   │   └── rt_chat_repository.dart
+│   │   └── chat_repository.dart
 │   └── widgets/
 │       ├── chat_input_bar.dart
 │       ├── chat_shell.dart
@@ -423,6 +423,8 @@ class ChatConversation {
 // File: lib\chat\models\chat_message.dart
 // lib/chat/models/chat_message.dart
 
+import 'package:cloud_firestore/cloud_firestore.dart';
+
 enum MessageType {
   text,
   file,
@@ -432,19 +434,17 @@ enum MessageType {
 class ChatMessage {
   final String id;
   final String senderId;
-  final String senderRole;
-  final String? sendTo;
+  final String senderRole; // "member", "lead", "manager"
   final MessageType type;
   final String? text;
   final String? fileUrl;
-  final String? fileType;
+  final String? fileType; // "image", "pdf", "excel", etc.
   final DateTime createdAt;
 
   ChatMessage({
     required this.id,
     required this.senderId,
     required this.senderRole,
-    this.sendTo,
     required this.type,
     this.text,
     this.fileUrl,
@@ -452,127 +452,144 @@ class ChatMessage {
     required this.createdAt,
   });
 
-  factory ChatMessage.fromMap(String id, Map<dynamic, dynamic> data) {
+  factory ChatMessage.fromFirestore(DocumentSnapshot<Map<String, dynamic>> doc) {
+    final data = doc.data() ?? {};
     final typeStr = (data['type'] ?? 'text') as String;
     final type = MessageType.values.firstWhere(
       (t) => t.name == typeStr,
       orElse: () => MessageType.text,
     );
 
-    final createdMs = (data['created_at'] as int?) ??
-        DateTime.now().millisecondsSinceEpoch;
+    final timestamp = data['created_at'];
+    DateTime createdAt;
+    if (timestamp is Timestamp) {
+      createdAt = timestamp.toDate();
+    } else if (timestamp is String) {
+      createdAt = DateTime.tryParse(timestamp) ?? DateTime.now();
+    } else {
+      createdAt = DateTime.now();
+    }
 
     return ChatMessage(
-      id: id,
+      id: doc.id,
       senderId: data['sender_id'] as String? ?? '',
       senderRole: data['sender_role'] as String? ?? 'member',
-      sendTo: data['send_to'] as String?,
       type: type,
       text: data['text'] as String?,
       fileUrl: data['file_url'] as String?,
       fileType: data['file_type'] as String?,
-      createdAt: DateTime.fromMillisecondsSinceEpoch(createdMs),
+      createdAt: createdAt,
     );
   }
 
-  Map<String, dynamic> toMap() {
+  Map<String, dynamic> toFirestore() {
     return {
       'sender_id': senderId,
       'sender_role': senderRole,
-      'send_to': sendTo,
       'type': type.name,
       if (text != null) 'text': text,
       if (fileUrl != null) 'file_url': fileUrl,
       if (fileType != null) 'file_type': fileType,
-      'created_at': createdAt.millisecondsSinceEpoch,
+      'created_at': Timestamp.fromDate(createdAt),
     };
   }
 }
 
 ================================================================================
 
-// File: lib\chat\repositories\rt_chat_repository.dart
-import 'package:firebase_database/firebase_database.dart';
+// File: lib\chat\repositories\chat_repository.dart
+// lib/chat/repositories/chat_repository.dart
+
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../models/chat_channel.dart';
 import '../models/chat_message.dart';
 
-class RtChatRepository {
+class ChatRepository {
   final String tenantId;
-  final FirebaseDatabase _db;
+  final FirebaseFirestore _db;
 
-  RtChatRepository({
+  ChatRepository({
     required this.tenantId,
-    FirebaseDatabase? database,
-  }) : _db = database ?? FirebaseDatabase.instance;
+    FirebaseFirestore? firestore,
+  }) : _db = firestore ?? FirebaseFirestore.instance;
 
   /// Base path: /tenants/{tenantId}/CHATS/{conversationId}/{channelCollection}
-  DatabaseReference _channelRef(
+  CollectionReference<Map<String, dynamic>> _channelCollection(
     String conversationId,
     ChatChannel channel,
   ) {
     return _db
-        .ref()
-        .child('tenants')
-        .child(tenantId)
-        .child('CHATS')
-        .child(conversationId)
-        .child(channel.firestoreCollection);
+        .collection('tenants')
+        .doc(tenantId)
+        .collection('CHATS')
+        .doc(conversationId)
+        .collection(channel.firestoreCollection);
   }
 
+  /// Stream messages in a channel ordered by created_at
   Stream<List<ChatMessage>> streamMessages({
     required String conversationId,
     required ChatChannel channel,
   }) {
-    final ref = _channelRef(conversationId, channel);
-
-    return ref.onValue.map((event) {
-      final data = event.snapshot.value;
-      if (data == null || data is! Map) return <ChatMessage>[];
-
-      final map = Map<String, dynamic>.from(data as Map);
-      final entries = map.entries.toList()
-        ..sort((a, b) {
-          final ma = Map<dynamic, dynamic>.from(a.value);
-          final mb = Map<dynamic, dynamic>.from(b.value);
-          final ta = ma['created_at'] ?? 0;
-          final tb = mb['created_at'] ?? 0;
-          return (ta as int).compareTo(tb as int);
-        });
-
-      return entries
-          .map(
-            (e) => ChatMessage.fromMap(
-              e.key,
-              Map<dynamic, dynamic>.from(e.value),
-            ),
-          )
-          .toList();
-    });
+    return _channelCollection(conversationId, channel)
+        .orderBy('created_at', descending: false)
+        .snapshots()
+        .map(
+          (snap) => snap.docs
+              .map((doc) => ChatMessage.fromFirestore(doc))
+              .toList(),
+        );
   }
 
+  /// Send a text message
   Future<void> sendTextMessage({
     required String conversationId,
     required ChatChannel channel,
     required String senderId,
     required String senderRole,
-    required String? sendTo, // null for broadcast
     required String text,
     MessageType type = MessageType.text,
   }) async {
-    final ref = _channelRef(conversationId, channel).push();
-
-    final msg = ChatMessage(
-      id: ref.key ?? '',
+    final message = ChatMessage(
+      id: '',
       senderId: senderId,
       senderRole: senderRole,
-      sendTo: sendTo,
       type: type,
       text: text,
       createdAt: DateTime.now(),
     );
 
-    await ref.set(msg.toMap());
+    await _channelCollection(conversationId, channel).add(
+      message.toFirestore(),
+    );
+  }
+
+  /// Send a file or progress message with optional text
+  Future<void> sendFileMessage({
+    required String conversationId,
+    required ChatChannel channel,
+    required String senderId,
+    required String senderRole,
+    required String fileUrl,
+    required String fileType,
+    String? text,
+    MessageType type = MessageType.file,
+  }) async {
+    final message = ChatMessage(
+      id: '',
+      senderId: senderId,
+      senderRole: senderRole,
+      type: type,
+      text: text,
+      fileUrl: fileUrl,
+      fileType: fileType,
+      createdAt: DateTime.now(),
+    );
+
+    await _channelCollection(conversationId, channel).add(
+      message.toFirestore(),
+    );
   }
 }
 
@@ -680,12 +697,14 @@ class _ChatInputBarState extends State<ChatInputBar> {
 ================================================================================
 
 // File: lib\chat\widgets\chat_shell.dart
+// lib/chat/widgets/chat_shell.dart
+
 import 'package:flutter/material.dart';
 
 import '../models/chat_channel.dart';
 import '../models/chat_conversation.dart';
 import '../models/chat_message.dart';
-import '../repositories/rt_chat_repository.dart';
+import '../repositories/chat_repository.dart';
 import 'chat_input_bar.dart';
 import 'message_list.dart';
 
@@ -723,7 +742,7 @@ class ChatShell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final repo = RtChatRepository(tenantId: tenantId);
+    final repo = ChatRepository(tenantId: tenantId);
 
     return Column(
       children: [
@@ -802,28 +821,11 @@ class ChatShell extends StatelessWidget {
             channel: channel,
             senderId: currentUserId,
             senderRole: _roleForCurrentUser(),
-            sendTo: _targetUidForCurrentUser(),
             text: text,
           ),
         ),
       ],
     );
-  }
-
-  String? _targetUidForCurrentUser() {
-    switch (channel) {
-      case ChatChannel.teamMembers:
-        // broadcast to group
-        return null;
-      case ChatChannel.assignedBy:
-        if (currentUserId == conversation.leadMemberUid) {
-          return conversation.assignedByUid;
-        }
-        if (currentUserId == conversation.assignedByUid) {
-          return conversation.leadMemberUid;
-        }
-        return null;
-    }
   }
 
   String _roleForCurrentUser() {

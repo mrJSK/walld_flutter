@@ -49,6 +49,7 @@ class ChatRepository {
     required String senderId,
     required String senderRole,
     required String text,
+    String? sendTo, // NEW
     MessageType type = MessageType.text,
   }) async {
     final message = ChatMessage(
@@ -57,6 +58,7 @@ class ChatRepository {
       senderRole: senderRole,
       type: type,
       text: text,
+      sendTo: sendTo, // NEW
       createdAt: DateTime.now(),
     );
 
@@ -74,6 +76,7 @@ class ChatRepository {
     required String fileUrl,
     required String fileType,
     String? text,
+    String? sendTo, // NEW
     MessageType type = MessageType.file,
   }) async {
     final message = ChatMessage(

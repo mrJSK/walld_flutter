@@ -1,22 +1,19 @@
-// lib/chat/models/chat_message.dart
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-enum MessageType {
-  text,
-  file,
-  progress,
-}
+enum MessageType { text, file, progress }
 
 class ChatMessage {
   final String id;
   final String senderId;
-  final String senderRole; // "member", "lead", "manager"
+  final String senderRole;
   final MessageType type;
   final String? text;
   final String? fileUrl;
-  final String? fileType; // "image", "pdf", "excel", etc.
+  final String? fileType;
   final DateTime createdAt;
+
+  // NEW: who this message is sent *to*
+  final String? sendTo; // e.g. 'lead', 'manager', 'all', or a UID
 
   ChatMessage({
     required this.id,
@@ -27,9 +24,12 @@ class ChatMessage {
     this.fileUrl,
     this.fileType,
     required this.createdAt,
+    this.sendTo,
   });
 
-  factory ChatMessage.fromFirestore(DocumentSnapshot<Map<String, dynamic>> doc) {
+  factory ChatMessage.fromFirestore(
+    DocumentSnapshot<Map<String, dynamic>> doc,
+  ) {
     final data = doc.data() ?? {};
     final typeStr = (data['type'] ?? 'text') as String;
     final type = MessageType.values.firstWhere(
@@ -56,6 +56,7 @@ class ChatMessage {
       fileUrl: data['file_url'] as String?,
       fileType: data['file_type'] as String?,
       createdAt: createdAt,
+      sendTo: data['send_to'] as String?, // NEW
     );
   }
 
@@ -68,6 +69,7 @@ class ChatMessage {
       if (fileUrl != null) 'file_url': fileUrl,
       if (fileType != null) 'file_type': fileType,
       'created_at': Timestamp.fromDate(createdAt),
+      if (sendTo != null) 'send_to': sendTo, // NEW
     };
   }
 }
