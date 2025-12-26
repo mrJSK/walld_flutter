@@ -120,10 +120,10 @@ class WallDAppState extends State<WallDApp> {
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF05040A),
       ),
-      // home: isLoading 
-      //   ? LoadingScreen(onLoadingComplete: onLoadingComplete)
-      //   : WorkspaceShell(workspaceController: workspaceController),
-      home: const DeveloperDashboardScreen(),
+      home: isLoading 
+        ? LoadingScreen(onLoadingComplete: onLoadingComplete)
+        : WorkspaceShell(workspaceController: workspaceController),
+      //home: const DeveloperDashboardScreen(),
     );
   }
 }

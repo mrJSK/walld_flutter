@@ -34,7 +34,6 @@ class OrgNodeMeta {
 
   Map<String, dynamic> toMap() {
     return {
-      'id': id,
       'name': name,
       'parentId': parentId,
       'type': type,
