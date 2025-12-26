@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -5,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../../../Developer/DynamicForms/dynamic_forms_repository.dart';
 import '../../../Developer/DynamicForms/form_models.dart';
+import 'models/assignment_data.dart';
 import 'widgets/task_form_renderer.dart';
 
 class CreateTaskPage extends StatefulWidget {
@@ -61,7 +63,8 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
   }
 
   Future<void> _createTaskFromPayload(
-      Map<String, dynamic> values) async {
+    Map<String, dynamic> values,
+  ) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
       if (!mounted) return;
@@ -94,7 +97,6 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
       }
 
       if (assignmentData.assignmentType == 'subordinate_unit') {
-        // subordinate unit → single head user
         final headUid =
             assignmentData.nodeToHeadUserMap[assignmentData.selectedNodeId];
         await _createSingleTask(
@@ -106,7 +108,7 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
           null,
         );
       } else if (assignmentData.assignmentType == 'team_member') {
-        // team members → single document with all assignees
+        // ✅ pass leadMemberId into multi-user creation
         await _createTeamMemberTasks(
           tasksCol,
           values,
@@ -114,6 +116,7 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
           now,
           assignmentData.selectedUserIds,
           assignmentData.groupName,
+          assignmentData.leadMemberId, // PASS lead member ID
         );
       }
 
@@ -138,7 +141,7 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
     }
   }
 
-  // ✅ single-assignee path (subordinate unit)
+  // single-assignee path (subordinate unit)
   Future<void> _createSingleTask(
     CollectionReference tasksCol,
     Map<String, dynamic> values,
@@ -161,7 +164,6 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
       'custom_fields': Map<String, dynamic>.from(values),
     };
 
-    // remove duplicates and unwanted assignee field
     data['custom_fields'].remove('title');
     data['custom_fields'].remove('description');
     data['custom_fields'].remove('assignee');
@@ -176,7 +178,7 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
     debugPrint('✅ Task created for user: $assignedToUserId (doc: ${docRef.id})');
   }
 
-  // ✅ multi-user path (team members)
+  // multi-user path (team members) with lead_member
   Future<void> _createTeamMemberTasks(
     CollectionReference tasksCol,
     Map<String, dynamic> values,
@@ -184,6 +186,7 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
     DateTime now,
     List<String> userIds,
     String? groupName,
+    String? leadMemberId, // NEW PARAMETER
   ) async {
     String? groupId;
 
@@ -200,12 +203,12 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
         'created_at': now.toIso8601String(),
         'member_count': userIds.length,
         'members': userIds,
+        'lead_member': leadMemberId, // also store in group doc
       });
       groupId = groupDoc.id;
       debugPrint('✅ Task group created: $groupName (id: $groupId)');
     }
 
-    // one task document; assigned_to has all UIDs comma-separated
     final allAssigneesString = userIds.join(',');
 
     final data = {
@@ -218,10 +221,10 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
       'updated_at': now.toIso8601String(),
       'group_id': groupId,
       'group_name': groupName,
+      'lead_member': leadMemberId, // NEW FIELD on task
       'custom_fields': Map<String, dynamic>.from(values),
     };
 
-    // remove duplicates and unwanted assignee field
     data['custom_fields'].remove('title');
     data['custom_fields'].remove('description');
     data['custom_fields'].remove('assignee');
@@ -234,7 +237,9 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
 
     final docRef = await tasksCol.add(data);
     debugPrint(
-        '✅ Group task created for users: $allAssigneesString (doc: ${docRef.id})');
+      '✅ Group task created for users: $allAssigneesString '
+      '(lead: $leadMemberId, doc: ${docRef.id})',
+    );
   }
 
   Future<void> _onCreatePressed() async {

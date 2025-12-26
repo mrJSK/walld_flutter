@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+
 import '../../../../Developer/DynamicForms/form_models.dart';
 import '../../../../core/glass_container.dart';
 import '../mixins/user_data_loader_mixin.dart';
@@ -33,10 +34,11 @@ class TaskFormRendererState extends State<TaskFormRenderer>
   final Map<String, bool> _loadingDropdown = {};
 
   // Assignment tracking
-  String? _assignmentType; // 'subordinate_unit' or 'team_member'
+  String? _assignmentType;
   String? _selectedNodeId;
   List<String> _selectedUserIds = [];
   String? _groupName;
+  String? _leadMemberId; // NEW: selected lead member UID
   Map<String, String> _nodeToHeadUserMap = {};
 
   DateTime? getSelectedDueDate() {
@@ -59,6 +61,7 @@ class TaskFormRendererState extends State<TaskFormRenderer>
       selectedNodeId: _selectedNodeId,
       selectedUserIds: _selectedUserIds,
       groupName: _groupName,
+      leadMemberId: _leadMemberId, // NEW
       nodeToHeadUserMap: _nodeToHeadUserMap,
     );
   }
@@ -103,12 +106,13 @@ class TaskFormRendererState extends State<TaskFormRenderer>
     _selectedNodeId = null;
     _selectedUserIds.clear();
     _groupName = null;
+    _leadMemberId = null; // NEW
     _values.clear();
     setState(() {});
   }
 
   Future<void> _loadDropdownOptions(FormFieldMeta field) async {
-    // Skip assignTo - we handle it separately in the assignment section
+    // Skip assignTo - custom assignment section handles it
     if (field.id.toLowerCase() == 'assignto' ||
         field.id.toLowerCase() == 'assign_to' ||
         field.label.toLowerCase().contains('assign to')) {
@@ -198,7 +202,6 @@ class TaskFormRendererState extends State<TaskFormRenderer>
         final nodeName = nodeData['name'] as String? ?? nodeId;
         final nodeType = nodeData['type'] as String? ?? 'unit';
 
-        // Find head user
         final headSnap = await FirebaseFirestore.instance
             .collection('tenants')
             .doc(widget.tenantId)
@@ -304,7 +307,6 @@ class TaskFormRendererState extends State<TaskFormRenderer>
   }
 
   Widget _buildField(FormFieldMeta field) {
-    // Skip assignTo field — custom assignment section handles it
     if (field.id.toLowerCase() == 'assignto' ||
         field.id.toLowerCase() == 'assign_to' ||
         field.label.toLowerCase().contains('assign to')) {
@@ -361,6 +363,17 @@ class TaskFormRendererState extends State<TaskFormRenderer>
                   ),
                 )
                 .toList();
+
+        if (loading) {
+          return const Padding(
+            padding: EdgeInsets.only(bottom: 16.0),
+            child: Center(
+              child: CircularProgressIndicator(
+                valueColor: AlwaysStoppedAnimation(Colors.cyanAccent),
+              ),
+            ),
+          );
+        }
 
         return Padding(
           padding: const EdgeInsets.only(bottom: 16.0),
@@ -472,7 +485,7 @@ class TaskFormRendererState extends State<TaskFormRenderer>
     }
   }
 
-  // ✅ helper to get a clean label for the selected subordinate unit
+  // helper to get label for selected subordinate node
   String _labelForSelectedNode(List<DropdownMenuItem<String>> items) {
     if (_selectedNodeId == null || _selectedNodeId == 'none') {
       return 'Select Subordinate Unit';
@@ -530,7 +543,7 @@ class TaskFormRendererState extends State<TaskFormRenderer>
                 const Icon(Icons.arrow_drop_down, color: Colors.cyanAccent),
           ),
           child: Text(
-            _labelForSelectedNode(items), // ✅ clean text instead of Text(...)
+            _labelForSelectedNode(items),
             style: const TextStyle(color: Colors.white),
           ),
         ),
@@ -545,8 +558,8 @@ class TaskFormRendererState extends State<TaskFormRenderer>
                   tint: Colors.black,
                   blurMode: GlassBlurMode.perWidget,
                   borderRadius: BorderRadius.circular(10),
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 16, vertical: 12),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   child: SizedBox(
                     width: 250,
                     child: item.child,
@@ -585,6 +598,7 @@ class TaskFormRendererState extends State<TaskFormRenderer>
               _selectedNodeId = null;
               _selectedUserIds.clear();
               _groupName = null;
+              _leadMemberId = null; // reset lead
             });
 
             if (type == 'subordinate_unit') {
@@ -603,10 +617,17 @@ class TaskFormRendererState extends State<TaskFormRenderer>
               currentLevel: currentUserLevel!,
               selectedUserIds: _selectedUserIds,
               onSelectionChanged: (userIds) {
-                setState(() => _selectedUserIds = userIds);
+                setState(() {
+                  _selectedUserIds = userIds;
+                  if (_leadMemberId != null &&
+                      !userIds.contains(_leadMemberId)) {
+                    _leadMemberId = null;
+                  }
+                });
               },
             ),
             const SizedBox(height: 16),
+
             if (_selectedUserIds.length > 1) ...[
               TextFormField(
                 style: const TextStyle(color: Colors.white),
@@ -640,9 +661,13 @@ class TaskFormRendererState extends State<TaskFormRenderer>
                   _groupName = value.trim();
                 },
               ),
+              const SizedBox(height: 16),
+
+              _buildLeadMemberDropdown(),
+
               const SizedBox(height: 8),
               const Text(
-                'This task will be assigned to the selected team members as a group.',
+                'This task will be assigned to the selected team members as a group. The lead member will coordinate the task.',
                 style: TextStyle(
                   color: Colors.white70,
                   fontSize: 12,
@@ -662,6 +687,152 @@ class TaskFormRendererState extends State<TaskFormRenderer>
       ],
     );
   }
+
+  // Lead member dropdown built from selected users
+  Widget _buildLeadMemberDropdown() {
+    return FutureBuilder<List<Map<String, String>>>(
+      future: _loadSelectedUserNames(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(
+            child: Padding(
+              padding: EdgeInsets.all(8.0),
+              child: CircularProgressIndicator(
+                valueColor: AlwaysStoppedAnimation(Colors.cyanAccent),
+              ),
+            ),
+          );
+        }
+
+        final userOptions = snapshot.data ?? [];
+        if (userOptions.isEmpty) {
+          return const SizedBox.shrink();
+        }
+
+        return PopupMenuButton<String>(
+          color: Colors.transparent,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+          offset: const Offset(0, 8),
+          child: InputDecorator(
+            decoration: InputDecoration(
+              labelText: 'Select Lead Member *',
+              labelStyle: const TextStyle(color: Colors.white70),
+              floatingLabelStyle: const TextStyle(color: Colors.cyanAccent),
+              enabledBorder: OutlineInputBorder(
+                borderSide: const BorderSide(color: Colors.white24),
+                borderRadius: BorderRadius.circular(18),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderSide:
+                    const BorderSide(color: Colors.cyanAccent, width: 2),
+                borderRadius: BorderRadius.circular(18),
+              ),
+              errorBorder: OutlineInputBorder(
+                borderSide: const BorderSide(color: Colors.redAccent),
+                borderRadius: BorderRadius.circular(18),
+              ),
+              focusedErrorBorder: OutlineInputBorder(
+                borderSide:
+                    const BorderSide(color: Colors.redAccent, width: 2),
+                borderRadius: BorderRadius.circular(18),
+              ),
+              filled: true,
+              fillColor: Colors.white.withOpacity(0.04),
+              suffixIcon:
+                  const Icon(Icons.arrow_drop_down, color: Colors.cyanAccent),
+            ),
+            child: Text(
+              _leadMemberId != null
+                  ? userOptions
+                          .firstWhere(
+                            (u) => u['uid'] == _leadMemberId,
+                            orElse: () => {'name': 'Select Lead Member'},
+                          )['name'] ??
+                      'Select Lead Member'
+                  : 'Select Lead Member',
+              style: const TextStyle(color: Colors.white),
+            ),
+          ),
+          itemBuilder: (context) => userOptions
+              .map(
+                (user) => PopupMenuItem<String>(
+                  value: user['uid'],
+                  padding: EdgeInsets.zero,
+                  child: GlassContainer(
+                    blur: 28,
+                    opacity: 0.3,
+                    tint: Colors.black,
+                    blurMode: GlassBlurMode.perWidget,
+                    borderRadius: BorderRadius.circular(10),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 12),
+                    child: SizedBox(
+                      width: 250,
+                      child: Row(
+                        children: [
+                          const Icon(Icons.star,
+                              size: 16, color: Colors.amberAccent),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              user['name'] ?? '',
+                              style: const TextStyle(color: Colors.white),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              )
+              .toList(),
+          onSelected: (uid) {
+            setState(() => _leadMemberId = uid);
+          },
+        );
+      },
+    );
+  }
+
+  
+Future<List<Map<String, String>>> _loadSelectedUserNames() async {
+  if (_selectedUserIds.isEmpty) return [];
+
+  try {
+    final userDocs = await Future.wait(
+      _selectedUserIds.map(
+        (uid) => FirebaseFirestore.instance
+            .collection('tenants')
+            .doc(widget.tenantId)
+            .collection('users')
+            .doc(uid)
+            .get(),
+      ),
+    );
+
+    return userDocs.map((doc) {
+      if (!doc.exists) {
+        // fallback to UID if doc missing
+        return {'uid': doc.id, 'name': doc.id};
+      }
+
+      final data = doc.data();
+      final fullName = data?['profiledata']?['fullName'] ??
+          data?['fullName'] ??
+          doc.id;
+
+      return {
+        'uid': doc.id,
+        'name': fullName.toString(), // ✅ actual name used in UI
+      };
+    }).toList();
+  } catch (e) {
+    debugPrint('Error loading user names: $e');
+    return [];
+  }
+}
 
   @override
   Widget build(BuildContext context) {

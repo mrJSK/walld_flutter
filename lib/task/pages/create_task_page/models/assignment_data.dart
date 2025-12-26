@@ -3,6 +3,7 @@ class AssignmentData {
   final String? selectedNodeId; // for subordinate_unit
   final List<String> selectedUserIds; // for team_member
   final String? groupName; // for multi-user team_member
+  final String? leadMemberId; // ← NEW: lead member UID for groups
   final Map<String, String> nodeToHeadUserMap; // nodeId -> headUserId mapping
 
   AssignmentData({
@@ -10,6 +11,7 @@ class AssignmentData {
     this.selectedNodeId,
     this.selectedUserIds = const [],
     this.groupName,
+    this.leadMemberId,
     this.nodeToHeadUserMap = const {},
   });
 
@@ -18,9 +20,13 @@ class AssignmentData {
       return selectedNodeId != null && selectedNodeId != 'none';
     } else if (assignmentType == 'team_member') {
       if (selectedUserIds.isEmpty) return false;
-      // If multiple users, group name is required
+      
+      // If multiple users, group name AND lead member are required
       if (selectedUserIds.length > 1) {
-        return groupName != null && groupName!.trim().isNotEmpty;
+        return groupName != null && 
+               groupName!.trim().isNotEmpty &&
+               leadMemberId != null &&
+               selectedUserIds.contains(leadMemberId);
       }
       return true;
     }
