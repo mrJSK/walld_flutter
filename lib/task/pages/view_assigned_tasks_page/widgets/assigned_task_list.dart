@@ -11,11 +11,19 @@ class AssignedTaskList extends StatefulWidget {
   final String currentUserUid;
   final List<AssignedTaskViewModel> tasks;
 
+  /// ID of the currently selected task (can be null)
+  final String? selectedTaskId;
+
+  /// Callback when user taps a task in the list
+  final ValueChanged<AssignedTaskViewModel> onTaskSelected;
+
   const AssignedTaskList({
     super.key,
     required this.tenantId,
     required this.currentUserUid,
     required this.tasks,
+    required this.selectedTaskId,
+    required this.onTaskSelected,
   });
 
   @override
@@ -29,6 +37,14 @@ class _AssignedTaskListState extends State<AssignedTaskList> {
   void initState() {
     super.initState();
     _prefetchLeadNames();
+  }
+
+  @override
+  void didUpdateWidget(covariant AssignedTaskList oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.tasks != widget.tasks) {
+      _prefetchLeadNames();
+    }
   }
 
   Future<void> _prefetchLeadNames() async {
@@ -75,6 +91,15 @@ class _AssignedTaskListState extends State<AssignedTaskList> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.tasks.isEmpty) {
+      return const Center(
+        child: Text(
+          'No tasks are currently assigned to you.',
+          style: TextStyle(color: Colors.white70),
+        ),
+      );
+    }
+
     return Padding(
       padding: const EdgeInsets.all(8.0),
       child: ListView.separated(
@@ -84,11 +109,15 @@ class _AssignedTaskListState extends State<AssignedTaskList> {
           final task = widget.tasks[index];
           final leadName = _getLeadName(task.leadMemberId);
           final isLead = task.leadMemberId == widget.currentUserUid;
+          final isSelected = task.docId == widget.selectedTaskId;
 
-          return AssignedTaskCard(
-            task: task,
-            leadMemberName: leadName,
-            isCurrentUserLead: isLead,
+          return GestureDetector(
+            onTap: () => widget.onTaskSelected(task),
+            child: AssignedTaskCard(
+              task: task,
+              isSelected: isSelected,
+              leadMemberName: leadName,
+            ),
           );
         },
       ),

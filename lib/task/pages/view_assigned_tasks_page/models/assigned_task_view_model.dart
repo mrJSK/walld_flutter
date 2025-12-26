@@ -8,9 +8,20 @@ class AssignedTaskViewModel {
   final String priority;
   final DateTime? dueDate;
   final String groupName;
-  final String assignedToRaw; // comma-separated uids
+
+  /// Raw comma-separated string from Firestore (`assigned_to`)
+  final String assignedToRaw;
+
+  /// Parsed list of assignee UIDs
+  final List<String> assignedToUids;
+
   final int assigneeCount;
+
+  /// UID of lead member (can be null)
   final String? leadMemberId;
+
+  /// UID of user who assigned the task
+  final String? assignedByUid;
 
   AssignedTaskViewModel({
     required this.docId,
@@ -21,8 +32,10 @@ class AssignedTaskViewModel {
     required this.dueDate,
     required this.groupName,
     required this.assignedToRaw,
+    required this.assignedToUids,
     required this.assigneeCount,
     required this.leadMemberId,
+    required this.assignedByUid,
   });
 
   factory AssignedTaskViewModel.fromFirestore({
@@ -46,11 +59,15 @@ class AssignedTaskViewModel {
     }
 
     final groupName = (data['group_name'] ?? '') as String;
+
     final assignedTo = (data['assigned_to'] ?? '') as String;
-    final assigneeCount =
-        assignedTo.isEmpty ? 0 : assignedTo.split(',').length;
+    final assignedToUids = assignedTo.isEmpty
+        ? <String>[]
+        : assignedTo.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
+    final assigneeCount = assignedToUids.length;
 
     final leadMemberId = data['lead_member'] as String?;
+    final assignedByUid = data['assigned_by'] as String?;
 
     return AssignedTaskViewModel(
       docId: docId,
@@ -61,8 +78,10 @@ class AssignedTaskViewModel {
       dueDate: due,
       groupName: groupName,
       assignedToRaw: assignedTo,
+      assignedToUids: assignedToUids,
       assigneeCount: assigneeCount,
       leadMemberId: leadMemberId,
+      assignedByUid: assignedByUid,
     );
   }
 

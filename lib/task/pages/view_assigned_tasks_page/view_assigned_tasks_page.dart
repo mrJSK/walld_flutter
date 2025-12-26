@@ -1,16 +1,23 @@
-// lib/task/pages/view_assigned_tasks_page/view_assigned_tasks_page.dart
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import '../../../core/glass_container.dart';
 import 'models/assigned_task_view_model.dart';
 import 'widgets/assigned_task_list.dart';
+import 'widgets/assigned_task_workspace.dart';
 
-class ViewAssignedTasksPage extends StatelessWidget {
+class ViewAssignedTasksPage extends StatefulWidget {
   const ViewAssignedTasksPage({super.key});
 
   static const String tenantId = 'default_tenant';
+
+  @override
+  State<ViewAssignedTasksPage> createState() => _ViewAssignedTasksPageState();
+}
+
+class _ViewAssignedTasksPageState extends State<ViewAssignedTasksPage> {
+  AssignedTaskViewModel? _selectedTask;
 
   @override
   Widget build(BuildContext context) {
@@ -29,7 +36,7 @@ class ViewAssignedTasksPage extends StatelessWidget {
 
     final stream = FirebaseFirestore.instance
         .collection('tenants')
-        .doc(tenantId)
+        .doc(ViewAssignedTasksPage.tenantId)
         .collection('tasks')
         .orderBy('created_at', descending: true)
         .snapshots();
@@ -70,7 +77,6 @@ class ViewAssignedTasksPage extends StatelessWidget {
           );
         }
 
-        // Map docs to view models
         final models = myTasks.map((doc) {
           final data = doc.data();
           return AssignedTaskViewModel.fromFirestore(
@@ -79,12 +85,67 @@ class ViewAssignedTasksPage extends StatelessWidget {
           );
         }).toList();
 
-        return AssignedTaskList(
-          tenantId: tenantId,
-          currentUserUid: uid,
-          tasks: models,
+        // Ensure selected task is valid
+        if (_selectedTask != null) {
+          final exists = models.any((t) => t.docId == _selectedTask!.docId);
+          if (!exists) {
+            _selectedTask = null;
+          }
+        }
+
+        return Row(
+          children: [
+            // LEFT: list of assigned tasks
+            Expanded(
+              flex: 2,
+              child: AssignedTaskList(
+                tenantId: ViewAssignedTasksPage.tenantId,
+                currentUserUid: uid,
+                tasks: models,
+                selectedTaskId: _selectedTask?.docId,
+                onTaskSelected: (task) {
+                  setState(() => _selectedTask = task);
+                },
+              ),
+            ),
+
+
+            // RIGHT: details / workspace for selected task
+            Expanded(
+              flex: 3,
+              child: _selectedTask == null
+                  ? _buildEmptyWorkspace()
+                  : AssignedTaskWorkspace(
+                      task: _selectedTask!,
+                      currentUserUid: uid,
+                      tenantId: ViewAssignedTasksPage.tenantId,
+                      onBack: () {
+                        setState(() => _selectedTask = null);
+                      },
+                    ),
+            ),
+          ],
         );
       },
+    );
+  }
+
+  Widget _buildEmptyWorkspace() {
+    return Center(
+      child: GlassContainer(
+        blur: 18,
+        opacity: 0.12,
+        tint: Colors.black,
+        borderRadius: BorderRadius.circular(18),
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+        child: const Text(
+          'Select a task from the left to see details.',
+          style: TextStyle(
+            color: Colors.white70,
+            fontSize: 14,
+          ),
+        ),
+      ),
     );
   }
 

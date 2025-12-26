@@ -1,52 +1,61 @@
-// lib/task/pages/view_assigned_tasks_page/widgets/assigned_task_card.dart
-
 import 'package:flutter/material.dart';
 
 import '../../../../core/glass_container.dart';
 import '../models/assigned_task_view_model.dart';
+import 'lead_badge.dart';
 
 class AssignedTaskCard extends StatelessWidget {
   final AssignedTaskViewModel task;
-  final String leadMemberName;
-  final bool isCurrentUserLead;
+  final bool isSelected;
+  final String? leadMemberName;
 
   const AssignedTaskCard({
     super.key,
     required this.task,
-    required this.leadMemberName,
-    required this.isCurrentUserLead,
+    required this.isSelected,
+    this.leadMemberName,
   });
 
   @override
   Widget build(BuildContext context) {
-    return GlassContainer(
-      blur: 18,
-      opacity: 0.18,
-      tint: Colors.black,
-      borderRadius: BorderRadius.circular(18),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildTitleRow(),
-          const SizedBox(height: 4),
-          if (task.groupName.isNotEmpty) _buildGroupRow(),
-          if (leadMemberName.isNotEmpty) _buildLeadRow(),
-          if (task.description.isNotEmpty) ...[
+    final bgOpacity = isSelected ? 0.22 : 0.18;
+    final borderColor =
+        isSelected ? Colors.cyanAccent.withOpacity(0.8) : Colors.white12;
+
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: borderColor, width: isSelected ? 1.2 : 0.6),
+      ),
+      child: GlassContainer(
+        blur: 18,
+        opacity: bgOpacity,
+        tint: Colors.black,
+        borderRadius: BorderRadius.circular(18),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildTitleRow(),
             const SizedBox(height: 4),
-            Text(
-              task.description,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Colors.white70,
-                fontSize: 13,
+            if (task.groupName.isNotEmpty) _buildGroupRow(),
+            _buildLeadRow(),
+            if (task.description.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(
+                task.description,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white70,
+                  fontSize: 13,
+                ),
               ),
-            ),
+            ],
+            const SizedBox(height: 6),
+            _buildStatusRow(),
           ],
-          const SizedBox(height: 6),
-          _buildStatusRow(),
-        ],
+        ),
       ),
     );
   }
@@ -110,46 +119,29 @@ class AssignedTaskCard extends StatelessWidget {
     );
   }
 
-  Widget _buildLeadRow() {
-  // leadMemberName is already the full name (e.g. "Pool Black")
-  final label = isCurrentUserLead
-      ? 'Lead: You ($leadMemberName)'
-      : 'Lead: $leadMemberName';
+    Widget _buildLeadRow() {
+    final name = (leadMemberName != null && leadMemberName!.isNotEmpty)
+        ? leadMemberName
+        : task.leadMemberId;
 
-  return Padding(
-    padding: const EdgeInsets.only(bottom: 2),
-    child: Row(
-      children: [
-        Text(
-          label,
-          style: const TextStyle(
-            color: Colors.amberAccent,
-            fontSize: 12,
-          ),
-        ),
-        if (isCurrentUserLead) ...[
-          const SizedBox(width: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-            decoration: BoxDecoration(
-              color: Colors.amber.withOpacity(0.16),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: Colors.amber, width: 0.8),
-            ),
-            child: const Text(
-              'YOU ARE THE LEAD',
-              style: TextStyle(
-                color: Colors.amber,
-                fontSize: 10,
-                fontWeight: FontWeight.w700,
-              ),
+    final leadText =
+        name == null ? 'Lead: —' : 'Lead: $name';
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Row(
+        children: [
+          Text(
+            leadText,
+            style: const TextStyle(
+              color: Colors.amberAccent,
+              fontSize: 12,
             ),
           ),
         ],
-      ],
-    ),
-  );
-}
+      ),
+    );
+  }
 
 
   Widget _buildStatusRow() {
