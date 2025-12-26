@@ -180,74 +180,92 @@ class WorkspaceShellState extends State<WorkspaceShell>
 
 
   Future<void> openGlobalGlassSheet() async {
-    final service = WallpaperService.instance;
-    double tempOpacity = service.globalGlassOpacity;
-    double tempBlur = service.globalGlassBlur;
+  final service = WallpaperService.instance;
+  double tempOpacity = service.globalGlassOpacity;
+  double tempBlur = service.globalGlassBlur;
 
-    final applied = await showModalBottomSheet<bool>(
-      context: context,
-      backgroundColor: const Color(0xFF05040A),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            return SafeArea(
-              top: false,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text('Glass settings', style: TextStyle(color: Colors.white, fontSize: 16)),
-                    const SizedBox(height: 20),
-                    Row(
-                      children: [
-                        const Text('Opacity', style: TextStyle(color: Colors.white70)),
-                        Expanded(
-                          child: Slider(
-                            min: 0.04, max: 0.30, divisions: 26,
-                            value: tempOpacity.clamp(0.04, 0.30),
-                            onChanged: (v) => setModalState(() => tempOpacity = v),
-                          ),
+  final applied = await showModalBottomSheet<bool>(
+    context: context,
+    backgroundColor: const Color(0xFF05040A),
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+    ),
+    builder: (context) {
+      return StatefulBuilder(
+        builder: (context, setModalState) {
+          return SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Glass settings', style: TextStyle(color: Colors.white, fontSize: 16)),
+                  const SizedBox(height: 20),
+                  
+                  // Opacity slider
+                  Row(
+                    children: [
+                      const Text('Opacity', style: TextStyle(color: Colors.white70)),
+                      Expanded(
+                        child: Slider(
+                          min: 0.04,
+                          max: 0.30,
+                          divisions: 26,
+                          value: tempOpacity.clamp(0.04, 0.30),
+                          onChanged: (v) {
+                            setModalState(() => tempOpacity = v);
+                            service.setGlassOpacity(v); // ✅ Auto-saves now!
+                          },
                         ),
-                      ],
-                    ),
-                    Row(
-                      children: [
-                        const Text('Blur', style: TextStyle(color: Colors.white70)),
-                        Expanded(
-                          child: Slider(
-                            min: 0, max: 30, divisions: 30,
-                            value: tempBlur.clamp(0, 30),
-                            onChanged: (v) => setModalState(() => tempBlur = v),
-                          ),
-                        ),
-                      ],
-                    ),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: TextButton(
-                        onPressed: () => Navigator.pop(context, true),
-                        child: const Text('Apply'),
                       ),
-                    )
-                  ],
-                ),
+                    ],
+                  ),
+                  
+                  // Blur slider
+                  Row(
+                    children: [
+                      const Text('Blur', style: TextStyle(color: Colors.white70)),
+                      Expanded(
+                        child: Slider(
+                          min: 0,
+                          max: 30,
+                          divisions: 30,
+                          value: tempBlur.clamp(0, 30),
+                          onChanged: (v) {
+                            setModalState(() => tempBlur = v);
+                            service.setGlassBlur(v); // ✅ Auto-saves now!
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                  
+                  // Close button
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      child: const Text('Close'),
+                    ),
+                  ),
+                ],
               ),
-            );
-          },
-        );
-      },
-    );
+            ),
+          );
+        },
+      );
+    },
+  );
+  
+  // ❌ REMOVED: No need to manually save anymore
+  // if (applied == true) {
+  //   service.setGlassOpacity(tempOpacity);
+  //   service.setGlassBlur(tempBlur);
+  //   await service.saveSettings();
+  // }
+}
 
-    if (applied == true) {
-      service.setGlassOpacity(tempOpacity);
-      service.setGlassBlur(tempBlur);
-      await service.saveSettings();
-    }
-  }
 
   @override
   void dispose() {

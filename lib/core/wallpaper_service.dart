@@ -16,29 +16,27 @@ class WallpaperService extends ChangeNotifier {
   WallpaperService._();
 
   static const _prefsWallpaperKey = 'wallpaper_path';
-  static const _prefsGlobalOpacityKey = 'global_widget_opacity';
-  static const _prefsGlobalBlurKey = 'global_widget_blur';
+  static const prefsGlobalOpacityKey = 'global_widget_opacity';
+  static const prefsGlobalBlurKey = 'global_widget_blur';
 
   String? wallpaperPath;
   double globalGlassOpacity = 0.12;
   double globalGlassBlur = 16.0;
+  bool isLoaded = false;
 
-  bool _isLoaded = false;
-
-  // Cached wallpaper (avoid sync decode on first frames)
   ui.Image? _cachedDecodedImage;
-  ImageProvider? _cachedImageProvider;
-
-  // Notify throttling (prevents rebuild storms on sliders)
+  ImageProvider? cachedImageProvider;
   DateTime _lastNotify = DateTime.fromMillisecondsSinceEpoch(0);
 
   Future<void> loadSettings() async {
-    if (_isLoaded) return;
+    if (isLoaded) return;
 
     final prefs = await SharedPreferences.getInstance();
     wallpaperPath = prefs.getString(_prefsWallpaperKey);
-    globalGlassOpacity = prefs.getDouble(_prefsGlobalOpacityKey) ?? 0.12;
-    globalGlassBlur = prefs.getDouble(_prefsGlobalBlurKey) ?? 16.0;
+    globalGlassOpacity = prefs.getDouble(prefsGlobalOpacityKey) ?? 0.12;
+    globalGlassBlur = prefs.getDouble(prefsGlobalBlurKey) ?? 16.0;
+
+    debugPrint('✅ [GLASS] Loaded from cache: blur=$globalGlassBlur, opacity=$globalGlassOpacity');
 
     if (wallpaperPath != null && File(wallpaperPath!).existsSync()) {
       await _precacheWallpaper();
@@ -46,22 +44,20 @@ class WallpaperService extends ChangeNotifier {
       wallpaperPath = null;
     }
 
-    _isLoaded = true;
+    isLoaded = true;
     _notifyNow();
   }
 
   Future<void> saveSettings() async {
     final prefs = await SharedPreferences.getInstance();
-
     if (wallpaperPath != null) {
       await prefs.setString(_prefsWallpaperKey, wallpaperPath!);
     } else {
       await prefs.remove(_prefsWallpaperKey);
     }
-
-    await prefs.setDouble(_prefsGlobalOpacityKey, globalGlassOpacity);
-    await prefs.setDouble(_prefsGlobalBlurKey, globalGlassBlur);
-
+    await prefs.setDouble(prefsGlobalOpacityKey, globalGlassOpacity);
+    await prefs.setDouble(prefsGlobalBlurKey, globalGlassBlur);
+    debugPrint('💾 [GLASS] Full settings saved: blur=$globalGlassBlur, opacity=$globalGlassOpacity');
     _notifyNow();
   }
 
@@ -77,31 +73,70 @@ class WallpaperService extends ChangeNotifier {
 
     final normalizedPath = await _copyAndNormalizeWallpaper(pickedPath);
     wallpaperPath = normalizedPath;
-
     await _precacheWallpaper();
     await saveSettings();
   }
 
   Future<void> resetWallpaper() async {
     wallpaperPath = null;
-    _cachedImageProvider = null;
+    cachedImageProvider = null;
     _cachedDecodedImage = null;
     await saveSettings();
   }
 
-  void setGlassBlur(double blur) {
-    globalGlassBlur = blur.clamp(0.0, 40.0);
-    _throttledNotify();
-  }
+  // In lib/core/wallpaper_service.dart - Replace the setters:
 
-  void setGlassOpacity(double opacity) {
-    globalGlassOpacity = opacity.clamp(0.02, 0.40);
+void setGlassBlur(double blur) {
+  final oldBlur = globalGlassBlur;
+  final clampedBlur = blur.clamp(0.0, 40.0);
+  
+  // 🛡️ BLOCK performance overrides that reset to 0.0
+  if (clampedBlur == 0.0 && oldBlur > 5.0) {
+    debugPrint('🛡️ [GLASS PROTECTED] Blocked blur=0.0 → keeping $oldBlur');
     _throttledNotify();
+    return; // BLOCK IT!
+  }
+  
+  globalGlassBlur = clampedBlur;
+  debugPrint('🔵 [GLASS] Blur → $globalGlassBlur');
+  _throttledNotify();
+  unawaited(_saveGlassSettingsOnly());
+}
+
+void setGlassOpacity(double opacity) {
+  final oldOpacity = globalGlassOpacity;
+  final clampedOpacity = opacity.clamp(0.02, 0.40);
+  
+  // 🛡️ BLOCK performance overrides that reset to 0.04
+  if (clampedOpacity <= 0.05 && oldOpacity > 0.10) {
+    debugPrint('🛡️ [GLASS PROTECTED] Blocked opacity=$clampedOpacity → keeping $oldOpacity');
+    _throttledNotify();
+    return; // BLOCK IT!
+  }
+  
+  globalGlassOpacity = clampedOpacity;
+  debugPrint('🔵 [GLASS] Opacity → $globalGlassOpacity');
+  _throttledNotify();
+  unawaited(_saveGlassSettingsOnly());
+}
+
+
+
+  // ✅ NEW: Fast save (only glass settings, not wallpaper)
+  Future<void> _saveGlassSettingsOnly() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setDouble(prefsGlobalOpacityKey, globalGlassOpacity);
+      await prefs.setDouble(prefsGlobalBlurKey, globalGlassBlur);
+      debugPrint('✅ [GLASS] Saved to cache: blur=$globalGlassBlur, opacity=$globalGlassOpacity');
+    } catch (e) {
+      debugPrint('❌ [GLASS] Save failed: $e');
+    }
   }
 
   void _throttledNotify() {
     final now = DateTime.now();
-    if (now.difference(_lastNotify).inMilliseconds < 16) return; // ~60fps cap
+    if (now.difference(_lastNotify).inMilliseconds < 16) return;
     _lastNotify = now;
     notifyListeners();
   }
@@ -111,7 +146,6 @@ class WallpaperService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// IMPORTANT: Keep wallpaper decode async and cached.
   Future<void> _precacheWallpaper() async {
     final path = wallpaperPath;
     if (path == null) return;
@@ -119,28 +153,26 @@ class WallpaperService extends ChangeNotifier {
     final file = File(path);
     if (!file.existsSync()) {
       wallpaperPath = null;
-      _cachedImageProvider = null;
+      cachedImageProvider = null;
       _cachedDecodedImage = null;
       return;
     }
 
     try {
-      _cachedImageProvider = FileImage(file);
-
-      final imageStream =
-          _cachedImageProvider!.resolve(const ImageConfiguration());
+      cachedImageProvider = FileImage(file);
+      final imageStream = cachedImageProvider!.resolve(const ImageConfiguration());
       final completer = Completer<void>();
-
       late final ImageStreamListener listener;
+
       listener = ImageStreamListener(
         (ImageInfo info, bool _) {
           _cachedDecodedImage = info.image;
           imageStream.removeListener(listener);
           completer.complete();
         },
-        onError: (error, stack) {
+        onError: (_, __) {
           imageStream.removeListener(listener);
-          _cachedImageProvider = null;
+          cachedImageProvider = null;
           _cachedDecodedImage = null;
           completer.complete();
         },
@@ -149,27 +181,22 @@ class WallpaperService extends ChangeNotifier {
       imageStream.addListener(listener);
       await completer.future;
     } catch (_) {
-      _cachedImageProvider = null;
+      cachedImageProvider = null;
       _cachedDecodedImage = null;
     }
   }
 
-  /// Fixes “wallpaper problems” on desktop by normalizing huge images:
-  /// - Downscales to a max dimension (default 2560px)
-  /// - Re-encodes to PNG (fast decode and predictable)
   Future<String> _copyAndNormalizeWallpaper(
-    String pickedPath, {
+    String pickedPath, [
     int maxDimension = 2560,
-  }) async {
+  ]) async {
     final appDir = await getApplicationSupportDirectory();
     final wpDir = Directory(p.join(appDir.path, 'wallpapers'));
     if (!await wpDir.exists()) {
       await wpDir.create(recursive: true);
     }
 
-    // Always store as .png after normalization
     final cachedPath = p.join(wpDir.path, 'current_wallpaper.png');
-
     final srcBytes = await File(pickedPath).readAsBytes();
 
     try {
@@ -180,18 +207,17 @@ class WallpaperService extends ChangeNotifier {
       final srcW = img.width;
       final srcH = img.height;
 
-      // Compute target size while preserving aspect ratio
-      final scale =
-          math.min(1.0, maxDimension / math.max(srcW.toDouble(), srcH.toDouble()));
+      final scale = math.min(
+        1.0,
+        maxDimension / math.max(srcW.toDouble(), srcH.toDouble()),
+      );
       final targetW = (srcW * scale).round();
       final targetH = (srcH * scale).round();
 
       ui.Image outImage = img;
 
-      // If downscaling is needed, decode again with target sizes
       if (scale < 1.0) {
         codec.dispose();
-
         final codec2 = await ui.instantiateImageCodec(
           srcBytes,
           targetWidth: targetW,
@@ -204,26 +230,22 @@ class WallpaperService extends ChangeNotifier {
         codec.dispose();
       }
 
-      final byteData =
-          await outImage.toByteData(format: ui.ImageByteFormat.png);
+      final byteData = await outImage.toByteData(format: ui.ImageByteFormat.png);
       final pngBytes = byteData?.buffer.asUint8List();
 
       if (pngBytes == null) {
-        // fallback: raw copy
         await File(pickedPath).copy(cachedPath);
         return cachedPath;
       }
 
       await File(cachedPath).writeAsBytes(pngBytes, flush: true);
 
-      // Best-effort dispose
       try {
         outImage.dispose();
       } catch (_) {}
 
       return cachedPath;
     } catch (_) {
-      // If anything fails, fallback to a normal copy
       final ext = p.extension(pickedPath).isNotEmpty ? p.extension(pickedPath) : '.jpg';
       final fallbackPath = p.join(wpDir.path, 'current_wallpaper$ext');
       await File(pickedPath).copy(fallbackPath);
@@ -232,10 +254,10 @@ class WallpaperService extends ChangeNotifier {
   }
 
   BoxDecoration get backgroundDecoration {
-    if (_cachedImageProvider != null && _cachedDecodedImage != null) {
+    if (cachedImageProvider != null && _cachedDecodedImage != null) {
       return BoxDecoration(
         image: DecorationImage(
-          image: _cachedImageProvider!,
+          image: cachedImageProvider!,
           fit: BoxFit.cover,
         ),
       );
@@ -249,18 +271,18 @@ class WallpaperService extends ChangeNotifier {
       ),
     );
   }
-  
-Future<void> updateGlass({
-  required double blur,
-  required double opacity,
-}) async {
-  globalGlassBlur = blur.clamp(0.0, 30.0);
-  globalGlassOpacity = opacity.clamp(0.0, 1.0);
 
-  final prefs = await SharedPreferences.getInstance();
-  await prefs.setDouble(_prefsGlobalBlurKey, globalGlassBlur);
-  await prefs.setDouble(_prefsGlobalOpacityKey, globalGlassOpacity);
-
-  notifyListeners();
-}
+  // Legacy method (kept for backward compatibility)
+  Future<void> updateGlass({
+    required double blur,
+    required double opacity,
+  }) async {
+    globalGlassBlur = blur.clamp(0.0, 30.0);
+    globalGlassOpacity = opacity.clamp(0.0, 1.0);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(prefsGlobalBlurKey, globalGlassBlur);
+    await prefs.setDouble(prefsGlobalOpacityKey, globalGlassOpacity);
+    debugPrint('💾 [GLASS] Legacy updateGlass() saved: blur=$globalGlassBlur, opacity=$globalGlassOpacity');
+    notifyListeners();
+  }
 }
