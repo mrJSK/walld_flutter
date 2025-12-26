@@ -64,96 +64,106 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
   }
 
   Future<void> _createTaskFromPayload(Map<String, dynamic> values) async {
-  final user = FirebaseAuth.instance.currentUser;
+    // current logged-in Firebase user (assigner) [web:10][web:23]
+    final user = FirebaseAuth.instance.currentUser;
 
-  if (user == null) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('You must be logged in to create a task'),
-        backgroundColor: Colors.redAccent,
-      ),
-    );
-    return;
-  }
-
-  setState(() => _submitting = true);
-  try {
-    final now = DateTime.now();
-    final tasksCol = FirebaseFirestore.instance
-        .collection('tenants')
-        .doc(tenantId)
-        .collection('tasks');
-
-    // ✅ 1) Resolve assignee node → head user UID
-    final renderer = _rendererKey.currentState;
-    String? assignedToUserId;
-
-    // adjust key to whatever you used in the form: assignee / assignTo / assign_to
-    final assigneeNodeId =
-        values['assignee'] ?? values['assignTo'] ?? values['assign_to'];
-
-    if (assigneeNodeId != null &&
-        assigneeNodeId != 'none' &&
-        assigneeNodeId != 'error') {
-      // You'll have stored this map when loading dropdown options
-      // Map<String, String> _nodeToHeadUserMap = { nodeId: headUserUid }
-      assignedToUserId =
-          renderer?._nodeToHeadUserMap[assigneeNodeId.toString()];
-    }
-
-    final data = <String, dynamic>{
-      'title': values['title'] ?? '',
-      'description': values['description'] ?? '',
-      'status': 'PENDING',
-      'created_by': user.uid,
-      'created_at': now.toIso8601String(),
-      'updated_at': now.toIso8601String(),
-      'custom_fields': values,
-      if (assignedToUserId != null) 'assigned_to': assignedToUserId, // ✅
-    };
-
-    // ✅ 2) Due date handling, unchanged
-    DateTime? due = renderer?.getSelectedDueDate();
-    if (due != null) {
-      data['due_date'] = due.toIso8601String();
-      final key = renderer?.firstDateFieldKey;
-      if (key != null) {
-        values[key] = due;
-      }
-    }
-
-    final docRef = await tasksCol.add(data);
-
-    debugPrint(
-        "✅ Task created and assigned to: $assignedToUserId (docId: ${docRef.id})");
-    debugPrint("Final Task Payload: $data");
-
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          assignedToUserId != null
-              ? 'Task created and assigned successfully'
-              : 'Task created (no assignee found)',
+    if (user == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('You must be logged in to create a task'),
+          backgroundColor: Colors.redAccent,
         ),
-        backgroundColor: Colors.cyan,
-      ),
-    );
+      );
+      return;
+    }
 
-    _rendererKey.currentState?.resetForm();
-  } catch (e) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Failed to create task: $e'),
-        backgroundColor: Colors.redAccent,
-      ),
-    );
-  } finally {
-    if (mounted) setState(() => _submitting = false);
+    setState(() => _submitting = true);
+    try {
+      final now = DateTime.now();
+      final tasksCol = FirebaseFirestore.instance
+          .collection('tenants')
+          .doc(tenantId)
+          .collection('tasks'); // main tasks collection [web:17][web:19]
+
+      // ✅ 1) Resolve assignee node → head user UID
+      final renderer = _rendererKey.currentState;
+      String? assignedToUserId;
+
+      // adjust key to whatever you used in the form: assignee / assignTo / assign_to
+      final assigneeNodeId =
+          values['assignee'] ?? values['assignTo'] ?? values['assign_to'];
+
+      if (assigneeNodeId != null &&
+          assigneeNodeId != 'none' &&
+          assigneeNodeId != 'error') {
+        // Map<String, String> _nodeToHeadUserMap = { nodeId: headUserUid }
+        assignedToUserId =
+            renderer?._nodeToHeadUserMap[assigneeNodeId.toString()];
+      }
+
+      // ✅ 2) Build Firestore payload
+      final data = <String, dynamic>{
+        'title': values['title'] ?? '',
+        'description': values['description'] ?? '',
+        'status': 'PENDING',
+
+        // who assigned the task (assigner) -> current user uid
+        'assigned_by': user.uid,
+
+        'created_at': now.toIso8601String(),
+        'updated_at': now.toIso8601String(),
+
+        // keep full dynamic form payload
+        'custom_fields': values,
+
+        // assignee (target user)
+        if (assignedToUserId != null) 'assigned_to': assignedToUserId,
+      };
+
+      // ✅ 3) Due date handling, unchanged
+      DateTime? due = renderer?.getSelectedDueDate();
+      if (due != null) {
+        data['due_date'] = due.toIso8601String();
+        final key = renderer?.firstDateFieldKey;
+        if (key != null) {
+          values[key] = due;
+        }
+      }
+
+      // ✅ 4) Create document in Firestore
+      final docRef = await tasksCol.add(data);
+
+      debugPrint(
+        "✅ Task created and assigned to: $assignedToUserId (docId: ${docRef.id})",
+      );
+      debugPrint("Final Task Payload: $data");
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            assignedToUserId != null
+                ? 'Task created and assigned successfully'
+                : 'Task created (no assignee found)',
+          ),
+          backgroundColor: Colors.cyan,
+        ),
+      );
+
+      _rendererKey.currentState?.resetForm();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to create task: $e'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
   }
-}
 
 
   Future<void> _onCreatePressed() async {

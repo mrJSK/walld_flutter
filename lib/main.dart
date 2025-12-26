@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:walld_flutter/Developer/developer_dashboard_screen.dart';
 import 'package:walld_flutter/core/wallpaper_service.dart';
 import 'package:walld_flutter/firebase_options.dart';
 import 'package:walld_flutter/workspace/loading_screen.dart';
@@ -119,10 +120,10 @@ class WallDAppState extends State<WallDApp> {
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF05040A),
       ),
-      home: isLoading 
-        ? LoadingScreen(onLoadingComplete: onLoadingComplete)
-        : WorkspaceShell(workspaceController: workspaceController),
-      // ✅ REMOVED: home: const DeveloperDashboardScreen,
+      // home: isLoading 
+      //   ? LoadingScreen(onLoadingComplete: onLoadingComplete)
+      //   : WorkspaceShell(workspaceController: workspaceController),
+      home: const DeveloperDashboardScreen(),
     );
   }
 }

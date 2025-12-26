@@ -265,57 +265,57 @@ class WallDApp extends StatefulWidget {
   const WallDApp({super.key});
 
   @override
-  State<WallDApp> createState() => _WallDAppState();
+  State<WallDApp> createState() => WallDAppState();
 }
 
-class _WallDAppState extends State<WallDApp> {
-  final WorkspaceController _workspaceController = WorkspaceController();
-  bool _isLoading = true;
+class WallDAppState extends State<WallDApp> {
+  final WorkspaceController workspaceController = WorkspaceController();
+  bool isLoading = true;
 
   @override
   void initState() {
     super.initState();
-    debugPrint('🚀 WallDApp - initState()');
+    debugPrint('WallDApp - initState');
   }
 
   @override
   void dispose() {
-    debugPrint('🚀 WallDApp - dispose()');
-    _workspaceController.dispose();
+    debugPrint('WallDApp - dispose');
+    workspaceController.dispose();
     super.dispose();
   }
 
-  void _onLoadingComplete() {
-    debugPrint('🚀 WallDApp - onLoadingComplete() called');
-    debugPrint('🎉 Loading complete - transitioning to workspace');
+  void onLoadingComplete() {
+    debugPrint('WallDApp - onLoadingComplete called');
+    debugPrint('Loading complete - transitioning to workspace');
     if (mounted) {
-      setState(() => _isLoading = false);
-      debugPrint('🚀 WallDApp - isLoading set to false -> showing WorkspaceShell');
+      setState(() {
+        isLoading = false;
+      });
+      debugPrint('WallDApp - isLoading set to false - showing WorkspaceShell');
     } else {
-      debugPrint('⚠️ WallDApp - Widget not mounted, skipping setState');
+      debugPrint('WallDApp - Widget not mounted, skipping setState');
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    debugPrint('🚀 WallDApp - build() - isLoading=$_isLoading');
-    
+    debugPrint('WallDApp - build - isLoading:$isLoading');
     return MaterialApp(
       title: 'Wall-D',
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF05040A),
       ),
-      home: _isLoading
-        ? LoadingScreen(onLoadingComplete: _onLoadingComplete)
-        : WorkspaceShell(
-            workspaceController: _workspaceController,
-          ),
-
-      // home: const DeveloperDashboardScreen(),
+      home: isLoading 
+        ? LoadingScreen(onLoadingComplete: onLoadingComplete)
+        : WorkspaceShell(workspaceController: workspaceController),
+      // ✅ REMOVED: home: const DeveloperDashboardScreen,
     );
   }
 }
+
+
 
 ================================================================================
 
@@ -341,43 +341,17 @@ class AppColors {
 ================================================================================
 
 // File: lib\core\glass_container.dart
-// lib/core/glasscontainer.dart
 import 'dart:ui';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+// import 'performancestate.dart'; // ❌ REMOVED - no more performance overrides
 
-import 'performance_state.dart';
+// Controls whether this widget applies per-widget BackdropFilter blur
+enum GlassBlurMode { none, perWidget, auto }
 
-/// Controls whether this widget applies per-widget BackdropFilter blur.
-///
-/// - [none]: Never uses BackdropFilter (recommended when you plan to use ONE global blur layer,
-///           or a pre-blurred wallpaper image).
-/// - [perWidget]: Always uses BackdropFilter when blur >= 2.0 (expensive; avoid on low-end).
-/// - [auto]: Uses BackdropFilter only when conditions are good (warm-up stable + good FPS + not interacting).
-enum GlassBlurMode {
-  none,
-  perWidget,
-  auto,
-}
+// High-level quality selection (user-controlled only)
+enum GlassQualityMode { auto, high, medium, low, ultraLow }
 
-/// High-level quality selection.
-///
-/// - [auto]: Decides based on [PerformanceState.instance.currentFps] and [isInteracting].
-/// - Others: Force a specific quality level.
-enum GlassQualityMode {
-  auto,
-  high,
-  medium,
-  low,
-  ultraLow,
-}
-
-/// A performant “glass” container.
-///
-/// Key performance idea:
-/// - Prefer a SINGLE global blur layer (or pre-blurred wallpaper) instead of per-widget blur.
-/// - This widget can be used in "no blur" mode while still keeping the glass look via opacity/tint.
 class GlassContainer extends StatelessWidget {
   final double blur;
   final double opacity;
@@ -385,21 +359,17 @@ class GlassContainer extends StatelessWidget {
   final BorderRadius borderRadius;
   final EdgeInsetsGeometry padding;
   final Widget child;
-
   final double borderOpacity;
   final double borderWidth;
   final List<BoxShadow> boxShadow;
 
-  /// New: controls blur strategy.
+  // Controls blur strategy
   final GlassBlurMode blurMode;
-
-  /// New: controls quality strategy.
+  // Controls quality strategy (user choice only)
   final GlassQualityMode qualityMode;
-
-  /// New: hint from callers (dragging/resizing/scrolling/animating) to reduce effects.
+  // Hint from callers (dragging/resizing/scrolling/animating)
   final bool isInteracting;
-
-  /// New: allow callers to disable shadows completely (useful during animations).
+  // Allow callers to disable shadows completely
   final bool disableShadows;
 
   const GlassContainer({
@@ -419,126 +389,59 @@ class GlassContainer extends StatelessWidget {
         offset: Offset(0, 10),
       ),
     ],
-
-    // Defaults: prioritize FPS.
     this.blurMode = GlassBlurMode.auto,
     this.qualityMode = GlassQualityMode.auto,
     this.isInteracting = false,
     this.disableShadows = false,
   });
 
-  GlassQualityMode _resolveQualityMode() {
+  // ✅ FIXED: Always use user's exact settings - NO performance overrides
+  GlassQualityMode get resolvedQualityMode {
+    // User explicitly chose a quality level
     if (qualityMode != GlassQualityMode.auto) return qualityMode;
-
-    // Caller says this is a hot path (dragging/resizing/scrolling/animating)
-    if (isInteracting) return GlassQualityMode.low;
-
-    final fps = PerformanceState.instance.currentFps;
-
-    // If FPS is unknown (e.g., early startup), be conservative.
-    if (fps == null) return GlassQualityMode.low;
-
-    if (fps < 30) return GlassQualityMode.ultraLow;
-    if (fps < 45) return GlassQualityMode.low;
-    if (fps < 55) return GlassQualityMode.medium;
+    
+    // Always use high quality unless user specifically chose lower
     return GlassQualityMode.high;
   }
 
-  double _effectiveBlur(GlassQualityMode q, double requested) {
-    final b = requested.clamp(0.0, 40.0);
-    switch (q) {
-      case GlassQualityMode.ultraLow:
-        return 0.0;
-      case GlassQualityMode.low:
-        // Keep only a tiny blur (or none) to avoid saveLayer+blur cost.
-        return b.clamp(0.0, 2.0);
-      case GlassQualityMode.medium:
-        return b.clamp(0.0, 6.0);
-      case GlassQualityMode.high:
-      case GlassQualityMode.auto:
-        return b;
-    }
-  }
+  // ✅ FIXED: Use EXACT user blur value - no clamping/reduction
+  double get effectiveBlur => blur.clamp(0.0, 40.0);
 
-  double _effectiveOpacity(GlassQualityMode q, double requested) {
-    final o = requested.clamp(0.0, 1.0);
-    switch (q) {
-      case GlassQualityMode.ultraLow:
-        // More opaque reduces blending cost & overdraw artifacts.
-        return o.clamp(0.08, 0.30);
-      case GlassQualityMode.low:
-        return o.clamp(0.06, 0.28);
-      case GlassQualityMode.medium:
-        return o.clamp(0.05, 0.26);
-      case GlassQualityMode.high:
-      case GlassQualityMode.auto:
-        return o;
-    }
-  }
+  // ✅ FIXED: Use EXACT user opacity value - no clamping/reduction  
+  double get effectiveOpacity => opacity.clamp(0.0, 1.0);
 
-  List<BoxShadow> _effectiveShadows(GlassQualityMode q) {
+  // ✅ FIXED: Always use full shadows - no performance reduction
+  List<BoxShadow> get effectiveShadows {
     if (disableShadows) return const [];
-
-    // Shadows add overdraw; remove them on low quality.
-    if (q == GlassQualityMode.ultraLow || q == GlassQualityMode.low) {
-      return const [];
-    }
-
-    final factor = q == GlassQualityMode.medium ? 0.55 : 1.0;
-    return boxShadow
-        .map(
-          (s) => BoxShadow(
-            color: s.color.withOpacity(s.color.opacity * factor),
-            offset: s.offset * factor,
-            blurRadius: s.blurRadius * factor,
-            spreadRadius: s.spreadRadius * factor,
-          ),
-        )
-        .toList(growable: false);
+    return boxShadow;
   }
 
-  bool _shouldUseBackdropFilter({
-    required GlassQualityMode q,
-    required double blurSigma,
-  }) {
-    if (blurSigma < 0) return false;
-
+  // ✅ FIXED: Simplified backdrop filter logic - respect user blurMode only
+  bool get shouldUseBackdropFilter {
+    if (effectiveBlur == 0) return false;
+    
     switch (blurMode) {
       case GlassBlurMode.none:
         return false;
-
       case GlassBlurMode.perWidget:
-        // Always enable (expensive).
         return true;
-
       case GlassBlurMode.auto:
-        // Only enable in "high" mode and only after warm-up stability
-        // so low-end / startup doesn’t pay the blur cost.
-        if (!PerformanceState.instance.isWarmupStable) return false;
-        return q == GlassQualityMode.high && !isInteracting;
+        // Always use backdrop filter if user set blur > 0
+        return true;
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final q = _resolveQualityMode();
-
-    //final blurSigma = _effectiveBlur(q, blur);
-    final a = _effectiveOpacity(q, opacity);
-    final blurSigma = blur.clamp(0.0, 30.0);
+    final blurSigma = effectiveBlur.clamp(0.0, 30.0);
+    final a = effectiveOpacity;
+    
     // Tint fill
     final fill = tint.withOpacity(a);
-
-    // Reduce border work in low quality.
-    final effBorderOpacity = (q == GlassQualityMode.ultraLow)
-        ? (borderOpacity * 0.35).clamp(0.0, 1.0)
-        : (q == GlassQualityMode.low)
-            ? (borderOpacity * 0.55).clamp(0.0, 1.0)
-            : borderOpacity.clamp(0.0, 1.0);
-
-    final effBorderWidth = (q == GlassQualityMode.ultraLow)
-        ? (borderWidth * 0.5).clamp(0.0, borderWidth)
-        : borderWidth;
+    
+    // Full border (no performance reduction)
+    final effBorderOpacity = borderOpacity.clamp(0.0, 1.0);
+    final effBorderWidth = borderWidth;
 
     final decoration = BoxDecoration(
       color: fill,
@@ -547,7 +450,7 @@ class GlassContainer extends StatelessWidget {
         color: Colors.white.withOpacity(effBorderOpacity),
         width: effBorderWidth,
       ),
-      boxShadow: _effectiveShadows(q),
+      boxShadow: effectiveShadows,
     );
 
     final body = Container(
@@ -556,18 +459,19 @@ class GlassContainer extends StatelessWidget {
       child: child,
     );
 
-    final useBackdrop = _shouldUseBackdropFilter(q: q, blurSigma: blurSigma);
-
-    // Fast path (recommended): no BackdropFilter at all.
-    if (!useBackdrop) {
+    // Fast path: no BackdropFilter
+    if (!shouldUseBackdropFilter) {
       return body;
     }
 
-    // Slow path (high quality only): per-widget BackdropFilter.
+    // High quality: per-widget BackdropFilter
     return ClipRRect(
       borderRadius: borderRadius,
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: blurSigma, sigmaY: blurSigma),
+        filter: ImageFilter.blur(
+          sigmaX: blurSigma,
+          sigmaY: blurSigma,
+        ),
         child: body,
       ),
     );
@@ -667,29 +571,27 @@ class WallpaperService extends ChangeNotifier {
   WallpaperService._();
 
   static const _prefsWallpaperKey = 'wallpaper_path';
-  static const _prefsGlobalOpacityKey = 'global_widget_opacity';
-  static const _prefsGlobalBlurKey = 'global_widget_blur';
+  static const prefsGlobalOpacityKey = 'global_widget_opacity';
+  static const prefsGlobalBlurKey = 'global_widget_blur';
 
   String? wallpaperPath;
   double globalGlassOpacity = 0.12;
   double globalGlassBlur = 16.0;
+  bool isLoaded = false;
 
-  bool _isLoaded = false;
-
-  // Cached wallpaper (avoid sync decode on first frames)
   ui.Image? _cachedDecodedImage;
-  ImageProvider? _cachedImageProvider;
-
-  // Notify throttling (prevents rebuild storms on sliders)
+  ImageProvider? cachedImageProvider;
   DateTime _lastNotify = DateTime.fromMillisecondsSinceEpoch(0);
 
   Future<void> loadSettings() async {
-    if (_isLoaded) return;
+    if (isLoaded) return;
 
     final prefs = await SharedPreferences.getInstance();
     wallpaperPath = prefs.getString(_prefsWallpaperKey);
-    globalGlassOpacity = prefs.getDouble(_prefsGlobalOpacityKey) ?? 0.12;
-    globalGlassBlur = prefs.getDouble(_prefsGlobalBlurKey) ?? 16.0;
+    globalGlassOpacity = prefs.getDouble(prefsGlobalOpacityKey) ?? 0.12;
+    globalGlassBlur = prefs.getDouble(prefsGlobalBlurKey) ?? 16.0;
+
+    debugPrint('✅ [GLASS] Loaded from cache: blur=$globalGlassBlur, opacity=$globalGlassOpacity');
 
     if (wallpaperPath != null && File(wallpaperPath!).existsSync()) {
       await _precacheWallpaper();
@@ -697,22 +599,20 @@ class WallpaperService extends ChangeNotifier {
       wallpaperPath = null;
     }
 
-    _isLoaded = true;
+    isLoaded = true;
     _notifyNow();
   }
 
   Future<void> saveSettings() async {
     final prefs = await SharedPreferences.getInstance();
-
     if (wallpaperPath != null) {
       await prefs.setString(_prefsWallpaperKey, wallpaperPath!);
     } else {
       await prefs.remove(_prefsWallpaperKey);
     }
-
-    await prefs.setDouble(_prefsGlobalOpacityKey, globalGlassOpacity);
-    await prefs.setDouble(_prefsGlobalBlurKey, globalGlassBlur);
-
+    await prefs.setDouble(prefsGlobalOpacityKey, globalGlassOpacity);
+    await prefs.setDouble(prefsGlobalBlurKey, globalGlassBlur);
+    debugPrint('💾 [GLASS] Full settings saved: blur=$globalGlassBlur, opacity=$globalGlassOpacity');
     _notifyNow();
   }
 
@@ -728,31 +628,70 @@ class WallpaperService extends ChangeNotifier {
 
     final normalizedPath = await _copyAndNormalizeWallpaper(pickedPath);
     wallpaperPath = normalizedPath;
-
     await _precacheWallpaper();
     await saveSettings();
   }
 
   Future<void> resetWallpaper() async {
     wallpaperPath = null;
-    _cachedImageProvider = null;
+    cachedImageProvider = null;
     _cachedDecodedImage = null;
     await saveSettings();
   }
 
-  void setGlassBlur(double blur) {
-    globalGlassBlur = blur.clamp(0.0, 40.0);
-    _throttledNotify();
-  }
+  // In lib/core/wallpaper_service.dart - Replace the setters:
 
-  void setGlassOpacity(double opacity) {
-    globalGlassOpacity = opacity.clamp(0.02, 0.40);
+void setGlassBlur(double blur) {
+  final oldBlur = globalGlassBlur;
+  final clampedBlur = blur.clamp(0.0, 40.0);
+  
+  // 🛡️ BLOCK performance overrides that reset to 0.0
+  if (clampedBlur == 0.0 && oldBlur > 5.0) {
+    debugPrint('🛡️ [GLASS PROTECTED] Blocked blur=0.0 → keeping $oldBlur');
     _throttledNotify();
+    return; // BLOCK IT!
+  }
+  
+  globalGlassBlur = clampedBlur;
+  debugPrint('🔵 [GLASS] Blur → $globalGlassBlur');
+  _throttledNotify();
+  unawaited(_saveGlassSettingsOnly());
+}
+
+void setGlassOpacity(double opacity) {
+  final oldOpacity = globalGlassOpacity;
+  final clampedOpacity = opacity.clamp(0.02, 0.40);
+  
+  // 🛡️ BLOCK performance overrides that reset to 0.04
+  if (clampedOpacity <= 0.05 && oldOpacity > 0.10) {
+    debugPrint('🛡️ [GLASS PROTECTED] Blocked opacity=$clampedOpacity → keeping $oldOpacity');
+    _throttledNotify();
+    return; // BLOCK IT!
+  }
+  
+  globalGlassOpacity = clampedOpacity;
+  debugPrint('🔵 [GLASS] Opacity → $globalGlassOpacity');
+  _throttledNotify();
+  unawaited(_saveGlassSettingsOnly());
+}
+
+
+
+  // ✅ NEW: Fast save (only glass settings, not wallpaper)
+  Future<void> _saveGlassSettingsOnly() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setDouble(prefsGlobalOpacityKey, globalGlassOpacity);
+      await prefs.setDouble(prefsGlobalBlurKey, globalGlassBlur);
+      debugPrint('✅ [GLASS] Saved to cache: blur=$globalGlassBlur, opacity=$globalGlassOpacity');
+    } catch (e) {
+      debugPrint('❌ [GLASS] Save failed: $e');
+    }
   }
 
   void _throttledNotify() {
     final now = DateTime.now();
-    if (now.difference(_lastNotify).inMilliseconds < 16) return; // ~60fps cap
+    if (now.difference(_lastNotify).inMilliseconds < 16) return;
     _lastNotify = now;
     notifyListeners();
   }
@@ -762,7 +701,6 @@ class WallpaperService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// IMPORTANT: Keep wallpaper decode async and cached.
   Future<void> _precacheWallpaper() async {
     final path = wallpaperPath;
     if (path == null) return;
@@ -770,28 +708,26 @@ class WallpaperService extends ChangeNotifier {
     final file = File(path);
     if (!file.existsSync()) {
       wallpaperPath = null;
-      _cachedImageProvider = null;
+      cachedImageProvider = null;
       _cachedDecodedImage = null;
       return;
     }
 
     try {
-      _cachedImageProvider = FileImage(file);
-
-      final imageStream =
-          _cachedImageProvider!.resolve(const ImageConfiguration());
+      cachedImageProvider = FileImage(file);
+      final imageStream = cachedImageProvider!.resolve(const ImageConfiguration());
       final completer = Completer<void>();
-
       late final ImageStreamListener listener;
+
       listener = ImageStreamListener(
         (ImageInfo info, bool _) {
           _cachedDecodedImage = info.image;
           imageStream.removeListener(listener);
           completer.complete();
         },
-        onError: (error, stack) {
+        onError: (_, __) {
           imageStream.removeListener(listener);
-          _cachedImageProvider = null;
+          cachedImageProvider = null;
           _cachedDecodedImage = null;
           completer.complete();
         },
@@ -800,27 +736,22 @@ class WallpaperService extends ChangeNotifier {
       imageStream.addListener(listener);
       await completer.future;
     } catch (_) {
-      _cachedImageProvider = null;
+      cachedImageProvider = null;
       _cachedDecodedImage = null;
     }
   }
 
-  /// Fixes “wallpaper problems” on desktop by normalizing huge images:
-  /// - Downscales to a max dimension (default 2560px)
-  /// - Re-encodes to PNG (fast decode and predictable)
   Future<String> _copyAndNormalizeWallpaper(
-    String pickedPath, {
+    String pickedPath, [
     int maxDimension = 2560,
-  }) async {
+  ]) async {
     final appDir = await getApplicationSupportDirectory();
     final wpDir = Directory(p.join(appDir.path, 'wallpapers'));
     if (!await wpDir.exists()) {
       await wpDir.create(recursive: true);
     }
 
-    // Always store as .png after normalization
     final cachedPath = p.join(wpDir.path, 'current_wallpaper.png');
-
     final srcBytes = await File(pickedPath).readAsBytes();
 
     try {
@@ -831,18 +762,17 @@ class WallpaperService extends ChangeNotifier {
       final srcW = img.width;
       final srcH = img.height;
 
-      // Compute target size while preserving aspect ratio
-      final scale =
-          math.min(1.0, maxDimension / math.max(srcW.toDouble(), srcH.toDouble()));
+      final scale = math.min(
+        1.0,
+        maxDimension / math.max(srcW.toDouble(), srcH.toDouble()),
+      );
       final targetW = (srcW * scale).round();
       final targetH = (srcH * scale).round();
 
       ui.Image outImage = img;
 
-      // If downscaling is needed, decode again with target sizes
       if (scale < 1.0) {
         codec.dispose();
-
         final codec2 = await ui.instantiateImageCodec(
           srcBytes,
           targetWidth: targetW,
@@ -855,26 +785,22 @@ class WallpaperService extends ChangeNotifier {
         codec.dispose();
       }
 
-      final byteData =
-          await outImage.toByteData(format: ui.ImageByteFormat.png);
+      final byteData = await outImage.toByteData(format: ui.ImageByteFormat.png);
       final pngBytes = byteData?.buffer.asUint8List();
 
       if (pngBytes == null) {
-        // fallback: raw copy
         await File(pickedPath).copy(cachedPath);
         return cachedPath;
       }
 
       await File(cachedPath).writeAsBytes(pngBytes, flush: true);
 
-      // Best-effort dispose
       try {
         outImage.dispose();
       } catch (_) {}
 
       return cachedPath;
     } catch (_) {
-      // If anything fails, fallback to a normal copy
       final ext = p.extension(pickedPath).isNotEmpty ? p.extension(pickedPath) : '.jpg';
       final fallbackPath = p.join(wpDir.path, 'current_wallpaper$ext');
       await File(pickedPath).copy(fallbackPath);
@@ -883,10 +809,10 @@ class WallpaperService extends ChangeNotifier {
   }
 
   BoxDecoration get backgroundDecoration {
-    if (_cachedImageProvider != null && _cachedDecodedImage != null) {
+    if (cachedImageProvider != null && _cachedDecodedImage != null) {
       return BoxDecoration(
         image: DecorationImage(
-          image: _cachedImageProvider!,
+          image: cachedImageProvider!,
           fit: BoxFit.cover,
         ),
       );
@@ -900,20 +826,20 @@ class WallpaperService extends ChangeNotifier {
       ),
     );
   }
-  
-Future<void> updateGlass({
-  required double blur,
-  required double opacity,
-}) async {
-  globalGlassBlur = blur.clamp(0.0, 30.0);
-  globalGlassOpacity = opacity.clamp(0.0, 1.0);
 
-  final prefs = await SharedPreferences.getInstance();
-  await prefs.setDouble(_prefsGlobalBlurKey, globalGlassBlur);
-  await prefs.setDouble(_prefsGlobalOpacityKey, globalGlassOpacity);
-
-  notifyListeners();
-}
+  // Legacy method (kept for backward compatibility)
+  Future<void> updateGlass({
+    required double blur,
+    required double opacity,
+  }) async {
+    globalGlassBlur = blur.clamp(0.0, 30.0);
+    globalGlassOpacity = opacity.clamp(0.0, 1.0);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(prefsGlobalBlurKey, globalGlassBlur);
+    await prefs.setDouble(prefsGlobalOpacityKey, globalGlassOpacity);
+    debugPrint('💾 [GLASS] Legacy updateGlass() saved: blur=$globalGlassBlur, opacity=$globalGlassOpacity');
+    notifyListeners();
+  }
 }
 
 ================================================================================
@@ -6616,11 +6542,14 @@ class DashboardPermissions {
 
 // File: lib\dynamic_screen\dashboard_screen.dart
 import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:walld_flutter/dynamic_screen/dashboard_layout_persistence.dart';// show ScreenGridWidgetSpan, ScreenGridConfig
+import 'package:walld_flutter/dynamic_screen/dashboard_layout_persistence.dart';
 import 'package:walld_flutter/dynamic_screen/model/screen_grid.dart';
+
 import '../core/wallpaper_service.dart';
 import 'dashboard_grid.dart';
 import 'widget_manifest.dart';
@@ -6642,13 +6571,44 @@ class DashboardScreenState extends State<DashboardScreen> {
     debugPrint('🔷 DashboardScreen INSTANCE #$_instanceNumber CREATED (ID: $_instanceId)');
   }
 
+  // Grid
   static const ScreenGridConfig grid = ScreenGridConfig(columns: 24, rows: 14);
-  
+
+  // ------------------------------------------------------------
+  // EASY KNOBS (change only these)
+  // ------------------------------------------------------------
+
+  /// Scale factor for ALL default widgets (only affects "defaultItemsForAllowed",
+  /// i.e., first-run / no saved layout yet).
+  static const double defaultWidgetScale = 0.75;
+
+  /// Default widget base size in grid units (before scale).
+  static const int baseColSpan = 7;
+  static const int baseRowSpan = 4;
+
+  /// Default start position (X/Y) in grid units for the first widget.
+  static const int defaultStartCol = 0; // X
+  static const int defaultStartRow = 0; // Y
+
+  /// Login widget defaults (separate knobs).
+  static const int loginCol = 6;
+  static const int loginRow = 3;
+  static const int loginColSpan = 12;
+  static const int loginRowSpan = 8;
+
+  int get defaultColSpan =>
+      math.max(2, (baseColSpan * defaultWidgetScale).round());
+
+  int get defaultRowSpan =>
+      math.max(2, (baseRowSpan * defaultWidgetScale).round());
+
+  // ------------------------------------------------------------
+
   bool loading = true;
   String? error;
   Set<String> allowedWidgetIds = const {'login'};
   final List<ScreenGridWidgetSpan> items = [];
-  
+
   StreamSubscription<User?>? authSubscription;
   String get userId => FirebaseAuth.instance.currentUser?.uid ?? 'anon';
   String get layoutPrefsKey => 'dashboard_layout_v1_$userId';
@@ -6658,10 +6618,9 @@ class DashboardScreenState extends State<DashboardScreen> {
     super.initState();
     debugPrint('🔷 DashboardScreen #$_instanceNumber - initState() - Setting up auth listener');
 
-    // Listen to auth state changes
     authSubscription = FirebaseAuth.instance.authStateChanges().listen((user) {
       debugPrint('🔷 DashboardScreen #$_instanceNumber AUTH CHANGED: user=${user?.uid}');
-      
+
       if (user == null) {
         debugPrint('🔷 DashboardScreen #$_instanceNumber - User logged out, showing login only');
         showLoginOnly();
@@ -6670,8 +6629,7 @@ class DashboardScreenState extends State<DashboardScreen> {
         unawaited(bootstrap());
       }
     });
-    
-    // Initial load
+
     debugPrint('🔷 DashboardScreen #$_instanceNumber - Initial bootstrap call');
     unawaited(bootstrap());
   }
@@ -6688,20 +6646,23 @@ class DashboardScreenState extends State<DashboardScreen> {
       loading = false;
       error = null;
       allowedWidgetIds = const {'login'};
-      items.clear();
-      items.add(ScreenGridWidgetSpan(
-        widgetId: 'login',
-        col: 6,
-        row: 3,
-        colSpan: 12,
-        rowSpan: 8,
-      ));
+      items
+        ..clear()
+        ..add(
+          ScreenGridWidgetSpan(
+            widgetId: 'login',
+            col: loginCol,
+            row: loginRow,
+            colSpan: loginColSpan,
+            rowSpan: loginRowSpan,
+          ),
+        );
     });
   }
 
   Future<void> bootstrap() async {
     debugPrint('🔷🔷🔷 BOOTSTRAP START - DashboardScreen #$_instanceNumber');
-    
+
     setState(() {
       loading = true;
       error = null;
@@ -6709,15 +6670,15 @@ class DashboardScreenState extends State<DashboardScreen> {
 
     try {
       // 1. Get all widgets from manifest
-      allowedWidgetIds = widgetManifest
-          .map((w) => w['id'] as String)
-          .toSet();
+      allowedWidgetIds = widgetManifest.map((w) => w['id'] as String).toSet();
 
       // 2. Load layout from persistence
       await DashboardLayoutPersistence.loadLayout(
         prefsKey: layoutPrefsKey,
         onLoaded: (loaded) {
-          debugPrint('🔷 DashboardScreen #$_instanceNumber - Layout loaded from disk: ${loaded.length} widgets');
+          debugPrint(
+            '🔷 DashboardScreen #$_instanceNumber - Layout loaded from disk: ${loaded.length} widgets',
+          );
           items
             ..clear()
             ..addAll(filterToAllowed(loaded));
@@ -6736,12 +6697,9 @@ class DashboardScreenState extends State<DashboardScreen> {
         return;
       }
 
-      setState(() {
-        loading = false;
-      });
-      
+      setState(() => loading = false);
+
       debugPrint('🔷🔷🔷 BOOTSTRAP END - DashboardScreen #$_instanceNumber - ${items.length} widgets loaded');
-      
     } catch (e) {
       debugPrint('❌ DashboardScreen #$_instanceNumber - Bootstrap error: $e');
       if (!mounted) return;
@@ -6757,52 +6715,66 @@ class DashboardScreenState extends State<DashboardScreen> {
   }
 
   List<ScreenGridWidgetSpan> defaultItemsForAllowed() {
+    // Login-only case
     if (allowedWidgetIds.length == 1 && allowedWidgetIds.contains('login')) {
       return [
         ScreenGridWidgetSpan(
           widgetId: 'login',
-          col: 6,
-          row: 3,
-          colSpan: 12,
-          rowSpan: 8,
+          col: loginCol,
+          row: loginRow,
+          colSpan: loginColSpan,
+          rowSpan: loginRowSpan,
         ),
       ];
     }
-    
+
     final ids = allowedWidgetIds.where((id) => id != 'login').toList();
     if (ids.isEmpty) {
       return [
         ScreenGridWidgetSpan(
           widgetId: 'login',
-          col: 6,
-          row: 3,
-          colSpan: 12,
-          rowSpan: 8,
+          col: loginCol,
+          row: loginRow,
+          colSpan: loginColSpan,
+          rowSpan: loginRowSpan,
         ),
       ];
     }
 
+    // Size knobs (scaled)
+    final w = math.min(defaultColSpan, grid.columns);
+    final h = math.min(defaultRowSpan, grid.rows);
+
+    // Start position knobs (X/Y)
+    int c = defaultStartCol.clamp(0, math.max(0, grid.columns - w));
+    int r = defaultStartRow.clamp(0, math.max(0, grid.rows - h));
+
     final out = <ScreenGridWidgetSpan>[];
-    int c = 0;
-    int r = 0;
 
     for (final id in ids) {
       out.add(ScreenGridWidgetSpan(
         widgetId: id,
         col: c,
         row: r,
-        colSpan: 8,
-        rowSpan: 6,
+        colSpan: w,
+        rowSpan: h,
       ));
-      c += 8;
-      if (c >= grid.columns || c + 8 > grid.columns) {
+
+      // Next position
+      c += w;
+
+      // Wrap to next row
+      if (c >= grid.columns || c + w > grid.columns) {
         c = 0;
-        r += 6;
+        r += h;
       }
-      if (r >= grid.rows) {
-        r = 0; 
+
+      // Wrap to top if overflow
+      if (r >= grid.rows || r + h > grid.rows) {
+        r = 0;
       }
     }
+
     return out;
   }
 
@@ -6854,26 +6826,35 @@ class DashboardScreenState extends State<DashboardScreen> {
                 decoration: wallpaper.backgroundDecoration,
               ),
             ),
-            // Foreground widgets
+
+            // Foreground widgets (bounded area)
             Positioned.fill(
-              child: RepaintBoundary(
-                child: DashboardGrid(
-                  grid: grid,
-                  items: items,
-                  onSnap: onSnap,
-                  globalBlur: glassBlur,
-                  globalOpacity: glassOpacity,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(18, 70, 18, 18),
+                child: RepaintBoundary(
+                  child: DashboardGrid(
+                    grid: grid,
+                    items: items,
+                    onSnap: onSnap,
+                    globalBlur: glassBlur,
+                    globalOpacity: glassOpacity,
+                  ),
                 ),
               ),
             ),
-            // Debug info
+
+            // Debug info (optional)
             if (kDebugMode)
               Positioned(
                 left: 12,
                 bottom: 10,
                 child: IgnorePointer(
                   child: Text(
-                    'Widgets: ${items.length} | Allowed: ${allowedWidgetIds.length} | Instance: #$_instanceNumber',
+                    'Widgets: ${items.length} | Allowed: ${allowedWidgetIds.length} | '
+                    'Instance: $_instanceNumber | '
+                    'DefaultSpan: ${defaultColSpan}x${defaultRowSpan} | '
+                    'Start: ${defaultStartCol},${defaultStartRow} | '
+                    'Scale: $defaultWidgetScale',
                     style: const TextStyle(
                       color: Colors.white54,
                       fontSize: 11,
@@ -10686,121 +10667,122 @@ class WorkspaceShellState extends State<WorkspaceShell>
   }
 
   Future<void> signOut() async {
-    try {
-      debugPrint('🔒 WorkspaceShell #$_instanceNumber - Starting logout process...');
-      
-      PermissionsCache.instance.clearCache();
-      debugPrint('✅ Permissions cache cleared');
-      
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.clear();
-      debugPrint('✅ SharedPreferences cleared');
-      
-      WallpaperService.instance.wallpaperPath = null;
-      WallpaperService.instance.globalGlassOpacity = 0.12;
-      WallpaperService.instance.globalGlassBlur = 16.0;
-      debugPrint('✅ WallpaperService reset');
-      
-      await FirebaseAuth.instance.signOut();
-      debugPrint('✅ Firebase Auth signed out');
-      
-      if (!mounted) return;
-      
-      // Navigate to DashboardScreen which handles the login view
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(
-          builder: (context) => const DashboardScreen(),
-        ),
-        (route) => false,
-      );
-      
-      debugPrint('✅ Navigated to login screen');
-      
-      Future.delayed(const Duration(milliseconds: 500), () {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Signed out successfully'),
-              backgroundColor: Colors.cyan,
-              duration: Duration(seconds: 2),
-            ),
-          );
-        }
-      });
-    } catch (e) {
-      debugPrint('❌ Sign out error: $e');
-    }
+  try {
+    debugPrint('WorkspaceShell #$_instanceNumber - Starting logout process...');
+
+    PermissionsCache.instance.clearCache();
+    debugPrint('Permissions cache cleared');
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.clear();
+    debugPrint('SharedPreferences cleared');
+
+    WallpaperService.instance.wallpaperPath = null;
+    WallpaperService.instance.globalGlassOpacity = 0.12;
+    WallpaperService.instance.globalGlassBlur = 16.0;
+    debugPrint('WallpaperService reset');
+
+    await FirebaseAuth.instance.signOut();
+    debugPrint('Firebase Auth signed out');
+
+    if (!mounted) return;
+
+    
+
+    // SnackBar...
+  } catch (e) {
+    debugPrint('Sign out error: $e');
   }
+}
+
 
   Future<void> openGlobalGlassSheet() async {
-    final service = WallpaperService.instance;
-    double tempOpacity = service.globalGlassOpacity;
-    double tempBlur = service.globalGlassBlur;
+  final service = WallpaperService.instance;
+  double tempOpacity = service.globalGlassOpacity;
+  double tempBlur = service.globalGlassBlur;
 
-    final applied = await showModalBottomSheet<bool>(
-      context: context,
-      backgroundColor: const Color(0xFF05040A),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            return SafeArea(
-              top: false,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text('Glass settings', style: TextStyle(color: Colors.white, fontSize: 16)),
-                    const SizedBox(height: 20),
-                    Row(
-                      children: [
-                        const Text('Opacity', style: TextStyle(color: Colors.white70)),
-                        Expanded(
-                          child: Slider(
-                            min: 0.04, max: 0.30, divisions: 26,
-                            value: tempOpacity.clamp(0.04, 0.30),
-                            onChanged: (v) => setModalState(() => tempOpacity = v),
-                          ),
+  final applied = await showModalBottomSheet<bool>(
+    context: context,
+    backgroundColor: const Color(0xFF05040A),
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+    ),
+    builder: (context) {
+      return StatefulBuilder(
+        builder: (context, setModalState) {
+          return SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Glass settings', style: TextStyle(color: Colors.white, fontSize: 16)),
+                  const SizedBox(height: 20),
+                  
+                  // Opacity slider
+                  Row(
+                    children: [
+                      const Text('Opacity', style: TextStyle(color: Colors.white70)),
+                      Expanded(
+                        child: Slider(
+                          min: 0.04,
+                          max: 0.30,
+                          divisions: 26,
+                          value: tempOpacity.clamp(0.04, 0.30),
+                          onChanged: (v) {
+                            setModalState(() => tempOpacity = v);
+                            service.setGlassOpacity(v); // ✅ Auto-saves now!
+                          },
                         ),
-                      ],
-                    ),
-                    Row(
-                      children: [
-                        const Text('Blur', style: TextStyle(color: Colors.white70)),
-                        Expanded(
-                          child: Slider(
-                            min: 0, max: 30, divisions: 30,
-                            value: tempBlur.clamp(0, 30),
-                            onChanged: (v) => setModalState(() => tempBlur = v),
-                          ),
-                        ),
-                      ],
-                    ),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: TextButton(
-                        onPressed: () => Navigator.pop(context, true),
-                        child: const Text('Apply'),
                       ),
-                    )
-                  ],
-                ),
+                    ],
+                  ),
+                  
+                  // Blur slider
+                  Row(
+                    children: [
+                      const Text('Blur', style: TextStyle(color: Colors.white70)),
+                      Expanded(
+                        child: Slider(
+                          min: 0,
+                          max: 30,
+                          divisions: 30,
+                          value: tempBlur.clamp(0, 30),
+                          onChanged: (v) {
+                            setModalState(() => tempBlur = v);
+                            service.setGlassBlur(v); // ✅ Auto-saves now!
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                  
+                  // Close button
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      child: const Text('Close'),
+                    ),
+                  ),
+                ],
               ),
-            );
-          },
-        );
-      },
-    );
+            ),
+          );
+        },
+      );
+    },
+  );
+  
+  // ❌ REMOVED: No need to manually save anymore
+  // if (applied == true) {
+  //   service.setGlassOpacity(tempOpacity);
+  //   service.setGlassBlur(tempBlur);
+  //   await service.saveSettings();
+  // }
+}
 
-    if (applied == true) {
-      service.setGlassOpacity(tempOpacity);
-      service.setGlassBlur(tempBlur);
-      await service.saveSettings();
-    }
-  }
 
   @override
   void dispose() {
