@@ -1,14 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:walld_flutter/Developer/developer_dashboard_screen.dart';
+import 'package:walld_flutter/core/wallpaper_service.dart';
+import 'package:walld_flutter/firebase_options.dart';
+import 'package:walld_flutter/workspace/loading_screen.dart';
+import 'package:walld_flutter/workspace/workspace_controller.dart';
+import 'package:walld_flutter/workspace/workspace_shell.dart';
 import 'package:window_manager/window_manager.dart';
 import 'dart:io' show Platform;
 
-import 'firebase_options.dart';
-import 'workspace/workspace_shell.dart';
-import 'workspace/workspace_controller.dart';
-import 'workspace/loading_screen.dart';
-import 'core/wallpaper_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -78,41 +77,54 @@ class WallDApp extends StatefulWidget {
   const WallDApp({super.key});
 
   @override
-  State<WallDApp> createState() => _WallDAppState();
+  State<WallDApp> createState() => WallDAppState();
 }
 
-class _WallDAppState extends State<WallDApp> {
-  final WorkspaceController _workspaceController = WorkspaceController();
-  bool _isLoading = true;
+class WallDAppState extends State<WallDApp> {
+  final WorkspaceController workspaceController = WorkspaceController();
+  bool isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    debugPrint('WallDApp - initState');
+  }
 
   @override
   void dispose() {
-    _workspaceController.dispose();
+    debugPrint('WallDApp - dispose');
+    workspaceController.dispose();
     super.dispose();
   }
 
-  void _onLoadingComplete() {
-    debugPrint('🎉 Loading complete - transitioning to workspace');
+  void onLoadingComplete() {
+    debugPrint('WallDApp - onLoadingComplete called');
+    debugPrint('Loading complete - transitioning to workspace');
     if (mounted) {
-      setState(() => _isLoading = false);
+      setState(() {
+        isLoading = false;
+      });
+      debugPrint('WallDApp - isLoading set to false - showing WorkspaceShell');
+    } else {
+      debugPrint('WallDApp - Widget not mounted, skipping setState');
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    debugPrint('WallDApp - build - isLoading:$isLoading');
     return MaterialApp(
       title: 'Wall-D',
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF05040A),
       ),
-      home: _isLoading
-        ? LoadingScreen(onLoadingComplete: _onLoadingComplete)
-        : WorkspaceShell(
-            workspaceController: _workspaceController,
-          ),
-
-      // home: const DeveloperDashboardScreen(),
+      home: isLoading 
+        ? LoadingScreen(onLoadingComplete: onLoadingComplete)
+        : WorkspaceShell(workspaceController: workspaceController),
+      // ✅ REMOVED: home: const DeveloperDashboardScreen,
     );
   }
 }
+
+

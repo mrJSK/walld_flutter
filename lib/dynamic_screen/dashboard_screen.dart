@@ -1,151 +1,159 @@
 import 'dart:async';
-
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:walld_flutter/dynamic_screen/dashboard_layout_persistence.dart';
-import 'package:walld_flutter/dynamic_screen/model/screen_grid.dart'
-    show ScreenGridWidgetSpan, ScreenGridConfig;
-
+import 'package:walld_flutter/dynamic_screen/dashboard_layout_persistence.dart';// show ScreenGridWidgetSpan, ScreenGridConfig
+import 'package:walld_flutter/dynamic_screen/model/screen_grid.dart';
 import '../core/wallpaper_service.dart';
 import 'dashboard_grid.dart';
-import 'dashboard_permissions.dart';
 import 'widget_manifest.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
 
   @override
-  State<DashboardScreen> createState() => _DashboardScreenState();
+  State<DashboardScreen> createState() => DashboardScreenState();
 }
 
-class _DashboardScreenState extends State<DashboardScreen> {
-  static const ScreenGridConfig _grid = ScreenGridConfig(columns: 24, rows: 14);
+class DashboardScreenState extends State<DashboardScreen> {
+  // DEBUG: Track instances to find duplicates
+  static int _instanceCounter = 0;
+  final int _instanceNumber;
+  final String _instanceId = DateTime.now().millisecondsSinceEpoch.toString();
 
-  bool _loading = true;
-  String? _error;
-  Set<String> _allowedWidgetIds = const {'login'};
-  final List<ScreenGridWidgetSpan> _items = [];
+  DashboardScreenState() : _instanceNumber = ++_instanceCounter {
+    debugPrint('🔷 DashboardScreen INSTANCE #$_instanceNumber CREATED (ID: $_instanceId)');
+  }
+
+  static const ScreenGridConfig grid = ScreenGridConfig(columns: 24, rows: 14);
   
-  StreamSubscription<User?>? _authSubscription;
-
-  String get _userId => FirebaseAuth.instance.currentUser?.uid ?? 'anon';
-  String get _layoutPrefsKey => 'dashboard_layout_v1_$_userId';
+  bool loading = true;
+  String? error;
+  Set<String> allowedWidgetIds = const {'login'};
+  final List<ScreenGridWidgetSpan> items = [];
+  
+  StreamSubscription<User?>? authSubscription;
+  String get userId => FirebaseAuth.instance.currentUser?.uid ?? 'anon';
+  String get layoutPrefsKey => 'dashboard_layout_v1_$userId';
 
   @override
   void initState() {
     super.initState();
-    
+    debugPrint('🔷 DashboardScreen #$_instanceNumber - initState() - Setting up auth listener');
+
     // Listen to auth state changes
-    _authSubscription = FirebaseAuth.instance.authStateChanges().listen((user) {
+    authSubscription = FirebaseAuth.instance.authStateChanges().listen((user) {
+      debugPrint('🔷 DashboardScreen #$_instanceNumber AUTH CHANGED: user=${user?.uid}');
+      
       if (user == null) {
-        // User logged out - show only login widget
-        debugPrint('🔒 User logged out - showing login widget only');
-        _showLoginOnly();
+        debugPrint('🔷 DashboardScreen #$_instanceNumber - User logged out, showing login only');
+        showLoginOnly();
       } else {
-        // User logged in - load permissions
-        debugPrint('✅ User logged in: ${user.uid} - loading permissions');
-        unawaited(_bootstrap());
+        debugPrint('🔷 DashboardScreen #$_instanceNumber - User logged in, calling bootstrap()');
+        unawaited(bootstrap());
       }
     });
     
-    // Initial bootstrap
-    unawaited(_bootstrap());
+    // Initial load
+    debugPrint('🔷 DashboardScreen #$_instanceNumber - Initial bootstrap call');
+    unawaited(bootstrap());
   }
 
   @override
   void dispose() {
-    _authSubscription?.cancel();
+    debugPrint('🔷 DashboardScreen #$_instanceNumber DISPOSED');
+    authSubscription?.cancel();
     super.dispose();
   }
 
-  /// Show only login widget (when logged out)
-  void _showLoginOnly() {
+  void showLoginOnly() {
     setState(() {
-      _loading = false;
-      _error = null;
-      _allowedWidgetIds = const {'login'};
-      _items.clear();
-      _items.add(
-        ScreenGridWidgetSpan(
-          widgetId: 'login',
-          col: 6,
-          row: 3,
-          colSpan: 12,
-          rowSpan: 8,
-        ),
-      );
+      loading = false;
+      error = null;
+      allowedWidgetIds = const {'login'};
+      items.clear();
+      items.add(ScreenGridWidgetSpan(
+        widgetId: 'login',
+        col: 6,
+        row: 3,
+        colSpan: 12,
+        rowSpan: 8,
+      ));
     });
   }
 
-  /// Bootstrap - load user permissions and layout
-  Future<void> _bootstrap() async {
-  setState(() {
-    _loading = true;
-    _error = null;
-  });
-
-  try {
-    // Allow all widgets (or from permissions)
-    _allowedWidgetIds = widgetManifest
-      .map((w) => w['id'] as String)   // ✅ read from map key
-      .toSet();
-
-
-    await DashboardLayoutPersistence.loadLayout(
-      prefsKey: _layoutPrefsKey,
-      onLoaded: (loaded) {
-        _items
-          ..clear()
-          ..addAll(_filterToAllowed(loaded));
-      },
-      defaultItemsBuilder: _defaultItemsForAllowed,
-    );
-
-    // ✅ Only if we still have no items, use defaults once
-    if (_items.isEmpty) {
-      _items.addAll(_defaultItemsForAllowed());
-    }
-
-    if (!mounted) return;
-    setState(() => _loading = false);
-  } catch (e) {
-    if (!mounted) return;
-    setState(() {
-      _loading = false;
-      _error = e.toString();
-    });
-  }
-}
-
-
-  /// Filter items to only show allowed widgets
-  List<ScreenGridWidgetSpan> _filterToAllowed(
-    List<ScreenGridWidgetSpan> input,
-  ) {
-    return input.where((w) => _allowedWidgetIds.contains(w.widgetId)).toList();
-  }
-
-  /// Generate default layout for allowed widgets
-  List<ScreenGridWidgetSpan> _defaultItemsForAllowed() {
-    // If only login is allowed, center it
-    if (_allowedWidgetIds.length == 1 && _allowedWidgetIds.contains('login')) {
-      return [
-        ScreenGridWidgetSpan(
-          widgetId: 'login',
-          col: 6,
-          row: 3,
-          colSpan: 12,
-          rowSpan: 8,
-        ),
-      ];
-    }
-
-    // Get all allowed widgets except login
-    final ids = _allowedWidgetIds.where((id) => id != 'login').toList();
+  Future<void> bootstrap() async {
+    debugPrint('🔷🔷🔷 BOOTSTRAP START - DashboardScreen #$_instanceNumber');
     
+    setState(() {
+      loading = true;
+      error = null;
+    });
+
+    try {
+      // 1. Get all widgets from manifest
+      allowedWidgetIds = widgetManifest
+          .map((w) => w['id'] as String)
+          .toSet();
+
+      // 2. Load layout from persistence
+      await DashboardLayoutPersistence.loadLayout(
+        prefsKey: layoutPrefsKey,
+        onLoaded: (loaded) {
+          debugPrint('🔷 DashboardScreen #$_instanceNumber - Layout loaded from disk: ${loaded.length} widgets');
+          items
+            ..clear()
+            ..addAll(filterToAllowed(loaded));
+        },
+        defaultItemsBuilder: defaultItemsForAllowed,
+      );
+
+      // 3. Fallback if empty
+      if (items.isEmpty) {
+        debugPrint('🔷 DashboardScreen #$_instanceNumber - Layout empty, using defaults');
+        items.addAll(defaultItemsForAllowed());
+      }
+
+      if (!mounted) {
+        debugPrint('🔷 DashboardScreen #$_instanceNumber - Widget not mounted after bootstrap, aborting');
+        return;
+      }
+
+      setState(() {
+        loading = false;
+      });
+      
+      debugPrint('🔷🔷🔷 BOOTSTRAP END - DashboardScreen #$_instanceNumber - ${items.length} widgets loaded');
+      
+    } catch (e) {
+      debugPrint('❌ DashboardScreen #$_instanceNumber - Bootstrap error: $e');
+      if (!mounted) return;
+      setState(() {
+        loading = false;
+        error = e.toString();
+      });
+    }
+  }
+
+  List<ScreenGridWidgetSpan> filterToAllowed(List<ScreenGridWidgetSpan> input) {
+    return input.where((w) => allowedWidgetIds.contains(w.widgetId)).toList();
+  }
+
+  List<ScreenGridWidgetSpan> defaultItemsForAllowed() {
+    if (allowedWidgetIds.length == 1 && allowedWidgetIds.contains('login')) {
+      return [
+        ScreenGridWidgetSpan(
+          widgetId: 'login',
+          col: 6,
+          row: 3,
+          colSpan: 12,
+          rowSpan: 8,
+        ),
+      ];
+    }
+    
+    final ids = allowedWidgetIds.where((id) => id != 'login').toList();
     if (ids.isEmpty) {
-      // Fallback to login if no other widgets
       return [
         ScreenGridWidgetSpan(
           widgetId: 'login',
@@ -157,49 +165,44 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ];
     }
 
-    // Generate grid layout for allowed widgets
     final out = <ScreenGridWidgetSpan>[];
     int c = 0;
     int r = 0;
 
     for (final id in ids) {
-      out.add(
-        ScreenGridWidgetSpan(
-          widgetId: id,
-          col: c,
-          row: r,
-          colSpan: 8,
-          rowSpan: 6,
-        ),
-      );
-
+      out.add(ScreenGridWidgetSpan(
+        widgetId: id,
+        col: c,
+        row: r,
+        colSpan: 8,
+        rowSpan: 6,
+      ));
       c += 8;
-      if (c >= _grid.columns) {
+      if (c >= grid.columns || c + 8 > grid.columns) {
         c = 0;
         r += 6;
-        if (r >= _grid.rows) {
-          r = 0;
-        }
+      }
+      if (r >= grid.rows) {
+        r = 0; 
       }
     }
-
     return out;
   }
 
-  Future<void> _saveLayout() async {
+  Future<void> saveLayout() async {
     await DashboardLayoutPersistence.saveLayout(
-      prefsKey: _layoutPrefsKey,
-      items: _items,
+      prefsKey: layoutPrefsKey,
+      items: items,
     );
   }
 
-  void _onSnap() {
-    unawaited(_saveLayout());
+  void onSnap() {
+    unawaited(saveLayout());
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_loading) {
+    if (loading) {
       return const Center(
         child: SizedBox(
           width: 28,
@@ -209,10 +212,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
       );
     }
 
-    if (_error != null) {
+    if (error != null) {
       return Center(
         child: Text(
-          'Dashboard error: $_error',
+          'Dashboard error: $error',
           style: const TextStyle(color: Colors.redAccent),
         ),
       );
@@ -234,20 +237,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 decoration: wallpaper.backgroundDecoration,
               ),
             ),
-
             // Foreground widgets
             Positioned.fill(
               child: RepaintBoundary(
                 child: DashboardGrid(
-                  grid: _grid,
-                  items: _items,
-                  onSnap: _onSnap,
+                  grid: grid,
+                  items: items,
+                  onSnap: onSnap,
                   globalBlur: glassBlur,
                   globalOpacity: glassOpacity,
                 ),
               ),
             ),
-
             // Debug info
             if (kDebugMode)
               Positioned(
@@ -255,7 +256,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 bottom: 10,
                 child: IgnorePointer(
                   child: Text(
-                    'Widgets: ${_items.length} | Allowed: ${_allowedWidgetIds.length}',
+                    'Widgets: ${items.length} | Allowed: ${allowedWidgetIds.length} | Instance: #$_instanceNumber',
                     style: const TextStyle(
                       color: Colors.white54,
                       fontSize: 11,

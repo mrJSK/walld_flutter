@@ -72,6 +72,10 @@ Root: lib (lib)
 │   ├── task_tabs_manifest.dart
 │   └── task_workspace.dart
 ├── workspace/
+│   ├── mixins/
+│   │   └── shell_performance_mixin.dart
+│   ├── widgets/
+│   │   └── fps_counter.dart
 │   ├── loading_screen.dart
 │   ├── universal_top_bar.dart
 │   ├── workspace_controller.dart
@@ -184,15 +188,14 @@ class DefaultFirebaseOptions {
 // File: lib\main.dart
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:walld_flutter/Developer/developer_dashboard_screen.dart';
+import 'package:walld_flutter/core/wallpaper_service.dart';
+import 'package:walld_flutter/firebase_options.dart';
+import 'package:walld_flutter/workspace/loading_screen.dart';
+import 'package:walld_flutter/workspace/workspace_controller.dart';
+import 'package:walld_flutter/workspace/workspace_shell.dart';
 import 'package:window_manager/window_manager.dart';
 import 'dart:io' show Platform;
 
-import 'firebase_options.dart';
-import 'workspace/workspace_shell.dart';
-import 'workspace/workspace_controller.dart';
-import 'workspace/loading_screen.dart';
-import 'core/wallpaper_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -270,36 +273,46 @@ class _WallDAppState extends State<WallDApp> {
   bool _isLoading = true;
 
   @override
+  void initState() {
+    super.initState();
+    debugPrint('🚀 WallDApp - initState()');
+  }
+
+  @override
   void dispose() {
+    debugPrint('🚀 WallDApp - dispose()');
     _workspaceController.dispose();
     super.dispose();
   }
 
   void _onLoadingComplete() {
+    debugPrint('🚀 WallDApp - onLoadingComplete() called');
     debugPrint('🎉 Loading complete - transitioning to workspace');
     if (mounted) {
       setState(() => _isLoading = false);
+      debugPrint('🚀 WallDApp - isLoading set to false -> showing WorkspaceShell');
+    } else {
+      debugPrint('⚠️ WallDApp - Widget not mounted, skipping setState');
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    debugPrint('🚀 WallDApp - build() - isLoading=$_isLoading');
+    
     return MaterialApp(
       title: 'Wall-D',
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF05040A),
       ),
-      // home: _isLoading
-      //     ? LoadingScreen(
-      //         // FIX: only pass onLoadingComplete,
-      //         // because LoadingScreen(onLoadingComplete: ...) is the signature
-      //         onLoadingComplete: _onLoadingComplete,
-      //       )
-      //     : WorkspaceShell(
-      //         workspaceController: _workspaceController,
-      //       ),
-      home: const DeveloperDashboardScreen(),
+      home: _isLoading
+        ? LoadingScreen(onLoadingComplete: _onLoadingComplete)
+        : WorkspaceShell(
+            workspaceController: _workspaceController,
+          ),
+
+      // home: const DeveloperDashboardScreen(),
     );
   }
 }
@@ -6602,17 +6615,12 @@ class DashboardPermissions {
 ================================================================================
 
 // File: lib\dynamic_screen\dashboard_screen.dart
-// lib/dynamic_screen/dashboard_screen.dart
 import 'dart:async';
-
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-
-import 'package:walld_flutter/dynamic_screen/dashboard_layout_persistence.dart';
-import 'package:walld_flutter/dynamic_screen/model/screen_grid.dart'
-    show ScreenGridWidgetSpan, ScreenGridConfig;
-
+import 'package:walld_flutter/dynamic_screen/dashboard_layout_persistence.dart';// show ScreenGridWidgetSpan, ScreenGridConfig
+import 'package:walld_flutter/dynamic_screen/model/screen_grid.dart';
 import '../core/wallpaper_service.dart';
 import 'dashboard_grid.dart';
 import 'widget_manifest.dart';
@@ -6625,51 +6633,117 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class DashboardScreenState extends State<DashboardScreen> {
-  static const ScreenGridConfig grid = ScreenGridConfig(columns: 24, rows: 14);
+  // DEBUG: Track instances to find duplicates
+  static int _instanceCounter = 0;
+  final int _instanceNumber;
+  final String _instanceId = DateTime.now().millisecondsSinceEpoch.toString();
 
+  DashboardScreenState() : _instanceNumber = ++_instanceCounter {
+    debugPrint('🔷 DashboardScreen INSTANCE #$_instanceNumber CREATED (ID: $_instanceId)');
+  }
+
+  static const ScreenGridConfig grid = ScreenGridConfig(columns: 24, rows: 14);
+  
   bool loading = true;
   String? error;
-
   Set<String> allowedWidgetIds = const {'login'};
-  final List<ScreenGridWidgetSpan> items = <ScreenGridWidgetSpan>[];
-
-  String get _userId => FirebaseAuth.instance.currentUser?.uid ?? 'anon';
-  String get _layoutPrefsKey => 'dashboard_layout_v1_$_userId';
+  final List<ScreenGridWidgetSpan> items = [];
+  
+  StreamSubscription<User?>? authSubscription;
+  String get userId => FirebaseAuth.instance.currentUser?.uid ?? 'anon';
+  String get layoutPrefsKey => 'dashboard_layout_v1_$userId';
 
   @override
   void initState() {
     super.initState();
-    unawaited(_bootstrap());
+    debugPrint('🔷 DashboardScreen #$_instanceNumber - initState() - Setting up auth listener');
+
+    // Listen to auth state changes
+    authSubscription = FirebaseAuth.instance.authStateChanges().listen((user) {
+      debugPrint('🔷 DashboardScreen #$_instanceNumber AUTH CHANGED: user=${user?.uid}');
+      
+      if (user == null) {
+        debugPrint('🔷 DashboardScreen #$_instanceNumber - User logged out, showing login only');
+        showLoginOnly();
+      } else {
+        debugPrint('🔷 DashboardScreen #$_instanceNumber - User logged in, calling bootstrap()');
+        unawaited(bootstrap());
+      }
+    });
+    
+    // Initial load
+    debugPrint('🔷 DashboardScreen #$_instanceNumber - Initial bootstrap call');
+    unawaited(bootstrap());
   }
 
-  Future<void> _bootstrap() async {
+  @override
+  void dispose() {
+    debugPrint('🔷 DashboardScreen #$_instanceNumber DISPOSED');
+    authSubscription?.cancel();
+    super.dispose();
+  }
+
+  void showLoginOnly() {
+    setState(() {
+      loading = false;
+      error = null;
+      allowedWidgetIds = const {'login'};
+      items.clear();
+      items.add(ScreenGridWidgetSpan(
+        widgetId: 'login',
+        col: 6,
+        row: 3,
+        colSpan: 12,
+        rowSpan: 8,
+      ));
+    });
+  }
+
+  Future<void> bootstrap() async {
+    debugPrint('🔷🔷🔷 BOOTSTRAP START - DashboardScreen #$_instanceNumber');
+    
     setState(() {
       loading = true;
       error = null;
     });
 
     try {
-      // Allow ALL widgets; no per-user filtering.
+      // 1. Get all widgets from manifest
       allowedWidgetIds = widgetManifest
           .map((w) => w['id'] as String)
           .toSet();
 
+      // 2. Load layout from persistence
       await DashboardLayoutPersistence.loadLayout(
-        prefsKey: _layoutPrefsKey,
+        prefsKey: layoutPrefsKey,
         onLoaded: (loaded) {
+          debugPrint('🔷 DashboardScreen #$_instanceNumber - Layout loaded from disk: ${loaded.length} widgets');
           items
             ..clear()
-            ..addAll(_filterToAllowed(loaded));
-          if (items.isEmpty) {
-            items.addAll(_defaultItemsForAllowed());
-          }
+            ..addAll(filterToAllowed(loaded));
         },
-        defaultItemsBuilder: _defaultItemsForAllowed,
+        defaultItemsBuilder: defaultItemsForAllowed,
       );
 
-      if (!mounted) return;
-      setState(() => loading = false);
+      // 3. Fallback if empty
+      if (items.isEmpty) {
+        debugPrint('🔷 DashboardScreen #$_instanceNumber - Layout empty, using defaults');
+        items.addAll(defaultItemsForAllowed());
+      }
+
+      if (!mounted) {
+        debugPrint('🔷 DashboardScreen #$_instanceNumber - Widget not mounted after bootstrap, aborting');
+        return;
+      }
+
+      setState(() {
+        loading = false;
+      });
+      
+      debugPrint('🔷🔷🔷 BOOTSTRAP END - DashboardScreen #$_instanceNumber - ${items.length} widgets loaded');
+      
     } catch (e) {
+      debugPrint('❌ DashboardScreen #$_instanceNumber - Bootstrap error: $e');
       if (!mounted) return;
       setState(() {
         loading = false;
@@ -6678,13 +6752,11 @@ class DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  List<ScreenGridWidgetSpan> _filterToAllowed(
-    List<ScreenGridWidgetSpan> input,
-  ) {
+  List<ScreenGridWidgetSpan> filterToAllowed(List<ScreenGridWidgetSpan> input) {
     return input.where((w) => allowedWidgetIds.contains(w.widgetId)).toList();
   }
 
-  List<ScreenGridWidgetSpan> _defaultItemsForAllowed() {
+  List<ScreenGridWidgetSpan> defaultItemsForAllowed() {
     if (allowedWidgetIds.length == 1 && allowedWidgetIds.contains('login')) {
       return [
         ScreenGridWidgetSpan(
@@ -6696,7 +6768,7 @@ class DashboardScreenState extends State<DashboardScreen> {
         ),
       ];
     }
-
+    
     final ids = allowedWidgetIds.where((id) => id != 'login').toList();
     if (ids.isEmpty) {
       return [
@@ -6715,37 +6787,34 @@ class DashboardScreenState extends State<DashboardScreen> {
     int r = 0;
 
     for (final id in ids) {
-      out.add(
-        ScreenGridWidgetSpan(
-          widgetId: id,
-          col: c,
-          row: r,
-          colSpan: 8,
-          rowSpan: 6,
-        ),
-      );
-
+      out.add(ScreenGridWidgetSpan(
+        widgetId: id,
+        col: c,
+        row: r,
+        colSpan: 8,
+        rowSpan: 6,
+      ));
       c += 8;
-      if (c >= grid.columns) {
+      if (c >= grid.columns || c + 8 > grid.columns) {
         c = 0;
         r += 6;
       }
       if (r >= grid.rows) {
-        r = 0;
+        r = 0; 
       }
     }
     return out;
   }
 
-  Future<void> _saveLayout() async {
+  Future<void> saveLayout() async {
     await DashboardLayoutPersistence.saveLayout(
-      prefsKey: _layoutPrefsKey,
+      prefsKey: layoutPrefsKey,
       items: items,
     );
   }
 
-  void _onSnap() {
-    unawaited(_saveLayout());
+  void onSnap() {
+    unawaited(saveLayout());
   }
 
   @override
@@ -6774,37 +6843,37 @@ class DashboardScreenState extends State<DashboardScreen> {
     return AnimatedBuilder(
       animation: wallpaper,
       builder: (context, _) {
-        // Read glass settings here and pass them into DashboardGrid.
         final glassBlur = wallpaper.globalGlassBlur;
         final glassOpacity = wallpaper.globalGlassOpacity;
 
         return Stack(
           children: [
-            // Wallpaper is just the background image, no blur/opacity logic here.
+            // Wallpaper background
             Positioned.fill(
               child: DecoratedBox(
                 decoration: wallpaper.backgroundDecoration,
               ),
             ),
-            // Foreground widgets; glass is applied inside each widget via GlassContainer.
+            // Foreground widgets
             Positioned.fill(
               child: RepaintBoundary(
                 child: DashboardGrid(
                   grid: grid,
                   items: items,
-                  onSnap: _onSnap,
+                  onSnap: onSnap,
                   globalBlur: glassBlur,
                   globalOpacity: glassOpacity,
                 ),
               ),
             ),
+            // Debug info
             if (kDebugMode)
               Positioned(
                 left: 12,
                 bottom: 10,
                 child: IgnorePointer(
                   child: Text(
-                    'Widgets: ${items.length} | Allowed: ${allowedWidgetIds.length}',
+                    'Widgets: ${items.length} | Allowed: ${allowedWidgetIds.length} | Instance: #$_instanceNumber',
                     style: const TextStyle(
                       color: Colors.white54,
                       fontSize: 11,
@@ -7397,12 +7466,12 @@ class CreateTaskWidget extends StatelessWidget {
 ================================================================================
 
 // File: lib\dynamic_screen\widgets\login_widget.dart
-// lib/dynamic_screen/widgets/login_widget.dart
+// lib/dynamicscreen/widgets/loginwidget.dart
 
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:walld_flutter/core/wallpaper_service.dart';
+import '../../core/wallpaper_service.dart';
 
 class LoginWidget extends StatefulWidget {
   const LoginWidget({super.key});
@@ -7418,8 +7487,28 @@ class _LoginWidgetState extends State<LoginWidget> {
   bool _isLoading = false;
   String? _errorMessage;
 
-  Future<void> _signIn() async {
-    if (!(_formKey.currentState?.validate() ?? false)) return;
+  // DEBUG ID to track widget lifecycle
+  final String _instanceId = DateTime.now().millisecondsSinceEpoch.toString().substring(8);
+
+  _LoginWidgetState() {
+    debugPrint('🔑 LoginWidget CREATED (ID: $_instanceId)');
+  }
+
+  @override
+  void dispose() {
+    debugPrint('🔑 LoginWidget DISPOSED (ID: $_instanceId)');
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  Future<void> signIn() async {
+    debugPrint('🔑 LoginWidget #$_instanceId - signIn() START');
+
+    if (!(_formKey.currentState?.validate() ?? false)) {
+      debugPrint('🔑 LoginWidget #$_instanceId - Form validation failed');
+      return;
+    }
 
     setState(() {
       _isLoading = true;
@@ -7427,27 +7516,38 @@ class _LoginWidgetState extends State<LoginWidget> {
     });
 
     try {
+      debugPrint('🔑 LoginWidget #$_instanceId - Calling FirebaseAuth.signInWithEmailAndPassword');
+      
       final cred = await FirebaseAuth.instance.signInWithEmailAndPassword(
         email: _emailController.text.trim(),
         password: _passwordController.text.trim(),
       );
-      debugPrint('[LOGIN] Signed in as ${cred.user?.uid}');
-      // No navigation here; outer workspace listens to auth.
+      
+      debugPrint('✅ LoginWidget #$_instanceId - LOGIN SUCCESS: User ${cred.user?.uid}');
+      debugPrint('🔑 LoginWidget #$_instanceId - NOT navigating manually. Waiting for DashboardScreen listener.');
+      
+      // ✅ FIX CONFIRMED: NO NAVIGATION CODE HERE!
+      // DO NOT call Navigator.pushReplacement()
+      // The DashboardScreen's authStateChanges listener will handle the transition.
+
     } on FirebaseAuthException catch (e) {
-      debugPrint('[LOGIN] error: ${e.code} ${e.message}');
+      debugPrint('❌ LoginWidget #$_instanceId - Auth Error: ${e.code} - ${e.message}');
       setState(() {
         _errorMessage = _getErrorMessage(e.code);
       });
     } catch (e) {
-      debugPrint('[LOGIN] unknown error: $e');
+      debugPrint('❌ LoginWidget #$_instanceId - Unknown Error: $e');
       setState(() {
-        _errorMessage = 'Unexpected error. Please try again.';
+        _errorMessage = "Unexpected error. Please try again.";
       });
     } finally {
       if (mounted) {
+        debugPrint('🔑 LoginWidget #$_instanceId - signIn() FINISHED, resetting loading state');
         setState(() {
           _isLoading = false;
         });
+      } else {
+         debugPrint('⚠️ LoginWidget #$_instanceId - Widget unmounted after signIn, skipping setState');
       }
     }
   }
@@ -7470,19 +7570,13 @@ class _LoginWidgetState extends State<LoginWidget> {
   }
 
   @override
-  void dispose() {
-    _emailController.dispose();
-    _passwordController.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: WallpaperService.instance,
       builder: (context, _) {
         final ws = WallpaperService.instance;
-        // Glass color derived from global glass opacity [file:6]
+
+        // Glass color derived from global glass opacity
         final Color bgColor = const Color(0xFF11111C)
             .withOpacity((ws.globalGlassOpacity * 3).clamp(0.05, 0.45));
 
@@ -7491,15 +7585,17 @@ class _LoginWidgetState extends State<LoginWidget> {
             final maxW = constraints.maxWidth;
             final maxH = constraints.maxHeight;
             final shortest = math.min(maxW, maxH);
+
             // When the box is short, compress everything a bit
             final double compress =
-                shortest < 360 ? 0.85 : shortest < 420 ? 0.92 : 1.0;
-            final double unit =
-                (shortest / 11.0).clamp(10.0, 32.0) * compress;
+                shortest < 360 ? 0.85 : (shortest < 420 ? 0.92 : 1.0);
+
+            final double unit = (shortest / 11.0).clamp(10.0, 32.0) * compress;
             final double radius = (unit * 0.9).clamp(12.0, 24.0);
             final double margin = (unit * 0.22).clamp(6.0, 14.0);
             final EdgeInsets padding =
                 EdgeInsets.all((unit * 0.65 * compress).clamp(8.0, 20.0));
+
             final double titleFont = (unit * 1.1).clamp(18.0, 26.0);
             final double subtitleFont = (unit * 0.72).clamp(11.0, 16.0);
             final double fieldFont = (unit * 0.80).clamp(12.0, 18.0);
@@ -7507,231 +7603,235 @@ class _LoginWidgetState extends State<LoginWidget> {
             final double gap = (unit * 0.40 * compress).clamp(4.0, 12.0);
             final double fieldVerticalPad =
                 (unit * 0.30 * compress).clamp(4.0, 8.0);
-            final double fieldHorizontalPad =
-                (unit * 0.75).clamp(10.0, 18.0);
-            final double fieldRadius = (unit * 0.70).clamp(10.0, 20.0);
+            final double fieldRadius = (unit * 0.55).clamp(8.0, 14.0);
 
-            return Container(
-              margin: EdgeInsets.all(margin),
-              decoration: BoxDecoration(
-                color: bgColor, // Updated to match CompleteTaskWidget [file:6]
-                borderRadius: BorderRadius.circular(radius),
-                border: Border.all(color: const Color(0x22FFFFFF)),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Color(0x33000000),
-                    blurRadius: 18,
-                    offset: Offset(0, 10),
-                  ),
-                ],
-              ),
-              padding: padding,
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min, // allows tight packing
-                  mainAxisAlignment: MainAxisAlignment.start,
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    // Branding
-                    Icon(
-                      Icons.wallpaper,
-                      size: unit * 1.7 * compress,
-                      color: Colors.cyanAccent,
-                    ),
-                    SizedBox(height: gap * 0.5),
-                    Text(
-                      'Wall‑D',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: titleFont,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 2,
-                      ),
-                    ),
-                    SizedBox(height: gap * 0.3),
-                    Text(
-                      'Sign in with your work account',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: Colors.white70,
-                        fontSize: subtitleFont,
-                      ),
-                    ),
-                    SizedBox(height: gap),
-
-                    // Email field
-                    TextFormField(
-                      controller: _emailController,
-                      keyboardType: TextInputType.emailAddress,
-                      style: TextStyle(fontSize: fieldFont),
-                      decoration: InputDecoration(
-                        labelText: 'Work Email',
-                        prefixIcon: const Icon(
-                          Icons.email_outlined,
-                          color: Colors.cyan,
-                          size: 18,
-                        ),
-                        filled: true,
-                        fillColor: Colors.grey[900],
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(fieldRadius),
-                          borderSide: BorderSide(
-                            color: Colors.grey[800] ?? Colors.grey,
-                          ),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(fieldRadius),
-                          borderSide: const BorderSide(
-                            color: Colors.cyan,
-                            width: 2,
-                          ),
-                        ),
-                        contentPadding: EdgeInsets.symmetric(
-                          horizontal: fieldHorizontalPad,
-                          vertical: fieldVerticalPad,
-                        ),
-                      ),
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Email required';
-                        }
-                        final regex = RegExp(
-                            r'^[\w\-\.]+@([\w\-]+\.)+[\w\-]{2,4}$');
-                        if (!regex.hasMatch(value)) {
-                          return 'Enter valid work email';
-                        }
-                        return null;
-                      },
-                    ),
-                    SizedBox(height: gap),
-
-                    // Password field
-                    TextFormField(
-                      controller: _passwordController,
-                      obscureText: true,
-                      style: TextStyle(fontSize: fieldFont),
-                      decoration: InputDecoration(
-                        labelText: 'Password',
-                        prefixIcon: const Icon(
-                          Icons.lock_outline,
-                          color: Colors.cyan,
-                          size: 18,
-                        ),
-                        filled: true,
-                        fillColor: Colors.grey[900],
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(fieldRadius),
-                          borderSide: BorderSide(
-                            color: Colors.grey[800] ?? Colors.grey,
-                          ),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(fieldRadius),
-                          borderSide: const BorderSide(
-                            color: Colors.cyan,
-                            width: 2,
-                          ),
-                        ),
-                        contentPadding: EdgeInsets.symmetric(
-                          horizontal: fieldHorizontalPad,
-                          vertical: fieldVerticalPad,
-                        ),
-                      ),
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Password required';
-                        }
-                        return null;
-                      },
-                    ),
-                    SizedBox(height: gap),
-
-                    // Error message (optional)
-                    if (_errorMessage != null) ...[
-                      Container(
-                        width: double.infinity,
-                        padding: EdgeInsets.all(unit * 0.35),
-                        decoration: BoxDecoration(
-                          color: Colors.red[900],
-                          borderRadius: BorderRadius.circular(fieldRadius),
-                          border: Border.all(
-                            color: Colors.red[700] ?? Colors.red,
-                          ),
-                        ),
-                        child: Row(
-                          children: [
-                            const Icon(
-                              Icons.error_outline,
-                              color: Colors.redAccent,
-                              size: 16,
-                            ),
-                            SizedBox(width: unit * 0.3),
-                            Expanded(
-                              child: Text(
-                                _errorMessage!,
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: smallFont,
-                                ),
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      SizedBox(height: gap),
-                    ],
-
-                    // Sign in button
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: _isLoading ? null : _signIn,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.cyanAccent,
-                          foregroundColor: Colors.black,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(fieldRadius),
-                          ),
-                          padding: EdgeInsets.symmetric(
-                            vertical: fieldVerticalPad + 1,
-                          ),
-                          elevation: 8,
-                        ),
-                        child: _isLoading
-                            ? SizedBox(
-                                height: unit,
-                                width: unit,
-                                child: const CircularProgressIndicator(
-                                  color: Colors.black,
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : Text(
-                                'Sign In',
-                                style: TextStyle(
-                                  fontSize: fieldFont,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                      ),
-                    ),
-                    SizedBox(height: gap),
-                    Text(
-                      'You\'ll see your dashboard after login',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: smallFont,
-                        color: Colors.white38,
-                      ),
+            // ✅ Wrap in Material + SingleChildScrollView
+            return Material(
+              type: MaterialType.transparency,
+              child: Container(
+                margin: EdgeInsets.all(margin),
+                decoration: BoxDecoration(
+                  color: bgColor,
+                  borderRadius: BorderRadius.circular(radius),
+                  border: Border.all(color: const Color(0x22FFFFFF)),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x33000000),
+                      blurRadius: 18,
+                      offset: Offset(0, 10),
                     ),
                   ],
+                ),
+                padding: padding,
+                child: SingleChildScrollView(  // ✅ Make scrollable
+                  physics: const BouncingScrollPhysics(),
+                  child: Form(
+                    key: _formKey,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        // Logo
+                        const Icon(
+                          Icons.image_outlined,
+                          color: Colors.cyanAccent,
+                          size: 48,
+                        ),
+                        SizedBox(height: gap),
+
+                        // Title
+                        Text(
+                          'Wall-D',
+                          textAlign: TextAlign.center,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: titleFont,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        SizedBox(height: gap * 0.5),
+
+                        // Subtitle
+                        Text(
+                          'Sign in with your work account',
+                          textAlign: TextAlign.center,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: Colors.white60,
+                            fontSize: subtitleFont,
+                          ),
+                        ),
+                        SizedBox(height: gap * 1.5),
+
+                        // Email field
+                        TextFormField(
+                          controller: _emailController,
+                          keyboardType: TextInputType.emailAddress,
+                          style: TextStyle(color: Colors.white, fontSize: fieldFont),
+                          decoration: InputDecoration(
+                            labelText: 'Email',
+                            floatingLabelBehavior: FloatingLabelBehavior.auto,
+                            labelStyle: const TextStyle(color: Colors.white70),
+                            floatingLabelStyle: const TextStyle(color: Colors.cyanAccent),
+                            filled: true,
+                            fillColor: Colors.white.withOpacity(0.04),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(fieldRadius),
+                              borderSide: const BorderSide(color: Colors.white24),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(fieldRadius),
+                              borderSide: const BorderSide(color: Colors.white24),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(fieldRadius),
+                              borderSide: const BorderSide(
+                                color: Colors.cyanAccent,
+                                width: 2,
+                              ),
+                            ),
+                            contentPadding: EdgeInsets.symmetric(
+                              horizontal: unit * 0.5,
+                              vertical: fieldVerticalPad,
+                            ),
+                          ),
+                          validator: (value) {
+                            if (value == null || value.isEmpty) {
+                              return 'Email required';
+                            }
+                            return null;
+                          },
+                        ),
+                        SizedBox(height: gap),
+
+                        // Password field
+                        TextFormField(
+                          controller: _passwordController,
+                          obscureText: true,
+                          style: TextStyle(color: Colors.white, fontSize: fieldFont),
+                          decoration: InputDecoration(
+                            labelText: 'Password',
+                            floatingLabelBehavior: FloatingLabelBehavior.auto,
+                            labelStyle: const TextStyle(color: Colors.white70),
+                            floatingLabelStyle: const TextStyle(color: Colors.cyanAccent),
+                            filled: true,
+                            fillColor: Colors.white.withOpacity(0.04),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(fieldRadius),
+                              borderSide: const BorderSide(color: Colors.white24),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(fieldRadius),
+                              borderSide: const BorderSide(color: Colors.white24),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(fieldRadius),
+                              borderSide: const BorderSide(
+                                color: Colors.cyanAccent,
+                                width: 2,
+                              ),
+                            ),
+                            contentPadding: EdgeInsets.symmetric(
+                              horizontal: unit * 0.5,
+                              vertical: fieldVerticalPad,
+                            ),
+                          ),
+                          validator: (value) {
+                            if (value == null || value.isEmpty) {
+                              return 'Password required';
+                            }
+                            return null;
+                          },
+                        ),
+                        SizedBox(height: gap),
+
+                        // Error message (optional)
+                        if (_errorMessage != null) ...[
+                          Container(
+                            width: double.infinity,
+                            padding: EdgeInsets.all(unit * 0.35),
+                            decoration: BoxDecoration(
+                              color: Colors.red.shade900,
+                              borderRadius: BorderRadius.circular(fieldRadius),
+                              border: Border.all(color: Colors.red.shade700),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(
+                                  Icons.error_outline,
+                                  color: Colors.redAccent,
+                                  size: 16,
+                                ),
+                                SizedBox(width: unit * 0.3),
+                                Expanded(
+                                  child: Text(
+                                    _errorMessage!,
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: smallFont,
+                                    ),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          SizedBox(height: gap),
+                        ],
+
+                        // Sign in button
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            onPressed: _isLoading ? null : signIn,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.cyanAccent,
+                              foregroundColor: Colors.black,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(fieldRadius),
+                              ),
+                              padding: EdgeInsets.symmetric(
+                                vertical: fieldVerticalPad + 1,
+                              ),
+                              elevation: 8,
+                            ),
+                            child: _isLoading
+                                ? SizedBox(
+                                    height: unit,
+                                    width: unit,
+                                    child: const CircularProgressIndicator(
+                                      color: Colors.black,
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : Text(
+                                    'Sign In',
+                                    style: TextStyle(
+                                      fontSize: fieldFont,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                          ),
+                        ),
+                        SizedBox(height: gap),
+
+                        Text(
+                          "You'll see your dashboard after login",
+                          textAlign: TextAlign.center,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: smallFont,
+                            color: Colors.white38,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
             );
@@ -8667,7 +8767,7 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
 
   Future<void> _createTaskFromPayload(Map<String, dynamic> values) async {
   final user = FirebaseAuth.instance.currentUser;
-  
+
   if (user == null) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -8676,7 +8776,6 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
         backgroundColor: Colors.redAccent,
       ),
     );
-    
     return;
   }
 
@@ -8688,6 +8787,23 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
         .doc(tenantId)
         .collection('tasks');
 
+    // ✅ 1) Resolve assignee node → head user UID
+    final renderer = _rendererKey.currentState;
+    String? assignedToUserId;
+
+    // adjust key to whatever you used in the form: assignee / assignTo / assign_to
+    final assigneeNodeId =
+        values['assignee'] ?? values['assignTo'] ?? values['assign_to'];
+
+    if (assigneeNodeId != null &&
+        assigneeNodeId != 'none' &&
+        assigneeNodeId != 'error') {
+      // You'll have stored this map when loading dropdown options
+      // Map<String, String> _nodeToHeadUserMap = { nodeId: headUserUid }
+      assignedToUserId =
+          renderer?._nodeToHeadUserMap[assigneeNodeId.toString()];
+    }
+
     final data = <String, dynamic>{
       'title': values['title'] ?? '',
       'description': values['description'] ?? '',
@@ -8696,35 +8812,37 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
       'created_at': now.toIso8601String(),
       'updated_at': now.toIso8601String(),
       'custom_fields': values,
+      if (assignedToUserId != null) 'assigned_to': assignedToUserId, // ✅
     };
 
-    // Use the dynamic form's first date field as canonical due date
-    final renderer = _rendererKey.currentState;
+    // ✅ 2) Due date handling, unchanged
     DateTime? due = renderer?.getSelectedDueDate();
-
     if (due != null) {
-      // Store normalized due date at top level
       data['due_date'] = due.toIso8601String();
-
-      // Mirror back into payload under the schema field id (e.g. "due_date")
       final key = renderer?.firstDateFieldKey;
       if (key != null) {
         values[key] = due;
       }
     }
 
-    await tasksCol.add(data);
-    print("Final Task Payload: $data");
-    await tasksCol.add(data);
+    final docRef = await tasksCol.add(data);
+
+    debugPrint(
+        "✅ Task created and assigned to: $assignedToUserId (docId: ${docRef.id})");
+    debugPrint("Final Task Payload: $data");
+
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Task created successfully'),
+      SnackBar(
+        content: Text(
+          assignedToUserId != null
+              ? 'Task created and assigned successfully'
+              : 'Task created (no assignee found)',
+        ),
         backgroundColor: Colors.cyan,
       ),
     );
 
-    // Reset form
     _rendererKey.currentState?.resetForm();
   } catch (e) {
     if (!mounted) return;
@@ -8743,15 +8861,17 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
   Future<void> _onCreatePressed() async {
     final state = _rendererKey.currentState;
     if (state == null) return;
+    
     final payload = await state.submitExternally();
     if (payload == null) return;
+    
     await _createTaskFromPayload(payload);
   }
 
   @override
   Widget build(BuildContext context) {
     final loadError = _cachedLoadError;
-
+    
     if (_loading) {
       return const Center(
         child: CircularProgressIndicator(
@@ -8812,8 +8932,7 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
               ),
             ),
           ),
-
-        // Form fields
+        // The renderer
         Expanded(
           child: _DynamicFormRenderer(
             key: _rendererKey,
@@ -8821,57 +8940,34 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
             form: _form!,
           ),
         ),
-
         const SizedBox(height: 16),
-
-        // Action buttons
-        Row(
-          mainAxisAlignment: MainAxisAlignment.end,
-          children: [
-            OutlinedButton(
-              onPressed: _submitting
-                  ? null
-                  : () {
-                      _rendererKey.currentState?.resetForm();
-                    },
-              style: OutlinedButton.styleFrom(
-                foregroundColor: Colors.white70,
-                side: const BorderSide(color: Colors.white24),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-              ),
-              child: const Text('Reset'),
-            ),
-            const SizedBox(width: 12),
-            ElevatedButton(
-              onPressed: _submitting ? null : _onCreatePressed,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.cyanAccent,
-                foregroundColor: Colors.black,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
-                elevation: 0,
-              ),
-              child: _submitting
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        valueColor: AlwaysStoppedAnimation<Color>(Colors.black),
-                      ),
-                    )
-                  : const Text(
-                      'Create Task',
-                      style: TextStyle(fontWeight: FontWeight.w600),
+        // Create button
+        SizedBox(
+          width: double.infinity,
+          height: 48,
+          child: FilledButton.icon(
+            onPressed: _submitting ? null : _onCreatePressed,
+            icon: _submitting
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.black),
                     ),
-            ),
-          ],
+                  )
+                : const Icon(Icons.add_task_rounded),
+            label: Text(_submitting ? 'Creating…' : 'Create Task'),
+          ),
         ),
       ],
     );
   }
 }
+
+/* ========================================================================= */
+/*                         DYNAMIC FORM RENDERER                             */
+/* ========================================================================= */
 
 class _DynamicFormRenderer extends StatefulWidget {
   final String tenantId;
@@ -8889,48 +8985,53 @@ class _DynamicFormRenderer extends StatefulWidget {
 
 class _DynamicFormRendererState extends State<_DynamicFormRenderer> {
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
-
   final Map<String, TextEditingController> _controllers = {};
   final Map<String, dynamic> _values = {};
   final Map<String, bool> _checkboxValues = {};
   final Map<String, String?> _dropdownValues = {};
   final Map<String, List<DropdownMenuItem<String>>> _dropdownItems = {};
   final Map<String, bool> _loadingDropdown = {};
+
+  // NEW: Store current user's level
+  int? _currentUserLevel;
+  Map<String, String> _nodeToHeadUserMap = {};
   DateTime? getSelectedDueDate() {
     final key = firstDateFieldKey;
     if (key == null) return null;
     final v = _values[key];
     return v is DateTime ? v : null;
   }
+
   String? get firstDateFieldKey {
-  for (final f in widget.form.fields) {
-    if (f.type == 'date') return f.id; // e.g. "due_date"
+    for (final f in widget.form.fields) {
+      if (f.type == 'date') return f.id; // e.g. "duedate"
+    }
+    return null;
   }
-  return null;
-}
-  // lib/task/pages/create_task_page.dart
 
-@override
-void initState() {
-  super.initState();
-
-  for (final field in widget.form.fields) {
-    if (field.type == 'checkbox') {
-      _checkboxValues[field.id] = false;
-    } else if (field.type == 'dropdown') {
-      _dropdownValues[field.id] =
-          field.options.isNotEmpty ? field.options.first.toString() : null;
-      _loadDropdownOptions(field);
-    } else if (field.type == 'date') {
-      // IMPORTANT: Do NOT create a controller for date fields.
-      // Date fields use their own internal state and return values via onChanged.
-      _values[field.id] = null; 
-    } else {
-      // Only text/email/password fields should have controllers
-      _controllers[field.id] = TextEditingController();
+  @override
+  void initState() {
+    super.initState();
+    // Load current user level first
+    _loadCurrentUserLevel();
+    
+    for (final field in widget.form.fields) {
+      if (field.type == 'checkbox') {
+        _checkboxValues[field.id] = false;
+      } else if (field.type == 'dropdown') {
+        _dropdownValues[field.id] =
+            field.options.isNotEmpty ? field.options.first.toString() : null;
+        _loadDropdownOptions(field);
+      } else if (field.type == 'date') {
+        // IMPORTANT: Do NOT create a controller for date fields.
+        // Date fields use their own internal state and return values via onChanged.
+        _values[field.id] = null;
+      } else {
+        // Only text/email/password fields should have controllers
+        _controllers[field.id] = TextEditingController();
+      }
     }
   }
-}
 
   @override
   void dispose() {
@@ -8957,7 +9058,153 @@ void initState() {
     setState(() {});
   }
 
+  // NEW: Load current user's level
+  Future<void> _loadCurrentUserLevel() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return;
+
+      final userDoc = await FirebaseFirestore.instance
+          .collection('tenants')
+          .doc(widget.tenantId)
+          .collection('users')
+          .doc(user.uid)
+          .get();
+
+      if (userDoc.exists) {
+        final data = userDoc.data();
+        if (data != null && data.containsKey('level')) {
+          setState(() {
+            _currentUserLevel = data['level'] as int?;
+          });
+          debugPrint('Current user level: $_currentUserLevel');
+        }
+      }
+    } catch (e) {
+      debugPrint('Error loading current user level: $e');
+    }
+  }
+  // NEW: Load assignTo options - shows node names, assigns to head user
+Future<void> _loadAssignToOptions(FormFieldMeta field) async {
+  if (mounted) setState(() => _loadingDropdown[field.id] = true);
+  
+  try {
+    // Wait for current user level to load if not available yet
+    if (_currentUserLevel == null) {
+      await _loadCurrentUserLevel();
+    }
+
+    if (_currentUserLevel == null) {
+      debugPrint('Could not determine current user level');
+      _dropdownItems[field.id] = [];
+      return;
+    }
+
+    // Calculate target level: currentLevel + 1
+    final targetLevel = _currentUserLevel! + 1;
+    debugPrint('Filtering assignTo for level: $targetLevel');
+
+    // Load hierarchy nodes for the target level
+    final hierarchySnap = await FirebaseFirestore.instance
+        .collection('tenants')
+        .doc(widget.tenantId)
+        .collection('organizations')
+        .doc('hierarchy')
+        .collection('nodes')
+        .where('level', isEqualTo: targetLevel)
+        .where('isActive', isEqualTo: true)
+        .get();
+
+    final List<DropdownMenuItem<String>> items = [];
+    final Map<String, String> nodeToHeadUserMap = {}; // nodeId -> headUserId
+
+    // For each node at the target level
+    for (final nodeDoc in hierarchySnap.docs) {
+      final nodeId = nodeDoc.id;
+      final nodeData = nodeDoc.data();
+      final nodeName = nodeData['name'] as String? ?? nodeId;
+      final nodeType = nodeData['type'] as String? ?? 'unknown';
+
+      // Find the HEAD user in this node
+      final headUserSnap = await FirebaseFirestore.instance
+          .collection('tenants')
+          .doc(widget.tenantId)
+          .collection('users')
+          .where('nodeId', isEqualTo: nodeId)
+          .where('level', isEqualTo: targetLevel)
+          .where('employeeType', isEqualTo: 'head')
+          .where('status', isEqualTo: 'active')
+          .limit(1)
+          .get();
+
+      if (headUserSnap.docs.isNotEmpty) {
+        final headUserId = headUserSnap.docs.first.id;
+        nodeToHeadUserMap[nodeId] = headUserId;
+
+        // Add dropdown item showing node name and type
+        items.add(
+          DropdownMenuItem<String>(
+            value: nodeId, // Store nodeId as value
+            child: Text(
+              '$nodeName - $nodeType',
+              style: const TextStyle(color: Colors.white),
+            ),
+          ),
+        );
+        
+        debugPrint('Added node: $nodeName ($nodeType) -> head user: $headUserId');
+      } else {
+        debugPrint('⚠️ No head user found for node: $nodeName ($nodeId)');
+      }
+    }
+
+    if (items.isEmpty) {
+      items.add(
+        DropdownMenuItem<String>(
+          value: 'none',
+          child: Text(
+            'No divisions found at level $targetLevel',
+            style: const TextStyle(color: Colors.white70),
+          ),
+        ),
+      );
+    }
+
+    _dropdownItems[field.id] = items;
+    if (_dropdownValues[field.id] == null && items.isNotEmpty) {
+      _dropdownValues[field.id] = items.first.value;
+    }
+
+    // Store the mapping for later use when creating task
+    _nodeToHeadUserMap = nodeToHeadUserMap;
+
+    debugPrint('Loaded ${items.length} assignTo options for level $targetLevel');
+  } catch (e) {
+    debugPrint('Error loading assignTo options: $e');
+    _dropdownItems[field.id] = [
+      DropdownMenuItem<String>(
+        value: 'error',
+        child: Text(
+          'Error loading options',
+          style: const TextStyle(color: Colors.redAccent),
+        ),
+      ),
+    ];
+  } finally {
+    if (mounted) setState(() => _loadingDropdown[field.id] = false);
+  }
+}
+
   Future<void> _loadDropdownOptions(FormFieldMeta field) async {
+    // Check if this is an "assignTo" field with special logic
+    if (field.id.toLowerCase() == 'assignto' || 
+        field.id.toLowerCase() == 'assign_to' ||
+        field.label.toLowerCase().contains('assign to')) {
+      await _loadAssignToOptions(field);
+      return;
+    }
+
+    // Standard dropdown loading logic
     final canLoadFromFirestore = field.dataSource == 'firestore' &&
         field.collection != null &&
         field.displayField != null &&
@@ -8965,21 +9212,20 @@ void initState() {
 
     if (!canLoadFromFirestore) {
       _dropdownItems[field.id] = field.options
-          .map(
-            (o) => DropdownMenuItem<String>(
-              value: o.toString(),
-              child: Text(
-                o.toString(),
-                style: const TextStyle(color: Colors.white),
-              ),
-            ),
-          )
+          .map((o) => DropdownMenuItem<String>(
+                value: o.toString(),
+                child: Text(
+                  o.toString(),
+                  style: const TextStyle(color: Colors.white),
+                ),
+              ))
           .toList();
       if (mounted) setState(() {});
       return;
     }
 
     if (mounted) setState(() => _loadingDropdown[field.id] = true);
+    
     try {
       final snap = await FirebaseFirestore.instance
           .collection('tenants/${widget.tenantId}/${field.collection}')
@@ -8987,12 +9233,12 @@ void initState() {
 
       final items = snap.docs.map((doc) {
         final data = doc.data();
-        final value = (data[field.valueField] ?? doc.id).toString();
-        final label = (data[field.displayField] ?? value).toString();
+        final value = data[field.valueField] ?? doc.id;
+        final label = data[field.displayField] ?? value.toString();
         return DropdownMenuItem<String>(
-          value: value,
+          value: value.toString(),
           child: Text(
-            label,
+            label.toString(),
             style: const TextStyle(color: Colors.white),
           ),
         );
@@ -9003,9 +9249,109 @@ void initState() {
         _dropdownValues[field.id] = items.first.value;
       }
     } finally {
-      if (mounted) {
-        setState(() => _loadingDropdown[field.id] = false);
+      if (mounted) setState(() => _loadingDropdown[field.id] = false);
+    }
+  }
+
+  // NEW: Load assignTo options filtered by level
+  Future<void> loadAssignToOptions(FormFieldMeta field) async {
+    if (mounted) setState(() => _loadingDropdown[field.id] = true);
+    
+    try {
+      // Wait for current user level to load if not available yet
+      if (_currentUserLevel == null) {
+        await _loadCurrentUserLevel();
       }
+
+      if (_currentUserLevel == null) {
+        debugPrint('Could not determine current user level');
+        _dropdownItems[field.id] = [];
+        return;
+      }
+
+      // Calculate target level: currentLevel + 1
+      final targetLevel = _currentUserLevel! + 1;
+      debugPrint('Filtering assignTo for level: $targetLevel');
+
+      // Load hierarchy nodes for the target level
+      final hierarchySnap = await FirebaseFirestore.instance
+          .collection('tenants')
+          .doc(widget.tenantId)
+          .collection('organizations')
+          .doc('hierarchy')
+          .collection('nodes')
+          .where('level', isEqualTo: targetLevel)
+          .where('isActive', isEqualTo: true)
+          .get();
+
+      final List<DropdownMenuItem<String>> items = [];
+
+      // For each node at the target level, get users
+      for (final nodeDoc in hierarchySnap.docs) {
+        final nodeId = nodeDoc.id;
+        final nodeName = nodeDoc.data()['name'] as String? ?? nodeId;
+
+        // Get users assigned to this node
+        final usersSnap = await FirebaseFirestore.instance
+            .collection('tenants')
+            .doc(widget.tenantId)
+            .collection('users')
+            .where('nodeId', isEqualTo: nodeId)
+            .where('level', isEqualTo: targetLevel)
+            .where('status', isEqualTo: 'active')
+            .get();
+
+        for (final userDoc in usersSnap.docs) {
+          final userData = userDoc.data();
+          final userId = userDoc.id;
+          final fullName = userData['profile_data']?['fullName'] ?? 
+                          userData['fullName'] ??
+                          userId;
+          final designation = userData['designation'] ?? 'No Designation';
+
+          items.add(
+            DropdownMenuItem<String>(
+              value: userId,
+              child: Text(
+                '$fullName ($designation - $nodeName)',
+                style: const TextStyle(color: Colors.white),
+              ),
+            ),
+          );
+        }
+      }
+
+      if (items.isEmpty) {
+        items.add(
+          DropdownMenuItem<String>(
+            value: 'none',
+            child: Text(
+              'No users found at level $targetLevel',
+              style: const TextStyle(color: Colors.white70),
+            ),
+          ),
+        );
+      }
+
+      _dropdownItems[field.id] = items;
+      if (_dropdownValues[field.id] == null && items.isNotEmpty) {
+        _dropdownValues[field.id] = items.first.value;
+      }
+
+      debugPrint('Loaded ${items.length} assignTo options for level $targetLevel');
+    } catch (e) {
+      debugPrint('Error loading assignTo options: $e');
+      _dropdownItems[field.id] = [
+        DropdownMenuItem<String>(
+          value: 'error',
+          child: Text(
+            'Error loading options',
+            style: const TextStyle(color: Colors.redAccent),
+          ),
+        ),
+      ];
+    } finally {
+      if (mounted) setState(() => _loadingDropdown[field.id] = false);
     }
   }
 
@@ -9013,229 +9359,210 @@ void initState() {
     if (field.required && value.isEmpty) {
       return '${field.label} is required';
     }
-
     if (field.type == 'email' && value.isNotEmpty) {
       final ok = RegExp(r'^[^@]+@[^@]+\.[^@]+$').hasMatch(value);
       if (!ok) return 'Invalid email';
     }
-
     if (field.validation != null && value.isNotEmpty) {
       final re = RegExp(field.validation!);
       if (!re.hasMatch(value)) {
         return 'Invalid ${field.label}';
       }
     }
-
     return null;
   }
 
- // lib/task/pages/create_task_page.dart
+  // lib/task/pages/create_task_page.dart
+  Future<Map<String, dynamic>?> submitExternally() async {
+    final ok = _formKey.currentState?.validate() ?? false;
+    if (!ok) return null;
 
-Future<Map<String, dynamic>?> submitExternally() async {
+    // 1. Capture controllers/checkboxes/dropdowns
+    for (final entry in _controllers.entries) {
+      _values[entry.key] = entry.value.text.trim();
+    }
+    for (final entry in _checkboxValues.entries) {
+      _values[entry.key] = entry.value;
+    }
+    for (final entry in _dropdownValues.entries) {
+      _values[entry.key] = entry.value;
+    }
 
-  final ok = _formKey.currentState?.validate() ?? false;
-  if (!ok) return null;
-
-  // 1. Capture controllers/checkboxes/dropdowns
-  for (final entry in _controllers.entries) {
-    _values[entry.key] = entry.value.text.trim();
-  }
-  for (final entry in _checkboxValues.entries) {
-    _values[entry.key] = entry.value;
-  }
-  for (final entry in _dropdownValues.entries) {
-    _values[entry.key] = entry.value;
-  }
-
-  // 2. Ensure Date values are included in the return payload
-  for (final field in widget.form.fields) {
-    if (field.type == 'date') {
-      // If the user picked a date, it's already in _values[field.id] 
-      // via the onChanged callback. We just need to make sure we don't 
-      // accidentally null it out or skip it.
-      if (!_values.containsKey(field.id)) {
-        _values[field.id] = null;
+    // 2. Ensure Date values are included in the return payload
+    for (final field in widget.form.fields) {
+      if (field.type == 'date') {
+        // If the user picked a date, it's already in _values[field.id] via the onChanged callback.
+        // We just need to make sure we don't accidentally null it out or skip it.
+        if (!_values.containsKey(field.id)) {
+          _values[field.id] = null;
+        }
       }
     }
+
+    return Map<String, dynamic>.from(_values);
   }
-
-  return Map<String, dynamic>.from(_values);
-}
-
 
   Widget _buildField(FormFieldMeta field) {
     switch (field.type) {
       case 'email':
       case 'text':
       case 'password':
-         return Padding(
-        padding: const EdgeInsets.only(bottom: 16.0),
-        child: TextFormField(
-          controller: _controllers[field.id],
-          obscureText: field.type == 'password',
-          style: const TextStyle(color: Colors.white),
-          decoration: InputDecoration(
-            labelText: field.label,
-            labelStyle: const TextStyle(color: Colors.white70),
-            floatingLabelStyle: const TextStyle(color: Colors.cyanAccent),
-            enabledBorder: OutlineInputBorder(
-              borderSide: const BorderSide(color: Colors.white24),
-              borderRadius: BorderRadius.circular(18),
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 16.0),
+          child: TextFormField(
+            controller: _controllers[field.id],
+            obscureText: field.type == 'password',
+            style: const TextStyle(color: Colors.white),
+            decoration: InputDecoration(
+              labelText: field.label,
+              labelStyle: const TextStyle(color: Colors.white70),
+              floatingLabelStyle: const TextStyle(color: Colors.cyanAccent),
+              enabledBorder: OutlineInputBorder(
+                borderSide: const BorderSide(color: Colors.white24),
+                borderRadius: BorderRadius.circular(18),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderSide: const BorderSide(color: Colors.cyanAccent, width: 2),
+                borderRadius: BorderRadius.circular(18),
+              ),
+              errorBorder: OutlineInputBorder(
+                borderSide: const BorderSide(color: Colors.redAccent),
+                borderRadius: BorderRadius.circular(18),
+              ),
+              focusedErrorBorder: OutlineInputBorder(
+                borderSide: const BorderSide(color: Colors.redAccent, width: 2),
+                borderRadius: BorderRadius.circular(18),
+              ),
+              filled: true,
+              // glass-like dark layer
+              fillColor: Colors.white.withOpacity(0.04),
             ),
-            focusedBorder: OutlineInputBorder(
-              borderSide:
-                  const BorderSide(color: Colors.cyanAccent, width: 2),
-              borderRadius: BorderRadius.circular(18),
-            ),
-            errorBorder: OutlineInputBorder(
-              borderSide: const BorderSide(color: Colors.redAccent),
-              borderRadius: BorderRadius.circular(18),
-            ),
-            focusedErrorBorder: OutlineInputBorder(
-              borderSide:
-                  const BorderSide(color: Colors.redAccent, width: 2),
-              borderRadius: BorderRadius.circular(18),
-            ),
-            filled: true,
-            // glass‑like dark layer
-            fillColor: Colors.white.withOpacity(0.04),
+            validator: (v) => _runValidation(field, v?.trim() ?? ''),
           ),
-          validator: (v) => _runValidation(field, (v ?? '').trim()),
-        ),
-      );
+        );
 
-    case 'dropdown':
-  final loading = _loadingDropdown[field.id] ?? false;
-  final options = _dropdownItems[field.id] ??
-      field.options
-          .map(
-            (o) => DropdownMenuItem<String>(
-              value: o.toString(),
-              child: Text(o.toString()),
-            ),
-          )
-          .toList();
+      case 'dropdown':
+        final loading = _loadingDropdown[field.id] ?? false;
+        final options = _dropdownItems[field.id] ??
+            field.options
+                .map(
+                  (o) => DropdownMenuItem<String>(
+                    value: o.toString(),
+                    child: Text(o.toString()),
+                  ),
+                )
+                .toList();
 
-  return Padding(
-    padding: const EdgeInsets.only(bottom: 16.0),
-    child: PopupMenuButton<String>(
-      color: Colors.transparent,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(14),
-      ),
-      offset: const Offset(0, 8),
-      child: InputDecorator(
-        decoration: InputDecoration(
-          labelText: field.label,
-          labelStyle: const TextStyle(color: Colors.white70),
-          floatingLabelStyle: const TextStyle(color: Colors.cyanAccent),
-          enabledBorder: OutlineInputBorder(
-            borderSide: const BorderSide(color: Colors.white24),
-            borderRadius: BorderRadius.circular(18),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderSide: const BorderSide(color: Colors.cyanAccent, width: 2),
-            borderRadius: BorderRadius.circular(18),
-          ),
-          filled: true,
-          fillColor: Colors.white.withOpacity(0.04),
-          suffixIcon: const Icon(Icons.arrow_drop_down, color: Colors.cyanAccent),
-        ),
-        child: Text(
-          _dropdownValues[field.id] ?? 'Select ${field.label}',
-          style: const TextStyle(color: Colors.white),
-        ),
-      ),
-      itemBuilder: (context) => options
-          .map(
-            (item) => PopupMenuItem<String>(
-              value: item.value,
-              padding: EdgeInsets.zero,
-              child: GlassContainer(
-                blur: 28,
-                opacity: 0.3,
-                tint: Colors.black,
-                blurMode: GlassBlurMode.perWidget,
-                borderRadius: BorderRadius.circular(10),
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                child: SizedBox(
-                  width: 200,
-                  child: item.child,
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 16.0),
+          child: PopupMenuButton<String>(
+            color: Colors.transparent,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+            offset: const Offset(0, 8),
+            child: InputDecorator(
+              decoration: InputDecoration(
+                labelText: field.label,
+                labelStyle: const TextStyle(color: Colors.white70),
+                floatingLabelStyle: const TextStyle(color: Colors.cyanAccent),
+                enabledBorder: OutlineInputBorder(
+                  borderSide: const BorderSide(color: Colors.white24),
+                  borderRadius: BorderRadius.circular(18),
                 ),
+                focusedBorder: OutlineInputBorder(
+                  borderSide: const BorderSide(color: Colors.cyanAccent, width: 2),
+                  borderRadius: BorderRadius.circular(18),
+                ),
+                filled: true,
+                fillColor: Colors.white.withOpacity(0.04),
+                suffixIcon: const Icon(Icons.arrow_drop_down, color: Colors.cyanAccent),
+              ),
+              child: Text(
+                _dropdownValues[field.id] ?? 'Select ${field.label}',
+                style: const TextStyle(color: Colors.white),
               ),
             ),
-          )
-          .toList(),
-      onSelected: (v) {
-        setState(() => _dropdownValues[field.id] = v);
-      },
-    ),
-  );
-
+            itemBuilder: (context) => options
+                .map(
+                  (item) => PopupMenuItem<String>(
+                    value: item.value,
+                    padding: EdgeInsets.zero,
+                    child: GlassContainer(
+                      blur: 28,
+                      opacity: 0.3,
+                      tint: Colors.black,
+                      blurMode: GlassBlurMode.perWidget,
+                      borderRadius: BorderRadius.circular(10),
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      child: SizedBox(
+                        width: 200,
+                        child: item.child,
+                      ),
+                    ),
+                  ),
+                )
+                .toList(),
+            onSelected: (v) {
+              setState(() => _dropdownValues[field.id] = v);
+            },
+          ),
+        );
 
       case 'checkbox':
         return Padding(
-        padding: const EdgeInsets.only(bottom: 12.0),
-        child: Container(
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.04),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: Colors.white24),
-          ),
-          child: CheckboxListTile(
-            value: _checkboxValues[field.id] ?? false,
-            onChanged: (v) {
-              setState(() => _checkboxValues[field.id] = v ?? false);
-            },
-            title: Text(
-              field.label,
-              style: const TextStyle(color: Colors.white),
+          padding: const EdgeInsets.only(bottom: 12.0),
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.04),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: Colors.white24),
             ),
-            activeColor: Colors.cyanAccent,
-            checkColor: Colors.black,
-            controlAffinity: ListTileControlAffinity.leading,
+            child: CheckboxListTile(
+              value: _checkboxValues[field.id] ?? false,
+              onChanged: (v) {
+                setState(() => _checkboxValues[field.id] = v ?? false);
+              },
+              title: Text(
+                field.label,
+                style: const TextStyle(color: Colors.white),
+              ),
+              activeColor: Colors.cyanAccent,
+              checkColor: Colors.black,
+              controlAffinity: ListTileControlAffinity.leading,
+            ),
           ),
-        ),
-      );
+        );
 
-    case 'date':
-      // UPDATED DUE DATE FIELD: no past date, includes time
-      return _DynamicDateField(
-        label: field.label,
-        required: field.required,
-        onChanged: (value) => _values[field.id] = value,
-      );
+      case 'date':
+        // UPDATED DUE DATE FIELD: no past date, includes time
+        return _DynamicDateField(
+          label: field.label,
+          required: field.required,
+          onChanged: (value) => _values[field.id] = value,
+        );
 
-    default:
-      return Padding(
-        padding: const EdgeInsets.only(bottom: 16.0),
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.redAccent.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.redAccent),
+      default:
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 16.0),
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.redAccent.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.redAccent),
+            ),
+            child: Text(
+              'Unsupported field type: ${field.type}',
+              style: const TextStyle(color: Colors.redAccent),
+            ),
           ),
-          child: Text(
-            'Unsupported field type: ${field.type}',
-            style: const TextStyle(color: Colors.redAccent),
-          ),
-        ),
-      );
+        );
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    if (widget.form.fields.isEmpty) {
-      return const Center(
-        child: Text(
-          'This form has no fields.',
-          style: TextStyle(color: Colors.white70),
-        ),
-      );
-    }
-
     return Form(
       key: _formKey,
       child: ListView(
@@ -9247,11 +9574,15 @@ Future<Map<String, dynamic>?> submitExternally() async {
   }
 }
 
+/* ========================================================================= */
+/*                          HELPER WIDGETS                                   */
+/* ========================================================================= */
 
+// Date/Time picker widget
 class _DynamicDateField extends StatefulWidget {
   final String label;
   final bool required;
-  final ValueChanged<DateTime> onChanged;
+  final ValueChanged<DateTime?> onChanged;
 
   const _DynamicDateField({
     required this.label,
@@ -9268,16 +9599,10 @@ class _DynamicDateFieldState extends State<_DynamicDateField> {
 
   @override
   Widget build(BuildContext context) {
-    final display = _value == null
-        ? 'Select date & time'
-        : '${_value!.year}-${_value!.month.toString().padLeft(2, '0')}-${_value!.day.toString().padLeft(2, '0')} '
-          '${_value!.hour.toString().padLeft(2, '0')}:${_value!.minute.toString().padLeft(2, '0')}';
-
     return Padding(
       padding: const EdgeInsets.only(bottom: 16.0),
       child: InkWell(
         onTap: _pickDateTime,
-        borderRadius: BorderRadius.circular(18),
         child: InputDecorator(
           decoration: InputDecoration(
             labelText: widget.label,
@@ -9291,24 +9616,16 @@ class _DynamicDateFieldState extends State<_DynamicDateField> {
               borderSide: const BorderSide(color: Colors.cyanAccent, width: 2),
               borderRadius: BorderRadius.circular(18),
             ),
-            errorBorder: OutlineInputBorder(
-              borderSide: const BorderSide(color: Colors.redAccent),
-              borderRadius: BorderRadius.circular(18),
-            ),
-            focusedErrorBorder: OutlineInputBorder(
-              borderSide: const BorderSide(color: Colors.redAccent, width: 2),
-              borderRadius: BorderRadius.circular(18),
-            ),
             filled: true,
             fillColor: Colors.white.withOpacity(0.04),
-            suffixIcon: const Icon(Icons.calendar_today,
-                color: Colors.cyanAccent),
+            suffixIcon: const Icon(Icons.calendar_today, color: Colors.cyanAccent),
           ),
           child: Text(
-            display,
-            style: TextStyle(
-              color: _value == null ? Colors.white38 : Colors.white,
-            ),
+            _value == null
+                ? 'Select date & time'
+                : '${_value!.year}-${_value!.month.toString().padLeft(2, '0')}-${_value!.day.toString().padLeft(2, '0')} '
+                  '${_value!.hour.toString().padLeft(2, '0')}:${_value!.minute.toString().padLeft(2, '0')}',
+            style: const TextStyle(color: Colors.white),
           ),
         ),
       ),
@@ -9316,98 +9633,115 @@ class _DynamicDateFieldState extends State<_DynamicDateField> {
   }
 
   Future<void> _pickDateTime() async {
-  final now = DateTime.now();
-  final initial = _value ?? now;
+    final now = DateTime.now();
+    final initial = _value ?? now;
 
-  const double dialogBlur = 30;
-  const double dialogOpacity = 0.32;
-
-  Widget wrapGlass(BuildContext context, Widget dialogChild) {
-    return Stack(
-      children: [
-        // full‑screen blurred dark sheet
-        Positioned.fill(
-          child: GlassContainer(
-            blur: dialogBlur,
-            opacity: dialogOpacity,
-            tint: Colors.black,
-            blurMode: GlassBlurMode.perWidget,
-            borderRadius: BorderRadius.zero,
-            padding: EdgeInsets.zero,
-            child: const SizedBox.expand(),
+    // DATE
+    final pickedDate = await showDatePicker(
+      context: context,
+      initialDate: initial.isBefore(now) ? now : initial,
+      firstDate: now,
+      lastDate: DateTime(now.year + 10),
+      builder: (context, child) {
+        return Theme(
+          data: ThemeData.dark().copyWith(
+            colorScheme: const ColorScheme.dark(
+              primary: Colors.cyanAccent,
+              onPrimary: Colors.black,
+              surface: Colors.transparent,
+              onSurface: Colors.white,
+            ),
+            dialogBackgroundColor: Colors.transparent,
           ),
-        ),
-        // dialog itself
-        Center(
-          child: dialogChild,
-        ),
-      ],
+          child: _wrapGlass(context, child!, isCompact: true), // ✅
+        );
+      },
+    );
+
+    if (pickedDate == null) return;
+
+    // TIME
+    final pickedTime = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(initial),
+      builder: (context, child) {
+        return Theme(
+          data: ThemeData.dark().copyWith(
+            colorScheme: const ColorScheme.dark(
+              primary: Colors.cyanAccent,
+              onPrimary: Colors.black,
+              surface: Colors.transparent,
+              onSurface: Colors.white,
+            ),
+            dialogBackgroundColor: Colors.transparent,
+          ),
+          child: _wrapGlass(context, child!, isCompact: true), // ✅ pass flag
+        );
+      },
+    );
+
+    if (pickedTime == null) return;
+
+    final combined = DateTime(
+      pickedDate.year,
+      pickedDate.month,
+      pickedDate.day,
+      pickedTime.hour,
+      pickedTime.minute,
+    );
+
+    final clamped = combined.isBefore(now) ? now : combined;
+
+    setState(() => _value = clamped);
+    widget.onChanged(clamped);
+  }
+
+  Widget _wrapGlass(
+  BuildContext context,
+  Widget child, {
+  bool isCompact = false,
+}) {
+  if (!isCompact) {
+    return GlassContainer(
+      blur: 40,
+      opacity: 0.22,
+      tint: Colors.black,
+      borderRadius: BorderRadius.circular(28),
+      blurMode: GlassBlurMode.perWidget,
+      child: child,
     );
   }
 
-  // DATE (no past)
-  final pickedDate = await showDatePicker(
-    context: context,
-    initialDate: initial.isBefore(now) ? now : initial,
-    firstDate: DateTime(now.year, now.month, now.day),
-    lastDate: DateTime(now.year + 5),
-    builder: (context, child) {
-      return Theme(
-        data: ThemeData.dark().copyWith(
-          colorScheme: const ColorScheme.dark(
-            primary: Colors.cyanAccent,
-            onPrimary: Colors.black,
-            surface: Colors.transparent,
-            onSurface: Colors.white,
-          ),
-          dialogBackgroundColor: Colors.transparent,
+  const dialogWidth  = 640.0;
+  const dialogHeight = 420.0;
+
+  return Center(
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(
+        minWidth: dialogWidth,
+        maxWidth: dialogWidth,     // ✅ exact width
+        minHeight: dialogHeight,
+        maxHeight: dialogHeight,   // ✅ exact height
+      ),
+      child: GlassContainer(
+        blur: 40,
+        opacity: 0.22,
+        tint: Colors.black,
+        borderRadius: BorderRadius.circular(22),
+        blurMode: GlassBlurMode.perWidget,
+        padding: const EdgeInsets.all(8),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(18),
+          child: child,
         ),
-        child: wrapGlass(context, child!),
-      );
-    },
+      ),
+    ),
   );
-  if (pickedDate == null) return;
-
-  // TIME
-  final pickedTime = await showTimePicker(
-    context: context,
-    initialTime: TimeOfDay.fromDateTime(initial),
-    builder: (context, child) {
-      return Theme(
-        data: ThemeData.dark().copyWith(
-          colorScheme: const ColorScheme.dark(
-            primary: Colors.cyanAccent,
-            onPrimary: Colors.black,
-            surface: Colors.transparent,
-            onSurface: Colors.white,
-          ),
-          dialogBackgroundColor: Colors.transparent,
-        ),
-        child: wrapGlass(context, child!),
-      );
-    },
-  );
-  if (pickedTime == null) return;
-
-  final combined = DateTime(
-    pickedDate.year,
-    pickedDate.month,
-    pickedDate.day,
-    pickedTime.hour,
-    pickedTime.minute,
-  );
-
-  final clamped = combined.isBefore(now) ? now : combined;
-
-  setState(() => _value = clamped);
-  widget.onChanged(clamped);
-  
 }
 
 
+
 }
-
-
 
 ================================================================================
 
@@ -9432,15 +9766,212 @@ class ViewAllTasksPage extends StatelessWidget {
 ================================================================================
 
 // File: lib\task\pages\view_assigned_tasks_page.dart
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+
+import '../../core/glass_container.dart';
 
 class ViewAssignedTasksPage extends StatelessWidget {
   const ViewAssignedTasksPage({super.key});
 
+  static const String tenantId = 'default_tenant';
+
   @override
   Widget build(BuildContext context) {
-    return const Center(
-      child: Text('View Assigned Tasks (full-screen page placeholder)', style: TextStyle(color: Colors.white70)),
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user == null) {
+      return const Center(
+        child: Text(
+          'You must be logged in to see assigned tasks.',
+          style: TextStyle(color: Colors.white70),
+        ),
+      );
+    }
+
+    final uid = user.uid;
+
+    final stream = FirebaseFirestore.instance
+        .collection('tenants')
+        .doc(tenantId)
+        .collection('tasks')
+        .where('assigned_to', isEqualTo: uid)   // 👈 filter by current user
+        .orderBy('created_at', descending: true)
+        .snapshots();
+
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: stream,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(
+            child: CircularProgressIndicator(
+              valueColor: AlwaysStoppedAnimation<Color>(Colors.cyanAccent),
+            ),
+          );
+        }
+
+        if (snapshot.hasError) {
+  final error = snapshot.error;
+  String consoleUrl = '';
+
+  if (error is FirebaseException && error.message != null) {
+    final msg = error.message!;
+    final marker = 'https://';
+    final idx = msg.indexOf(marker);
+    if (idx != -1) {
+      consoleUrl = msg.substring(idx).trim();
+      debugPrint('🔥 FIRESTORE INDEX URL: $consoleUrl');
+    } else {
+      debugPrint('Firestore error (no URL found): $msg');
+    }
+  } else {
+    debugPrint('Unknown snapshot error: $error');
+  }
+
+  return Center(
+    child: Text(
+      'Failed to load assigned tasks.\n'
+      'Check debug console for Firestore index URL.',
+      textAlign: TextAlign.center,
+      style: const TextStyle(color: Colors.redAccent),
+    ),
+  );
+}
+
+        final docs = snapshot.data?.docs ?? [];
+
+        if (docs.isEmpty) {
+          return const Center(
+            child: Text(
+              'No tasks are currently assigned to you.',
+              style: TextStyle(color: Colors.white70),
+            ),
+          );
+        }
+
+        return Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: ListView.separated(
+            itemCount: docs.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 10),
+            itemBuilder: (context, index) {
+              final data = docs[index].data();
+              final title = (data['title'] ?? '') as String;
+              final description = (data['description'] ?? '') as String;
+              final status = (data['status'] ?? 'PENDING') as String;
+              final priority = (data['custom_fields']?['priority'] ?? '')
+                  .toString()
+                  .toUpperCase();
+              final dueIso = (data['due_date'] ?? '') as String;
+              DateTime? due;
+              if (dueIso.isNotEmpty) {
+                try {
+                  due = DateTime.parse(dueIso);
+                } catch (_) {}
+              }
+
+              return GlassContainer(
+                blur: 18,
+                opacity: 0.18,
+                tint: Colors.black,
+                borderRadius: BorderRadius.circular(18),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Left: main content
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            title.isEmpty ? '(No title)' : title,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          if (description.isNotEmpty)
+                            Text(
+                              description,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white70,
+                                fontSize: 13,
+                              ),
+                            ),
+                          const SizedBox(height: 6),
+                          Row(
+                            children: [
+                              if (priority.isNotEmpty)
+                                _Chip(
+                                  label: priority,
+                                  color: Colors.deepOrangeAccent,
+                                ),
+                              const SizedBox(width: 6),
+                              _Chip(
+                                label: status,
+                                color: status == 'COMPLETED'
+                                    ? Colors.greenAccent
+                                    : Colors.cyanAccent,
+                              ),
+                              const Spacer(),
+                              if (due != null)
+                                Text(
+                                  'Due: '
+                                  '${due.year}-${due.month.toString().padLeft(2, '0')}-'
+                                  '${due.day.toString().padLeft(2, '0')} '
+                                  '${due.hour.toString().padLeft(2, '0')}:'
+                                  '${due.minute.toString().padLeft(2, '0')}',
+                                  style: const TextStyle(
+                                    color: Colors.white60,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _Chip extends StatelessWidget {
+  final String label;
+  final Color color;
+
+  const _Chip({required this.label, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.8), width: 0.8),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
     );
   }
 }
@@ -10003,23 +10534,24 @@ class WorkspaceIds {
 ================================================================================
 
 // File: lib\workspace\workspace_shell.dart
-// lib/workspace/workspace_shell.dart
-import 'dart:collection';
-import 'dart:developer' as developer;
-import 'dart:ui';
-
-import 'package:firebase_auth/firebase_auth.dart';
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:walld_flutter/core/permissions_cache.dart';
+import 'package:walld_flutter/workspace/universal_top_bar.dart';
+import 'package:walld_flutter/workspace/workspace_controller.dart';
+import 'package:walld_flutter/workspace/workspace_ids.dart';
 
 import '../core/performance_state.dart';
 import '../core/wallpaper_service.dart';
 import '../dynamic_screen/dashboard_screen.dart';
 import '../task/task_workspace.dart';
-import 'universal_top_bar.dart';
-import 'workspace_controller.dart';
-import 'workspace_ids.dart';
+
+// Imports from the other 2 files
+import 'widgets/fps_counter.dart';
+import 'mixins/shell_performance_mixin.dart';
 
 class WorkspaceShell extends StatefulWidget {
   final WorkspaceController workspaceController;
@@ -10030,13 +10562,19 @@ class WorkspaceShell extends StatefulWidget {
   });
 
   @override
-  State<WorkspaceShell> createState() => _WorkspaceShellState();
+  State<WorkspaceShell> createState() => WorkspaceShellState();
 }
 
-class _WorkspaceShellState extends State<WorkspaceShell>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _animationController;
+// Mixin added here to separate performance logic
+class WorkspaceShellState extends State<WorkspaceShell>
+    with SingleTickerProviderStateMixin, ShellPerformanceMixin {
+  
+  // DEBUG INSTANCE TRACKING
+  static int _instanceCounter = 0;
+  final int _instanceNumber;
+  final String _instanceId = DateTime.now().millisecondsSinceEpoch.toString();
 
+  late final AnimationController animationController;
   late final Animation<Offset> _slideForward;
   late final Animation<Offset> _slideBackward;
   late final Animation<double> _fadeOut;
@@ -10046,57 +10584,34 @@ class _WorkspaceShellState extends State<WorkspaceShell>
   int _previousIndex = 0;
   bool _isAnimating = false;
   bool _isForward = true;
-  bool _isLowEndDevice = false;
-
-  // FPS / perf tracking
-  final ValueNotifier<double> _fpsNotifier = ValueNotifier<double>(60.0);
-  final ValueNotifier<bool> _isAnimatingNotifier = ValueNotifier<bool>(false);
-  bool _showFPS = true;
-
-  final Queue<double> _frameMsWindow = Queue<double>();
-  static const int _windowSize = 180; // ~3s at 60fps
-  int _frameCount = 0;
-
-  static const double _targetFrameTime = 16.67;
-  static const double _jankThreshold = 33.33;
-  static const double _severeJankThreshold = 50.0;
-
-  // Rate-limit logs
-  DateTime _lastPerfLog = DateTime.fromMillisecondsSinceEpoch(0);
-  DateTime _lastJankLog = DateTime.fromMillisecondsSinceEpoch(0);
-  DateTime _lastSevereJankLog = DateTime.fromMillisecondsSinceEpoch(0);
-
-  // Vsync lock detection
-  int _consecutive30fpsLike = 0;
-  bool _vsyncLockDetected = false;
-  double _avgFrameTimeWindow = 0.0;
-
-  // Warm-up stability
-  bool _warmupMarked = false;
-  int _stableChecks = 0;
 
   Duration _lastBuildDuration = Duration.zero;
+
+  WorkspaceShellState() : _instanceNumber = ++_instanceCounter {
+    debugPrint('🏢 WorkspaceShell INSTANCE #$_instanceNumber CREATED (ID: $_instanceId)');
+  }
 
   @override
   void initState() {
     super.initState();
+    debugPrint('🏢 WorkspaceShell #$_instanceNumber - initState()');
 
-    _currentIndex = getCurrentIndex();
+    _currentIndex = _getCurrentIndex();
     _previousIndex = _currentIndex;
 
-    _animationController = AnimationController(
+    animationController = AnimationController(
       duration: const Duration(milliseconds: 360),
       vsync: this,
     );
 
     _setupCachedAnimations();
 
-    _animationController.addStatusListener((status) {
+    animationController.addStatusListener((status) {
       if (status == AnimationStatus.forward) {
-        _isAnimatingNotifier.value = true;
+        setAnimating(true); // From Mixin
         if (mounted) setState(() => _isAnimating = true);
       } else if (status == AnimationStatus.completed) {
-        _isAnimatingNotifier.value = false;
+        setAnimating(false); // From Mixin
         if (mounted) {
           setState(() {
             _isAnimating = false;
@@ -10107,9 +10622,9 @@ class _WorkspaceShellState extends State<WorkspaceShell>
     });
 
     widget.workspaceController.addListener(_onWorkspaceChanged);
-
-    // Real frame timings
-    SchedulerBinding.instance.addTimingsCallback(_onFrameTimings);
+    
+    // Initialize performance tracking from Mixin
+    initPerformanceTracking();
   }
 
   void _setupCachedAnimations() {
@@ -10118,26 +10633,433 @@ class _WorkspaceShellState extends State<WorkspaceShell>
     _slideForward = Tween<Offset>(
       begin: Offset.zero,
       end: const Offset(-1.0, 0.0),
-    ).animate(CurvedAnimation(parent: _animationController, curve: curve));
+    ).animate(CurvedAnimation(parent: animationController, curve: curve));
 
     _slideBackward = Tween<Offset>(
       begin: Offset.zero,
       end: const Offset(1.0, 0.0),
-    ).animate(CurvedAnimation(parent: _animationController, curve: curve));
+    ).animate(CurvedAnimation(parent: animationController, curve: curve));
 
     _fadeOut = Tween<double>(begin: 1.0, end: 0.0).animate(
       CurvedAnimation(
-        parent: _animationController,
+        parent: animationController,
         curve: const Interval(0.0, 0.60, curve: Curves.easeOut),
       ),
     );
 
     _fadeIn = Tween<double>(begin: 0.2, end: 1.0).animate(
       CurvedAnimation(
-        parent: _animationController,
+        parent: animationController,
         curve: const Interval(0.10, 0.85, curve: Curves.easeIn),
       ),
     );
+  }
+
+  int _getCurrentIndex() {
+    return widget.workspaceController.current == WorkspaceIds.task ? 1 : 0;
+  }
+
+  void _onWorkspaceChanged() {
+    final newIndex = _getCurrentIndex();
+    if (newIndex == _currentIndex) return;
+    if (_isAnimating) return;
+
+    setState(() {
+      _previousIndex = _currentIndex;
+      _currentIndex = newIndex;
+      _isForward = newIndex > _previousIndex;
+    });
+
+    animationController.forward(from: 0.0);
+  }
+
+  // NOTE: This logic stays here because it accesses AnimationController
+  @override
+  void onLowEndModeChanged(bool isLowEnd) {
+    if (isLowEnd) {
+      animationController.duration = const Duration(milliseconds: 300);
+    }
+  }
+
+  Future<void> pickWallpaperFromWindows() async {
+    await WallpaperService.instance.pickWallpaper();
+  }
+
+  Future<void> signOut() async {
+    try {
+      debugPrint('🔒 WorkspaceShell #$_instanceNumber - Starting logout process...');
+      
+      PermissionsCache.instance.clearCache();
+      debugPrint('✅ Permissions cache cleared');
+      
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.clear();
+      debugPrint('✅ SharedPreferences cleared');
+      
+      WallpaperService.instance.wallpaperPath = null;
+      WallpaperService.instance.globalGlassOpacity = 0.12;
+      WallpaperService.instance.globalGlassBlur = 16.0;
+      debugPrint('✅ WallpaperService reset');
+      
+      await FirebaseAuth.instance.signOut();
+      debugPrint('✅ Firebase Auth signed out');
+      
+      if (!mounted) return;
+      
+      // Navigate to DashboardScreen which handles the login view
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(
+          builder: (context) => const DashboardScreen(),
+        ),
+        (route) => false,
+      );
+      
+      debugPrint('✅ Navigated to login screen');
+      
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Signed out successfully'),
+              backgroundColor: Colors.cyan,
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      });
+    } catch (e) {
+      debugPrint('❌ Sign out error: $e');
+    }
+  }
+
+  Future<void> openGlobalGlassSheet() async {
+    final service = WallpaperService.instance;
+    double tempOpacity = service.globalGlassOpacity;
+    double tempBlur = service.globalGlassBlur;
+
+    final applied = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: const Color(0xFF05040A),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('Glass settings', style: TextStyle(color: Colors.white, fontSize: 16)),
+                    const SizedBox(height: 20),
+                    Row(
+                      children: [
+                        const Text('Opacity', style: TextStyle(color: Colors.white70)),
+                        Expanded(
+                          child: Slider(
+                            min: 0.04, max: 0.30, divisions: 26,
+                            value: tempOpacity.clamp(0.04, 0.30),
+                            onChanged: (v) => setModalState(() => tempOpacity = v),
+                          ),
+                        ),
+                      ],
+                    ),
+                    Row(
+                      children: [
+                        const Text('Blur', style: TextStyle(color: Colors.white70)),
+                        Expanded(
+                          child: Slider(
+                            min: 0, max: 30, divisions: 30,
+                            value: tempBlur.clamp(0, 30),
+                            onChanged: (v) => setModalState(() => tempBlur = v),
+                          ),
+                        ),
+                      ],
+                    ),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton(
+                        onPressed: () => Navigator.pop(context, true),
+                        child: const Text('Apply'),
+                      ),
+                    )
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    if (applied == true) {
+      service.setGlassOpacity(tempOpacity);
+      service.setGlassBlur(tempBlur);
+      await service.saveSettings();
+    }
+  }
+
+  @override
+  void dispose() {
+    debugPrint('🏢 WorkspaceShell #$_instanceNumber DISPOSED');
+    widget.workspaceController.removeListener(_onWorkspaceChanged);
+    animationController.dispose();
+    disposePerformanceTracking(); // From Mixin
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final buildStart = DateTime.now();
+
+    final outgoingSlide = _isForward ? _slideForward : _slideBackward;
+    final incomingSlide = _isForward
+        ? Tween<Offset>(begin: const Offset(1.0, 0.0), end: Offset.zero).animate(
+            CurvedAnimation(parent: animationController, curve: Curves.easeInOutCubicEmphasized))
+        : Tween<Offset>(begin: const Offset(-1.0, 0.0), end: Offset.zero).animate(
+            CurvedAnimation(parent: animationController, curve: Curves.easeInOutCubicEmphasized));
+
+    final result = Scaffold(
+      backgroundColor: Colors.transparent,
+      body: Stack(
+        children: [
+          // 1) Wallpaper
+          Positioned.fill(
+            child: AnimatedBuilder(
+              animation: WallpaperService.instance,
+              builder: (_, __) => DecoratedBox(
+                decoration: WallpaperService.instance.backgroundDecoration,
+              ),
+            ),
+          ),
+
+          // 2) Content
+          RepaintBoundary(
+            child: AnimatedBuilder(
+              animation: animationController,
+              builder: (context, child) {
+                return Stack(
+                  children: [
+                    Positioned.fill(
+                      child: Visibility(
+                        visible: _currentIndex == 0 || _isAnimating,
+                        child: SlideTransition(
+                          position: _currentIndex == 0 ? incomingSlide : outgoingSlide,
+                          child: FadeTransition(
+                            opacity: _currentIndex == 0 ? _fadeIn : _fadeOut,
+                            child: const RepaintBoundary(
+                                child: DashboardScreen(key: PageStorageKey('dashboardscreen'))),
+                          ),
+                        ),
+                      ),
+                    ),
+                    Positioned.fill(
+                      child: Visibility(
+                        visible: _currentIndex == 1 || _isAnimating,
+                        child: SlideTransition(
+                          position: _currentIndex == 1 ? incomingSlide : outgoingSlide,
+                          child: FadeTransition(
+                            opacity: _currentIndex == 1 ? _fadeIn : _fadeOut,
+                            child: const RepaintBoundary(
+                                child: TaskWorkspace(key: PageStorageKey('taskworkspace'))),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+
+          // 3) Top Bar
+          RepaintBoundary(
+            child: UniversalTopBar(
+              workspaceController: widget.workspaceController,
+              onWallpaperSettings: pickWallpaperFromWindows,
+              onGlassSettings: openGlobalGlassSheet,
+              onSignOut: signOut,
+            ),
+          ),
+
+          // 4) FPS Counter (Using Mixin Data)
+          if (showFPS)
+            Positioned(
+              top: 60, right: 16,
+              child: ValueListenableBuilder<double>(
+                valueListenable: fpsNotifier,
+                builder: (context, fps, _) {
+                  return ValueListenableBuilder<bool>(
+                    valueListenable: isAnimatingNotifier,
+                    builder: (context, isAnimating, _) {
+                      return FPSCounter(
+                        fps: fps,
+                        isAnimating: isAnimating,
+                        isLowEnd: isLowEndDevice,
+                        vsyncLocked: vsyncLockDetected,
+                        avgFrameTime: avgFrameTimeWindow,
+                        warmupStable: PerformanceState.instance.isWarmupStable,
+                        onToggle: toggleFPS,
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+        ],
+      ),
+    );
+
+    _lastBuildDuration = DateTime.now().difference(buildStart);
+    if (kDebugMode && _lastBuildDuration.inMilliseconds > 24) {
+      debugPrint('[BUILD] #$_instanceNumber dt=${_lastBuildDuration.inMilliseconds}ms');
+    }
+
+    return result;
+  }
+}
+
+================================================================================
+
+// File: lib\workspace\workspace_switcher.dart
+import 'package:flutter/material.dart';
+import '../core/glass_container.dart';
+import 'workspace_controller.dart';
+import 'workspace_ids.dart';
+
+class WorkspaceSwitcher extends StatelessWidget {
+  final WorkspaceController controller;
+
+  const WorkspaceSwitcher({super.key, required this.controller});
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (_, __) {
+        final current = controller.current;
+
+        return GlassContainer(
+          blur: 16,
+          opacity: 0.10,
+          tint: Colors.white,
+          borderRadius: BorderRadius.circular(999),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _pillIcon(
+                selected: current == WorkspaceIds.dashboard,
+                icon: Icons.dashboard_customize_rounded,
+                tooltip: 'Dashboard',
+                onTap: () => controller.setWorkspace(WorkspaceIds.dashboard),
+              ),
+              const SizedBox(width: 6),
+              _pillIcon(
+                selected: current == WorkspaceIds.task,
+                icon: Icons.task_alt_rounded,
+                tooltip: 'Task',
+                onTap: () => controller.setWorkspace(WorkspaceIds.task),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _pillIcon({
+    required bool selected,
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback onTap,
+  }) {
+    final fg = selected ? Colors.cyanAccent : Colors.white70;
+    final bg = selected ? Colors.cyan.withOpacity(0.16) : Colors.transparent;
+
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            color: bg,
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+              color: selected ? Colors.cyanAccent.withOpacity(0.6) : Colors.white24,
+              width: 1,
+            ),
+          ),
+          child: Icon(icon, size: 18, color: fg),
+        ),
+      ),
+    );
+  }
+}
+
+================================================================================
+
+// File: lib\workspace\mixins\shell_performance_mixin.dart
+import 'dart:collection';
+import 'dart:developer' as developer;
+import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart';
+import 'package:flutter/material.dart';
+
+import '../../core/performance_state.dart';
+import '../../core/wallpaper_service.dart';
+
+mixin ShellPerformanceMixin<T extends StatefulWidget> on State<T> {
+  
+  // State variables for Performance
+  final ValueNotifier<double> fpsNotifier = ValueNotifier<double>(60.0);
+  final ValueNotifier<bool> isAnimatingNotifier = ValueNotifier<bool>(false);
+  
+  bool showFPS = true;
+  bool isLowEndDevice = false;
+  bool vsyncLockDetected = false;
+  double avgFrameTimeWindow = 0.0;
+  
+  // Internal trackers
+  final Queue<double> _frameMsWindow = Queue<double>();
+  static const int _windowSize = 180;
+  static const double _targetFrameTime = 16.67;
+  static const double _jankThreshold = 33.33;
+  static const double _severeJankThreshold = 50.0;
+  
+  int _frameCount = 0;
+  int _consecutive30fpsLike = 0;
+  int _stableChecks = 0;
+  bool _warmupMarked = false;
+  
+  DateTime _lastPerfLog = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime _lastJankLog = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime _lastSevereJankLog = DateTime.fromMillisecondsSinceEpoch(0);
+
+  // Method to be overridden by Shell to adjust animations
+  void onLowEndModeChanged(bool isLowEnd) {}
+
+  void initPerformanceTracking() {
+    SchedulerBinding.instance.addTimingsCallback(_onFrameTimings);
+  }
+
+  void disposePerformanceTracking() {
+    SchedulerBinding.instance.removeTimingsCallback(_onFrameTimings);
+    fpsNotifier.dispose();
+    isAnimatingNotifier.dispose();
+  }
+
+  void setAnimating(bool animating) {
+    isAnimatingNotifier.value = animating;
+  }
+  
+  void toggleFPS() {
+    if (mounted) setState(() => showFPS = !showFPS);
   }
 
   void _onFrameTimings(List<FrameTiming> timings) {
@@ -10153,7 +11075,7 @@ class _WorkspaceShellState extends State<WorkspaceShell>
           ? _targetFrameTime
           : _frameMsWindow.reduce((a, b) => a + b) / _frameMsWindow.length;
 
-      _avgFrameTimeWindow = avgMs;
+      avgFrameTimeWindow = avgMs;
 
       final fps = (1000.0 / avgMs).clamp(1.0, 240.0);
       _frameCount++;
@@ -10161,12 +11083,12 @@ class _WorkspaceShellState extends State<WorkspaceShell>
       PerformanceState.instance.currentFps = fps;
 
       if (_frameCount % 10 == 0) {
-        _fpsNotifier.value = fps;
+        fpsNotifier.value = fps;
       }
 
-      if (!_isLowEndDevice && fps < 50) {
-        _isLowEndDevice = true;
-        _animationController.duration = const Duration(milliseconds: 300);
+      if (!isLowEndDevice && fps < 50) {
+        isLowEndDevice = true;
+        onLowEndModeChanged(true);
         _applyPerformanceOptimizations(fps);
       }
 
@@ -10194,78 +11116,42 @@ class _WorkspaceShellState extends State<WorkspaceShell>
         _lastPerfLog = now;
         debugPrint(
           '[PERF] fps=${fps.toStringAsFixed(1)} avg=${avgMs.toStringAsFixed(1)}ms '
-          'anim=${_isAnimating ? "Y" : "N"} stable=${PerformanceState.instance.isWarmupStable ? "Y" : "N"}',
+          'stable=${PerformanceState.instance.isWarmupStable ? "Y" : "N"}',
         );
       }
     }
   }
 
-  void _logJank({
-    required bool severe,
-    required double frameMs,
-    required double fps,
-  }) {
+  void _logJank({required bool severe, required double frameMs, required double fps}) {
     final tag = severe ? 'JANK:S' : 'JANK:M';
-    final screen = _currentIndex == 0 ? 'Dashboard' : 'Task';
     final dropped = (frameMs / _targetFrameTime).floor();
-
-    debugPrint(
-      '[$tag] dt=${frameMs.toStringAsFixed(1)}ms drop=$dropped '
-      'fps=${fps.toStringAsFixed(1)} scr=$screen anim=${_isAnimating ? "Y" : "N"} '
-      'build=${_lastBuildDuration.inMilliseconds}ms',
-    );
-
+    debugPrint('[$tag] dt=${frameMs.toStringAsFixed(1)}ms drop=$dropped fps=${fps.toStringAsFixed(1)}');
+    
     if (severe) {
-      developer.Timeline.instantSync(
-        'JANK_SEVERE',
-        arguments: {
-          'dtMs': frameMs,
-          'fps': fps,
-          'screen': screen,
-          'animating': _isAnimating,
-          'buildMs': _lastBuildDuration.inMilliseconds,
-        },
-      );
+      developer.Timeline.instantSync('JANK_SEVERE', arguments: {'dtMs': frameMs, 'fps': fps});
     }
   }
 
   void _detectVsyncLock(double avgMs) {
-    final looksLike30 = avgMs > 30.0 && avgMs < 36.5;
-    if (looksLike30) {
-      _consecutive30fpsLike++;
-      if (_consecutive30fpsLike >= 12) {
-        _vsyncLockDetected = true;
-      }
-    } else {
-      if (avgMs < 22.0) {
-        _consecutive30fpsLike = 0;
-        _vsyncLockDetected = false;
-      }
+    if (avgMs > 30.0 && avgMs < 36.5) {
+      if (++_consecutive30fpsLike >= 12) vsyncLockDetected = true;
+    } else if (avgMs < 22.0) {
+      _consecutive30fpsLike = 0;
+      vsyncLockDetected = false;
     }
   }
 
   void _checkWarmupStability(double avgMs, double fps) {
-    if (_warmupMarked) return;
-    if (_frameMsWindow.length < 120) return;
-
-    final severeCount =
-        _frameMsWindow.where((ms) => ms >= _severeJankThreshold).length;
-
-    final stable = fps >= 45 &&
-        !_animationController.isAnimating &&
-        severeCount <= 6;
+    if (_warmupMarked || _frameMsWindow.length < 120) return;
+    
+    final severeCount = _frameMsWindow.where((ms) => ms >= _severeJankThreshold).length;
+    final stable = fps >= 45 && !isAnimatingNotifier.value && severeCount <= 6;
 
     if (stable) {
-      _stableChecks++;
-      if (_stableChecks >= 6) {
+      if (++_stableChecks >= 6) {
         _warmupMarked = true;
         PerformanceState.instance.isWarmupStable = true;
-        if (kDebugMode) {
-          debugPrint(
-            '[WARMUP] stable fps=${fps.toStringAsFixed(1)} '
-            'avg=${avgMs.toStringAsFixed(1)}ms severe=$severeCount',
-          );
-        }
+        if (kDebugMode) debugPrint('[WARMUP] Stable! fps=${fps.toStringAsFixed(1)}');
       }
     } else {
       _stableChecks = 0;
@@ -10274,350 +11160,28 @@ class _WorkspaceShellState extends State<WorkspaceShell>
 
   void _applyPerformanceOptimizations(double avgFps) {
     final ws = WallpaperService.instance;
-
     if (avgFps < 25) {
       ws.setGlassBlur(0.0);
       ws.setGlassOpacity(0.04);
-      if (kDebugMode) {
-        debugPrint('[OPT] extreme blur=0 op=0.04 fps=${avgFps.toStringAsFixed(1)}');
-      }
+      if (kDebugMode) debugPrint('[OPT] extreme blur=0 op=0.04');
     } else if (avgFps < 40) {
       ws.setGlassBlur(6.0);
       ws.setGlassOpacity(0.08);
-      if (kDebugMode) {
-        debugPrint('[OPT] medium blur=6 op=0.08 fps=${avgFps.toStringAsFixed(1)}');
-      }
+      if (kDebugMode) debugPrint('[OPT] medium blur=6 op=0.08');
     } else if (avgFps < 50) {
       ws.setGlassBlur(8.0);
       ws.setGlassOpacity(0.10);
-      if (kDebugMode) {
-        debugPrint('[OPT] light blur=8 op=0.10 fps=${avgFps.toStringAsFixed(1)}');
-      }
+      if (kDebugMode) debugPrint('[OPT] light blur=8 op=0.10');
     }
-  }
-
-  int getCurrentIndex() {
-    return widget.workspaceController.current == WorkspaceIds.task ? 1 : 0;
-  }
-
-  void _onWorkspaceChanged() {
-    final newIndex = getCurrentIndex();
-    if (newIndex == _currentIndex) return;
-    if (_isAnimating) return;
-
-    setState(() {
-      _previousIndex = _currentIndex;
-      _currentIndex = newIndex;
-      _isForward = newIndex > _previousIndex;
-    });
-
-    _animationController.forward(from: 0.0);
-  }
-
-  Future<void> pickWallpaperFromWindows() async {
-    await WallpaperService.instance.pickWallpaper();
-  }
-
-  Future<void> signOut() async {
-    await FirebaseAuth.instance.signOut();
-  }
-
-  Future<void> openGlobalGlassSheet() async {
-    final service = WallpaperService.instance;
-    double tempOpacity = service.globalGlassOpacity;
-    double tempBlur = service.globalGlassBlur;
-
-    final applied = await showModalBottomSheet<bool>(
-      context: context,
-      backgroundColor: const Color(0xFF05040A),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            return SafeArea(
-              top: false,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 38,
-                      height: 4,
-                      margin: const EdgeInsets.only(bottom: 12),
-                      decoration: BoxDecoration(
-                        color: Colors.white24,
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                    ),
-                    const Row(
-                      children: [
-                        Icon(Icons.blur_on_rounded,
-                            color: Colors.cyanAccent, size: 18),
-                        SizedBox(width: 8),
-                        Text(
-                          'Glass settings',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 14,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        const SizedBox(
-                          width: 70,
-                          child: Text('Opacity',
-                              style: TextStyle(
-                                  color: Colors.white70, fontSize: 12)),
-                        ),
-                        Expanded(
-                          child: Slider(
-                            min: 0.04,
-                            max: 0.30,
-                            divisions: 26,
-                            value: tempOpacity.clamp(0.04, 0.30),
-                            label: tempOpacity.toStringAsFixed(2),
-                            onChanged: (v) =>
-                                setModalState(() => tempOpacity = v),
-                          ),
-                        ),
-                      ],
-                    ),
-                    Row(
-                      children: [
-                        const SizedBox(
-                          width: 70,
-                          child: Text('Blur',
-                              style: TextStyle(
-                                  color: Colors.white70, fontSize: 12)),
-                        ),
-                        Expanded(
-                          child: Slider(
-                            min: 0,
-                            max: 30,
-                            divisions: 30,
-                            value: tempBlur.clamp(0, 30),
-                            label: tempBlur.toStringAsFixed(0),
-                            onChanged: (v) => setModalState(() => tempBlur = v),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: TextButton.icon(
-                        onPressed: () => Navigator.pop(context, true),
-                        icon: const Icon(Icons.check, size: 16),
-                        label: const Text('Apply'),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
-
-    if (applied == true) {
-      service.setGlassOpacity(tempOpacity);
-      service.setGlassBlur(tempBlur);
-      await service.saveSettings();
-    }
-  }
-
-  /// Global blur sigma applied ONCE on wallpaper layer (root-level).
-  ///
-  /// This intentionally reduces blur when:
-  /// - Warmup not stable (startup stutters)
-  /// - FPS is low
-  /// - Animations are running
-  double _effectiveGlobalWallpaperBlurSigma() {
-    final requested = WallpaperService.instance.globalGlassBlur.clamp(0.0, 40.0);
-    final fps = PerformanceState.instance.currentFps;
-
-    // During startup / unknown fps: be conservative.
-    if (!PerformanceState.instance.isWarmupStable || fps == null) {
-      return requested.clamp(0.0, 2.0);
-    }
-
-    // During transitions: drop blur hard.
-    if (_isAnimating) {
-      return requested.clamp(0.0, 2.0);
-    }
-
-    // Low FPS: reduce blur.
-    if (fps < 30) return 0.0;
-    if (fps < 45) return requested.clamp(0.0, 2.0);
-    if (fps < 55) return requested.clamp(0.0, 6.0);
-
-    return requested.clamp(0.0, 18.0);
-  }
-
-  @override
-  void dispose() {
-    SchedulerBinding.instance.removeTimingsCallback(_onFrameTimings);
-    widget.workspaceController.removeListener(_onWorkspaceChanged);
-
-    _animationController.dispose();
-    _fpsNotifier.dispose();
-    _isAnimatingNotifier.dispose();
-
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final buildStart = DateTime.now();
-
-    final outgoingSlide = _isForward ? _slideForward : _slideBackward;
-    final incomingSlide = _isForward
-        ? Tween<Offset>(begin: const Offset(1.0, 0.0), end: Offset.zero).animate(
-            CurvedAnimation(
-              parent: _animationController,
-              curve: Curves.easeInOutCubicEmphasized,
-            ),
-          )
-        : Tween<Offset>(begin: const Offset(-1.0, 0.0), end: Offset.zero).animate(
-            CurvedAnimation(
-              parent: _animationController,
-              curve: Curves.easeInOutCubicEmphasized,
-            ),
-          );
-
-    final result = Scaffold(
-      backgroundColor: Colors.transparent,
-      body: Stack(
-        children: [
-          // 1) Wallpaper background
-          Positioned.fill(
-            child: AnimatedBuilder(
-              animation: WallpaperService.instance,
-              builder: (_, __) => DecoratedBox(
-                decoration: WallpaperService.instance.backgroundDecoration,
-              ),
-            ),
-          ),
-
-          // 2) GLOBAL BLUR LAYER (applies blur ONCE to wallpaper only)
-          // In WorkspaceShell, replace global blur layer with:
-          Positioned.fill(
-            child: const SizedBox.expand(), // No BackdropFilter
-          ),
-
-
-          // 3) Animated screens (UI is ABOVE blur, so UI is not blurred)
-          RepaintBoundary(
-            child: AnimatedBuilder(
-              animation: _animationController,
-              builder: (context, child) {
-                return Stack(
-                  children: [
-                    Positioned.fill(
-                      child: Visibility(
-                        visible: _currentIndex == 0 || _isAnimating,
-                        maintainState: true,
-                        maintainAnimation: true,
-                        child: SlideTransition(
-                          position: _currentIndex == 0
-                              ? incomingSlide
-                              : outgoingSlide,
-                          child: FadeTransition(
-                            opacity: _currentIndex == 0 ? _fadeIn : _fadeOut,
-                            child: const RepaintBoundary(
-                              child: DashboardScreen(
-                                key: PageStorageKey('dashboardscreen'),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    Positioned.fill(
-                      child: Visibility(
-                        visible: _currentIndex == 1 || _isAnimating,
-                        maintainState: true,
-                        maintainAnimation: true,
-                        child: SlideTransition(
-                          position: _currentIndex == 1
-                              ? incomingSlide
-                              : outgoingSlide,
-                          child: FadeTransition(
-                            opacity: _currentIndex == 1 ? _fadeIn : _fadeOut,
-                            child: RepaintBoundary(
-                              child: const TaskWorkspace(
-                                key: PageStorageKey('taskworkspace'),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                );
-              },
-            ),
-          ),
-
-          // Top bar
-          RepaintBoundary(
-            child: UniversalTopBar(
-              workspaceController: widget.workspaceController,
-              onWallpaperSettings: pickWallpaperFromWindows,
-              onGlassSettings: openGlobalGlassSheet,
-              onSignOut: signOut,
-            ),
-          ),
-
-          // FPS counter
-          if (_showFPS)
-            Positioned(
-              top: 60,
-              right: 16,
-              child: ValueListenableBuilder<double>(
-                valueListenable: _fpsNotifier,
-                builder: (context, fps, _) {
-                  return ValueListenableBuilder<bool>(
-                    valueListenable: _isAnimatingNotifier,
-                    builder: (context, isAnimating, _) {
-                      return _FPSCounter(
-                        fps: fps,
-                        isAnimating: isAnimating,
-                        isLowEnd: _isLowEndDevice,
-                        vsyncLocked: _vsyncLockDetected,
-                        avgFrameTime: _avgFrameTimeWindow,
-                        warmupStable: PerformanceState.instance.isWarmupStable,
-                        onToggle: () => setState(() => _showFPS = !_showFPS),
-                      );
-                    },
-                  );
-                },
-              ),
-            ),
-        ],
-      ),
-    );
-
-    _lastBuildDuration = DateTime.now().difference(buildStart);
-    if (kDebugMode && _lastBuildDuration.inMilliseconds > 24) {
-      debugPrint(
-        '[BUILD] dt=${_lastBuildDuration.inMilliseconds}ms anim=${_isAnimating ? "Y" : "N"}',
-      );
-    }
-
-    return result;
   }
 }
 
-class _FPSCounter extends StatelessWidget {
+================================================================================
+
+// File: lib\workspace\widgets\fps_counter.dart
+import 'package:flutter/material.dart';
+
+class FPSCounter extends StatelessWidget {
   final double fps;
   final bool isAnimating;
   final bool isLowEnd;
@@ -10626,7 +11190,8 @@ class _FPSCounter extends StatelessWidget {
   final bool warmupStable;
   final VoidCallback onToggle;
 
-  const _FPSCounter({
+  const FPSCounter({
+    super.key,
     required this.fps,
     required this.isAnimating,
     required this.isLowEnd,
@@ -10779,86 +11344,6 @@ class _FPSCounter extends StatelessWidget {
               ),
             ],
           ],
-        ),
-      ),
-    );
-  }
-}
-
-================================================================================
-
-// File: lib\workspace\workspace_switcher.dart
-import 'package:flutter/material.dart';
-import '../core/glass_container.dart';
-import 'workspace_controller.dart';
-import 'workspace_ids.dart';
-
-class WorkspaceSwitcher extends StatelessWidget {
-  final WorkspaceController controller;
-
-  const WorkspaceSwitcher({super.key, required this.controller});
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: controller,
-      builder: (_, __) {
-        final current = controller.current;
-
-        return GlassContainer(
-          blur: 16,
-          opacity: 0.10,
-          tint: Colors.white,
-          borderRadius: BorderRadius.circular(999),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _pillIcon(
-                selected: current == WorkspaceIds.dashboard,
-                icon: Icons.dashboard_customize_rounded,
-                tooltip: 'Dashboard',
-                onTap: () => controller.setWorkspace(WorkspaceIds.dashboard),
-              ),
-              const SizedBox(width: 6),
-              _pillIcon(
-                selected: current == WorkspaceIds.task,
-                icon: Icons.task_alt_rounded,
-                tooltip: 'Task',
-                onTap: () => controller.setWorkspace(WorkspaceIds.task),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _pillIcon({
-    required bool selected,
-    required IconData icon,
-    required String tooltip,
-    required VoidCallback onTap,
-  }) {
-    final fg = selected ? Colors.cyanAccent : Colors.white70;
-    final bg = selected ? Colors.cyan.withOpacity(0.16) : Colors.transparent;
-
-    return Tooltip(
-      message: tooltip,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(999),
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-          decoration: BoxDecoration(
-            color: bg,
-            borderRadius: BorderRadius.circular(999),
-            border: Border.all(
-              color: selected ? Colors.cyanAccent.withOpacity(0.6) : Colors.white24,
-              width: 1,
-            ),
-          ),
-          child: Icon(icon, size: 18, color: fg),
         ),
       ),
     );
