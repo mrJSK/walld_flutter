@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 import '../../../../core/glass_container.dart';
 import '../models/assigned_task_view_model.dart';
 import 'task_details_panel.dart';
+import '../../../../chat/models/chat_channel.dart';
+import '../../../../chat/models/chat_conversation.dart';
+import '../../../../chat/widgets/chat_shell.dart';
 
 class AssignedTaskWorkspace extends StatefulWidget {
   final AssignedTaskViewModel task;
@@ -70,24 +73,33 @@ class _AssignedTaskWorkspaceState extends State<AssignedTaskWorkspace> {
     );
   }
 
-  Widget _buildActiveView() {
+    Widget _buildActiveView() {
+    final conversation = ChatConversation(
+      conversationId: widget.task.docId,
+      taskTitle: widget.task.title,
+      assignedByUid: widget.task.assignedByUid ?? '',
+      assignedToUids: widget.task.assignedToUids,
+      leadMemberUid: widget.task.leadMemberId,
+      groupName: widget.task.groupName,
+      dueDate: widget.task.dueDate,
+    );
+
     switch (_activeView) {
       case 'ask_doubt':
-        // TODO: integrate WhatsApp-style chat (Ask Doubt) here using shared chat module
-        return const Center(
-          child: Text(
-            'Ask Doubt chat will appear here.',
-            style: TextStyle(color: Colors.white70),
-          ),
+        return ChatShell(
+          tenantId: widget.tenantId,
+          conversation: conversation,
+          channel: ChatChannel.assignedBy,
+          currentUserId: widget.currentUserUid,
         );
 
       case 'submit_progress':
-        // TODO: integrate Submit Progress chat view here
-        return const Center(
-          child: Text(
-            'Submit Progress chat will appear here.',
-            style: TextStyle(color: Colors.white70),
-          ),
+        // For now, reuse the same assignedBy channel; later you can pre‑tag messages as progress
+        return ChatShell(
+          tenantId: widget.tenantId,
+          conversation: conversation,
+          channel: ChatChannel.assignedBy,
+          currentUserId: widget.currentUserUid,
         );
 
       case 'details':
@@ -104,4 +116,5 @@ class _AssignedTaskWorkspaceState extends State<AssignedTaskWorkspace> {
         );
     }
   }
+
 }
