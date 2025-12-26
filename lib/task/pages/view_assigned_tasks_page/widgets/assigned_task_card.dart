@@ -8,12 +8,14 @@ class AssignedTaskCard extends StatelessWidget {
   final AssignedTaskViewModel task;
   final bool isSelected;
   final String? leadMemberName;
+  final bool isCurrentUserLead;
 
   const AssignedTaskCard({
     super.key,
     required this.task,
     required this.isSelected,
     this.leadMemberName,
+    required this.isCurrentUserLead, 
   });
 
   @override
@@ -119,29 +121,32 @@ class AssignedTaskCard extends StatelessWidget {
     );
   }
 
-    Widget _buildLeadRow() {
+  Widget _buildLeadRow() {
     final name = (leadMemberName != null && leadMemberName!.isNotEmpty)
         ? leadMemberName
         : task.leadMemberId;
 
-    final leadText =
-        name == null ? 'Lead: —' : 'Lead: $name';
+    String leadText;
+    if (name == null || name.isEmpty) {
+      leadText = 'Lead: —';
+    } else if (isCurrentUserLead) {
+      leadText = 'Lead: You ($name)';  // ← Show "You (Full Name)"
+    } else {
+      leadText = 'Lead: $name';
+    }
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 2),
-      child: Row(
-        children: [
-          Text(
-            leadText,
-            style: const TextStyle(
-              color: Colors.amberAccent,
-              fontSize: 12,
-            ),
-          ),
-        ],
+      child: Text(
+        leadText,
+        style: const TextStyle(
+          color: Colors.amberAccent,
+          fontSize: 12,
+        ),
       ),
     );
   }
+
 
 
   Widget _buildStatusRow() {

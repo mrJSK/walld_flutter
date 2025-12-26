@@ -117,6 +117,7 @@ class _AssignedTaskListState extends State<AssignedTaskList> {
               task: task,
               isSelected: isSelected,
               leadMemberName: leadName,
+              isCurrentUserLead: isLead,
             ),
           );
         },
