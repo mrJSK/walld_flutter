@@ -64,7 +64,10 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
 
   Future<void> _createTaskFromPayload(Map<String, dynamic> values) async {
   final user = FirebaseAuth.instance.currentUser;
+  debugPrint('TASK_CREATE: createTaskFromPayload START, values=$values');
+
   if (user == null) {
+    debugPrint('TASK_CREATE: ERROR – user is null (not logged in)');
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
@@ -84,58 +87,88 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
         .doc(tenantId)
         .collection('tasks');
 
+    debugPrint('TASK_CREATE: tasksCol path = tenants/$tenantId/tasks');
+
     final renderer = _rendererKey.currentState;
     if (renderer == null) {
+      debugPrint('TASK_CREATE: ERROR – rendererKey.currentState is null');
       throw Exception('Form renderer not available');
     }
 
     final assignmentData = renderer.getAssignmentData();
+    debugPrint('TASK_CREATE: assignmentData = $assignmentData');
+
     if (assignmentData == null || !assignmentData.isValid) {
+      debugPrint('TASK_CREATE: ERROR – assignmentData invalid or null');
       throw Exception('Invalid assignment data');
     }
 
     if (assignmentData.assignmentType == 'subordinateunit') {
-      final headUid = assignmentData.nodeToHeadUserMap[assignmentData.selectedNodeId];
-      await _createSingleTask(
-        tasksCol,
-        values,
-        user.uid,
-        now,
-        headUid,
-        null,
-      );
-    } else if (assignmentData.assignmentType == 'teammember') {
-      // ✅ REMOVE CURRENT USER FROM SELECTION (double-check)
-      final assignedUsers = assignmentData.selectedUserIds
-          .where((uid) => uid != user.uid)
-          .toList();
+  // hierarchy / subordinate unit path
+  final headUid =
+      assignmentData.nodeToHeadUserMap[assignmentData.selectedNodeId];
+  debugPrint(
+      'TASK_CREATE: path=subordinateunit, headUid=$headUid, nodeId=${assignmentData.selectedNodeId}');
 
-      if (assignedUsers.isEmpty) {
-        throw Exception('You must assign the task to at least one other team member');
-      }
+  await _createSingleTask(
+    tasksCol,
+    values,
+    user.uid,
+    now,
+    headUid,
+    null,
+    assignmentData.groupName,
+  );
+} else if (assignmentData.assignmentType == 'teammember' ||
+           assignmentData.assignmentType == 'team_member') {
+  // ✅ team member path (both spellings)
+  debugPrint(
+      'TASK_CREATE: path=team_member, raw selectedUserIds=${assignmentData.selectedUserIds}, lead=${assignmentData.leadMemberId}, group=${assignmentData.groupName}');
 
-      await _createTeamMemberTasks(
-        tasksCol,
-        values,
-        user.uid,
-        now,
-        assignedUsers, // ✅ Uses filtered list
-        assignmentData.groupName,
-        assignmentData.leadMemberId,
-      );
-    }
+  final cleanedUserIds = assignmentData.selectedUserIds
+      .where((id) => id != user.uid)
+      .toList();
+
+  debugPrint(
+      'TASK_CREATE: cleaned selectedUserIds (without self)=$cleanedUserIds');
+
+  if (cleanedUserIds.isEmpty) {
+    debugPrint('TASK_CREATE: ERROR – cleanedUserIds is empty');
+    throw Exception('You must assign the task to at least one team member');
+  }
+
+  await _createTeamMemberTasks(
+    tasksCol,
+    values,
+    user.uid,
+    now,
+    cleanedUserIds,
+    assignmentData.groupName,
+    assignmentData.leadMemberId,
+  );
+} else {
+  debugPrint(
+      'TASK_CREATE: ERROR – unknown assignmentType=${assignmentData.assignmentType}');
+  throw Exception('Unknown assignment type');
+}
+
+
+    debugPrint('TASK_CREATE: SUCCESS – all writes finished');
 
     if (!mounted) return;
 
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text('Task(s) created successfully'),
+        content: Text('Tasks created successfully'),
         backgroundColor: Colors.cyan,
       ),
     );
 
     _rendererKey.currentState?.resetForm();
-  } catch (e) {
+  } catch (e, st) {
+    debugPrint('TASK_CREATE: EXCEPTION $e');
+    debugPrint('TASK_CREATE: STACKTRACE $st');
+
     if (!mounted) return;
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -147,111 +180,154 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
   } finally {
     if (mounted) {
       setState(() => _submitting = false);
+      debugPrint('TASK_CREATE: FINISHED (submitting=false)');
     }
   }
 }
 
 
+
   // single-assignee path (subordinate unit)
   Future<void> _createSingleTask(
-    CollectionReference tasksCol,
-    Map<String, dynamic> values,
-    String assignerUid,
-    DateTime now,
-    String? assignedToUserId,
-    String? groupId, {
-    String? groupName,
-  }) async {
-    final data = {
-      'title': values['title'] ?? '',
-      'description': values['description'] ?? '',
-      'status': 'PENDING',
-      'assigned_by': assignerUid,
-      if (assignedToUserId != null) 'assigned_to': assignedToUserId,
-      'created_at': now.toIso8601String(),
-      'updated_at': now.toIso8601String(),
-      'group_id': groupId,
-      if (groupName != null && groupName.isNotEmpty) 'group_name': groupName,
-      'custom_fields': Map<String, dynamic>.from(values),
-    };
+  CollectionReference tasksCol,
+  Map<String, dynamic> values,
+  String assignerUid,
+  DateTime now,
+  String? assignedToUserId,
+  String? groupId,
+  String? groupName,
+) async {
+  debugPrint(
+      'TASK_CREATE_SINGLE: START assignedTo=$assignedToUserId groupId=$groupId groupName=$groupName');
 
-    data['custom_fields'].remove('title');
-    data['custom_fields'].remove('description');
-    data['custom_fields'].remove('assignee');
+  final data = <String, dynamic>{
+    'title': values['title'] ?? '',
+    'description': values['description'] ?? '',
+    'status': 'PENDING',
+    'assignedby': assignerUid,
+    if (assignedToUserId != null) 'assignedto': assignedToUserId,
+    'createdat': now.toIso8601String(),
+    'updatedat': now.toIso8601String(),
+    if (groupId != null) 'groupid': groupId,
+    if (groupName != null && groupName.isNotEmpty) 'groupname': groupName,
+  };
 
-    final renderer = _rendererKey.currentState;
-    final due = renderer?.getSelectedDueDate();
-    if (due != null) {
-      data['due_date'] = due.toIso8601String();
-    }
+  final customfields = Map<String, dynamic>.from(values)
+    ..remove('title')
+    ..remove('description')
+    ..remove('assignee');
 
-    final docRef = await tasksCol.add(data);
-    debugPrint('✅ Task created for user: $assignedToUserId (doc: ${docRef.id})');
+  final renderer = _rendererKey.currentState;
+  final due = renderer?.getSelectedDueDate();
+  if (due != null) {
+    data['duedate'] = due.toIso8601String();
   }
+
+  if (customfields.isNotEmpty) {
+    data['customfields'] = customfields;
+  }
+
+  debugPrint('TASK_CREATE_SINGLE: data payload = $data');
+
+  final docRef = await tasksCol.add(data);
+  debugPrint(
+      'TASK_CREATE_SINGLE: Firestore add OK docId=${docRef.id} assignedTo=$assignedToUserId');
+}
+
 
   // multi-user path (team members) with lead_member
   Future<void> _createTeamMemberTasks(
-    CollectionReference tasksCol,
-    Map<String, dynamic> values,
-    String assignerUid,
-    DateTime now,
-    List<String> userIds,
-    String? groupName,
-    String? leadMemberId, // NEW PARAMETER
-  ) async {
-    String? groupId;
+  CollectionReference tasksCol,
+  Map<String, dynamic> values,
+  String assignerUid,
+  DateTime now,
+  List<String> userIds,
+  String? groupName,
+  String? leadMemberId,
+) async {
+  debugPrint(
+      'TASK_CREATE_GROUP: START users=$userIds groupName=$groupName lead=$leadMemberId');
 
-    if (userIds.length > 1 &&
-        groupName != null &&
-        groupName.isNotEmpty) {
+  String? groupId;
+
+  if (userIds.length == 1) {
+    // Single assignee path
+    await _createSingleTask(
+      tasksCol,
+      values,
+      assignerUid,
+      now,
+      userIds.first,
+      null,
+      groupName,
+    );
+    debugPrint('TASK_CREATE_GROUP: Delegated to createSingleTask (1 user)');
+    return;
+  }
+
+  // Multi-user group path
+  try {
+    if (groupName != null && groupName.trim().isNotEmpty) {
       final groupDoc = await FirebaseFirestore.instance
           .collection('tenants')
           .doc(tenantId)
-          .collection('task_groups')
+          .collection('taskgroups')
           .add({
         'name': groupName,
-        'created_by': assignerUid,
-        'created_at': now.toIso8601String(),
-        'member_count': userIds.length,
+        'createdby': assignerUid,
+        'createdat': now.toIso8601String(),
+        'membercount': userIds.length,
         'members': userIds,
-        'lead_member': leadMemberId, // also store in group doc
+        'leadmember': leadMemberId,
       });
+
       groupId = groupDoc.id;
-      debugPrint('✅ Task group created: $groupName (id: $groupId)');
+      debugPrint('TASK_CREATE_GROUP: group doc created id=$groupId');
+    } else {
+      debugPrint('TASK_CREATE_GROUP: WARNING – groupName is null/empty');
     }
 
     final allAssigneesString = userIds.join(',');
-
-    final data = {
+    final data = <String, dynamic>{
       'title': values['title'] ?? '',
       'description': values['description'] ?? '',
       'status': 'PENDING',
-      'assigned_by': assignerUid,
-      'assigned_to': allAssigneesString,
-      'created_at': now.toIso8601String(),
-      'updated_at': now.toIso8601String(),
-      'group_id': groupId,
-      'group_name': groupName,
-      'lead_member': leadMemberId, // NEW FIELD on task
-      'custom_fields': Map<String, dynamic>.from(values),
+      'assignedby': assignerUid,
+      'assignedto': allAssigneesString,
+      'createdat': now.toIso8601String(),
+      'updatedat': now.toIso8601String(),
+      'groupid': groupId,
+      'groupname': groupName,
+      'leadmember': leadMemberId,
     };
 
-    data['custom_fields'].remove('title');
-    data['custom_fields'].remove('description');
-    data['custom_fields'].remove('assignee');
+    final customfields = Map<String, dynamic>.from(values)
+      ..remove('title')
+      ..remove('description')
+      ..remove('assignee');
 
     final renderer = _rendererKey.currentState;
     final due = renderer?.getSelectedDueDate();
     if (due != null) {
-      data['due_date'] = due.toIso8601String();
+      data['duedate'] = due.toIso8601String();
     }
+
+    if (customfields.isNotEmpty) {
+      data['customfields'] = customfields;
+    }
+
+    debugPrint('TASK_CREATE_GROUP: task payload = $data');
 
     final docRef = await tasksCol.add(data);
     debugPrint(
-      '✅ Group task created for users: $allAssigneesString '
-      '(lead: $leadMemberId, doc: ${docRef.id})',
-    );
+        'TASK_CREATE_GROUP: Firestore add OK docId=${docRef.id} users=$allAssigneesString lead=$leadMemberId');
+  } catch (e, st) {
+    debugPrint('TASK_CREATE_GROUP: EXCEPTION $e');
+    debugPrint('TASK_CREATE_GROUP: STACKTRACE $st');
+    rethrow;
   }
+}
+
 
   Future<void> _onCreatePressed() async {
     final state = _rendererKey.currentState;

@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 
 class TeamMemberSelector extends StatefulWidget {
   final String tenantId;
@@ -42,49 +43,67 @@ class _TeamMemberSelectorState extends State<TeamMemberSelector> {
   }
 
   Future<void> _loadTeamMembers() async {
-    setState(() => _loading = true);
+  debugPrint('TEAM_SELECTOR: _loadTeamMembers START '
+      'tenant=${widget.tenantId}, node=${widget.currentNodeId}, level=${widget.currentLevel}');
+  setState(() => _loading = true);
 
-    try {
-      final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+  try {
+    final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+    debugPrint('TEAM_SELECTOR: currentUserId=$currentUserId');
 
-      final usersSnap = await FirebaseFirestore.instance
-          .collection('tenants')
-          .doc(widget.tenantId)
-          .collection('users')
-          // ✅ SAME FILTERS AS OLD WORKING CODE
-          .where('nodeId', isEqualTo: widget.currentNodeId)
-          .where('level', isEqualTo: widget.currentLevel)
-          .where('status', isEqualTo: 'active')
-          .get();
+    final usersSnap = await FirebaseFirestore.instance
+        .collection('tenants')
+        .doc(widget.tenantId)
+        .collection('users')
+        .get();
 
-      _allUsers = usersSnap.docs
-          // ✅ EXCLUDE CURRENT USER (yourself)
-          .where((doc) => doc.id != currentUserId)
-          .map((doc) {
-        final data = doc.data();
-        final uid = doc.id;
+    debugPrint('TEAM_SELECTOR: raw user docs count=${usersSnap.docs.length}');
 
-        // ✅ Use profiledata.fullName → fullName → uid
-        final fullName =
-            data['profiledata']?['fullName'] ?? data['fullName'] ?? uid;
+    _allUsers = usersSnap.docs.where((doc) {
+      final data = doc.data();
+      final nodeId = data['nodeId'];
+      final level = data['level'];
+      final status = data['status'];
 
-        final designation = data['designation'] ?? 'No Designation';
+      final include = doc.id != currentUserId &&
+          nodeId == widget.currentNodeId &&
+          level == widget.currentLevel &&
+          status == 'active';
 
-        return {
-          'uid': uid,
-          'name': fullName,
-          'designation': designation,
-        };
-      }).toList();
+      if (include) {
+        debugPrint(
+            'TEAM_SELECTOR: include uid=${doc.id}, nodeId=$nodeId, level=$level, status=$status');
+      }
 
-      _filteredUsers = List.from(_allUsers);
-      debugPrint('Loaded ${_allUsers.length} team members (filtered)');
-    } catch (e) {
-      debugPrint('Error loading team members: $e');
-    } finally {
-      if (mounted) setState(() => _loading = false);
+      return include;
+    }).map((doc) {
+      final data = doc.data();
+      final uid = doc.id;
+      final fullName =
+          data['profiledata']?['fullName'] ?? data['fullName'] ?? uid;
+      final designation = data['designation'] ?? 'No Designation';
+
+      return {
+        'uid': uid,
+        'name': fullName,
+        'designation': designation,
+      };
+    }).toList();
+
+    _filteredUsers = List.from(_allUsers);
+    debugPrint('TEAM_SELECTOR: filtered users count=${_allUsers.length}');
+  } catch (e, st) {
+    debugPrint('TEAM_SELECTOR: EXCEPTION $e');
+    debugPrint('TEAM_SELECTOR: STACKTRACE $st');
+  } finally {
+    if (mounted) {
+      setState(() => _loading = false);
+      debugPrint('TEAM_SELECTOR: _loadTeamMembers FINISHED');
     }
   }
+}
+
+
 
   void _filterUsers() {
     final query = _searchController.text.toLowerCase();
