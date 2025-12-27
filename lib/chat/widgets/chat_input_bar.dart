@@ -1,15 +1,26 @@
-// lib/chat/widgets/chat_input_bar.dart
+import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:mime/mime.dart';
+import '../models/chat_message.dart';
+
+typedef SendTextCallback = Future<void> Function(String text);
+typedef SendAttachmentsCallback = Future<void> Function({
+  required List<ChatAttachment> attachments,
+  String? text,
+});
 
 class ChatInputBar extends StatefulWidget {
-  final Future<void> Function(String text) onSend;
+  final SendTextCallback onSendText;
+  final SendAttachmentsCallback onSendAttachments;
   final bool enabled;
   final String hintText;
 
   const ChatInputBar({
     super.key,
-    required this.onSend,
+    required this.onSendText,
+    required this.onSendAttachments,
     this.enabled = true,
     this.hintText = 'Type a message',
   });
@@ -19,36 +30,96 @@ class ChatInputBar extends StatefulWidget {
 }
 
 class _ChatInputBarState extends State<ChatInputBar> {
-  final TextEditingController _controller = TextEditingController();
-  bool _sending = false;
+  final TextEditingController controller = TextEditingController();
+  bool sending = false;
+
+  static const int _maxBytesPerMessage = 10 * 1024 * 1024; // 10 MB
 
   @override
   void dispose() {
-    _controller.dispose();
+    controller.dispose();
     super.dispose();
   }
 
   Future<void> _handleSend() async {
-    final text = _controller.text.trim();
-    if (text.isEmpty || _sending || !widget.enabled) return;
+    final text = controller.text.trim();
+    if (text.isEmpty) return;
+    if (!widget.enabled || sending) return;
 
-    setState(() => _sending = true);
+    setState(() => sending = true);
     try {
-      await widget.onSend(text);
-      _controller.clear();
+      await widget.onSendText(text);
+      controller.clear();
     } finally {
-      if (mounted) setState(() => _sending = false);
+      if (mounted) setState(() => sending = false);
     }
+  }
+
+  Future<void> _pickDocuments() async {
+    if (!widget.enabled || sending) return;
+
+    final result = await FilePicker.platform.pickFiles(
+      allowMultiple: true,
+      withData: false,
+      type: FileType.any,
+    );
+
+    if (result == null || result.files.isEmpty) return;
+
+    int totalBytes = 0;
+    final attachments = <ChatAttachment>[];
+
+    for (final f in result.files) {
+      final path = f.path;
+      if (path == null) continue;
+      final file = File(path);
+      final size = await file.length();
+      totalBytes += size;
+      if (totalBytes > _maxBytesPerMessage) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Max 10 MB per message exceeded.'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+        return;
+      }
+
+      final mime = lookupMimeType(path) ?? 'application/octet-stream';
+
+      attachments.add(
+        ChatAttachment(
+          url: path, // temporary local path, will be replaced after upload
+          name: f.name,
+          mimeType: mime,
+          sizeBytes: size,
+          compressed: false,
+        ),
+      );
+    }
+
+    if (attachments.isEmpty) return;
+
+    await widget.onSendAttachments(
+      attachments: attachments,
+      text: controller.text.trim().isEmpty ? null : controller.text.trim(),
+    );
+    controller.clear();
   }
 
   @override
   Widget build(BuildContext context) {
     return Row(
       children: [
+        IconButton(
+          onPressed: widget.enabled && !sending ? _pickDocuments : null,
+          icon: const Icon(Icons.add, color: Colors.white),
+          tooltip: 'Attach',
+        ),
         Expanded(
           child: TextField(
-            controller: _controller,
-            enabled: widget.enabled && !_sending,
+            controller: controller,
+            enabled: widget.enabled && !sending,
             style: const TextStyle(color: Colors.white),
             minLines: 1,
             maxLines: 4,
@@ -78,14 +149,15 @@ class _ChatInputBarState extends State<ChatInputBar> {
         ),
         const SizedBox(width: 8),
         IconButton(
-          onPressed: widget.enabled && !_sending ? _handleSend : null,
-          icon: _sending
+          onPressed: widget.enabled && !sending ? _handleSend : null,
+          icon: sending
               ? const SizedBox(
                   width: 16,
                   height: 16,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
-                    valueColor: AlwaysStoppedAnimation(Colors.cyanAccent),
+                    valueColor:
+                        AlwaysStoppedAnimation<Color>(Colors.cyanAccent),
                   ),
                 )
               : const Icon(Icons.send_rounded, color: Colors.cyanAccent),

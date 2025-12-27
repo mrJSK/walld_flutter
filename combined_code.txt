@@ -9650,9 +9650,9 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
     'title': values['title'] ?? '',
     'description': values['description'] ?? '',
     'status': 'PENDING',
-    'assignedby': assignerUid,
+    'assigned_by': assignerUid,
     if (assignedToUserId != null) 'assignedto': assignedToUserId,
-    'createdat': now.toIso8601String(),
+    'created_at': now.toIso8601String(),
     'updatedat': now.toIso8601String(),
     if (groupId != null) 'groupid': groupId,
     if (groupName != null && groupName.isNotEmpty) 'groupname': groupName,
@@ -9930,8 +9930,8 @@ mixin UserDataLoaderMixin<T extends StatefulWidget> on State<T> {
 
 // File: lib\task\pages\create_task_page\models\assignment_data.dart
 class AssignmentData {
-  final String assignmentType; // 'subordinate_unit' or 'team_member'
-  final String? selectedNodeId; // for subordinate_unit
+  final String assignmentType; // 'subordinateunit' or 'team_member'
+  final String? selectedNodeId; // for subordinateunit
   final List<String> selectedUserIds; // for team_member
   final String? groupName; // for multi-user team_member
   final String? leadMemberId; // ← NEW: lead member UID for groups
@@ -9947,7 +9947,7 @@ class AssignmentData {
   });
 
   bool get isValid {
-    if (assignmentType == 'subordinate_unit') {
+    if (assignmentType == 'subordinateunit') {
       return selectedNodeId != null && selectedNodeId != 'none';
     } else if (assignmentType == 'team_member') {
       if (selectedUserIds.isEmpty) return false;
@@ -9985,7 +9985,7 @@ class AssignmentTypeSelector extends StatelessWidget {
   Widget build(BuildContext context) {
     final items = [
       const DropdownMenuItem(
-        value: 'subordinate_unit',
+        value: 'subordinateunit',
         child: Text(
           'Subordinate Unit (Department/Team)',
           style: TextStyle(color: Colors.white),
@@ -10026,7 +10026,7 @@ class AssignmentTypeSelector extends StatelessWidget {
             suffixIcon: const Icon(Icons.arrow_drop_down, color: Colors.cyanAccent),
           ),
           child: Text(
-            selectedType == 'subordinate_unit'
+            selectedType == 'subordinateunit'
                 ? 'Subordinate Unit'
                 : selectedType == 'team_member'
                     ? 'Team Member'
@@ -10456,7 +10456,7 @@ class TaskFormRendererState extends State<TaskFormRenderer>
 
       setState(() {
         _nodeToHeadUserMap = nodeToHead;
-        _dropdownItems['subordinate_unit_selector'] = items;
+        _dropdownItems['subordinateunit_selector'] = items;
         if (_selectedNodeId == null && items.isNotEmpty) {
           _selectedNodeId = items.first.value;
         }
@@ -10716,7 +10716,7 @@ class TaskFormRendererState extends State<TaskFormRenderer>
   }
 
   Widget _buildSubordinateUnitDropdown() {
-    final items = _dropdownItems['subordinate_unit_selector'] ?? [];
+    final items = _dropdownItems['subordinateunit_selector'] ?? [];
 
     if (items.isEmpty) {
       return const Padding(
@@ -10814,13 +10814,13 @@ class TaskFormRendererState extends State<TaskFormRenderer>
               _leadMemberId = null; // reset lead
             });
 
-            if (type == 'subordinate_unit') {
+            if (type == 'subordinateunit') {
               _loadSubordinateUnits();
             }
           },
         ),
 
-        if (_assignmentType == 'subordinate_unit') ...[
+        if (_assignmentType == 'subordinateunit') ...[
           _buildSubordinateUnitDropdown(),
         ] else if (_assignmentType == 'team_member') ...[
           if (currentUserNodeId != null && currentUserLevel != null) ...[
@@ -11346,8 +11346,8 @@ Widget build(BuildContext context) {
       .collection('tenants')
       .doc(ViewAllTasksPage.tenantId)
       .collection('tasks')
-      .where('assigned_by', isEqualTo: uid)
-      .orderBy('created_at', descending: true)
+      .where('assignedby', isEqualTo: uid)
+      .orderBy('createdat', descending: true)
       .snapshots();
 
   return StreamBuilder<QuerySnapshot>(
@@ -11625,14 +11625,14 @@ class CreatedTaskViewModel {
     final status = data['status'] as String? ?? 'PENDING';
     
     // Safe priority extraction
-    final customFields = data['custom_fields'];
+    final customFields = data['customfields'];
     String priority = '';
     if (customFields != null && customFields is Map) {
       priority = customFields['priority'] as String? ?? '';
     }
     
     // Safe due date parsing
-    final dueIso = data['due_date'] as String? ?? '';
+    final dueIso = data['duedate'] as String? ?? '';
     DateTime? due;
     if (dueIso.isNotEmpty) {
       try {
@@ -11642,11 +11642,11 @@ class CreatedTaskViewModel {
       }
     }
 
-    final groupName = data['group_name'] as String? ?? '';
+    final groupName = data['groupname'] as String? ?? '';
     
     // FIXED: Safe list handling for assigned_to
     List<String> assignedToUids = [];
-    final assignedTo = data['assigned_to'];
+    final assignedTo = data['assignedto'];
     
     if (assignedTo != null) {
       if (assignedTo is String) {
@@ -11668,7 +11668,7 @@ class CreatedTaskViewModel {
     }
     
     final assigneeCount = assignedToUids.length;
-    final leadMemberId = data['lead_member'] as String?;
+    final leadMemberId = data['leadmember'] as String?;
 
     return CreatedTaskViewModel(
       docId: docId,
@@ -12666,7 +12666,7 @@ class _ViewAssignedTasksPageState extends State<ViewAssignedTasksPage> {
         .collection('tenants')
         .doc(ViewAssignedTasksPage.tenantId)
         .collection('tasks')
-        .orderBy('created_at', descending: true)
+        .orderBy('createdat', descending: true)
         .snapshots();
 
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
@@ -12689,7 +12689,7 @@ class _ViewAssignedTasksPageState extends State<ViewAssignedTasksPage> {
         // Filter tasks where current uid is in assigned_to (comma-separated)
         final myTasks = allDocs.where((doc) {
           final data = doc.data();
-          final assignedTo = (data['assigned_to'] ?? '') as String;
+          final assignedTo = (data['assignedto'] ?? '') as String;
           if (assignedTo.isEmpty) return false;
           final assignees =
               assignedTo.split(',').map((s) => s.trim()).toList();
@@ -12850,14 +12850,14 @@ class AssignedTaskViewModel {
     final status = data['status'] as String? ?? 'PENDING';
     
     // Safe priority extraction
-    final customFields = data['custom_fields'];
+    final customFields = data['customfields'];
     String priority = '';
     if (customFields != null && customFields is Map) {
       priority = customFields['priority'] as String? ?? '';
     }
     
     // Safe due date parsing
-    final dueIso = data['due_date'] as String? ?? '';
+    final dueIso = data['duedate'] as String? ?? '';
     DateTime? due;
     if (dueIso.isNotEmpty) {
       try {
@@ -12867,11 +12867,11 @@ class AssignedTaskViewModel {
       }
     }
 
-    final groupName = data['group_name'] as String? ?? '';
+    final groupName = data['groupname'] as String? ?? '';
     
     // Safe list handling for assigned_to
     List<String> assignedToUids = [];
-    final assignedTo = data['assigned_to'];
+    final assignedTo = data['assignedto'];
     
     if (assignedTo != null) {
       if (assignedTo is String) {
@@ -12891,8 +12891,8 @@ class AssignedTaskViewModel {
     }
     
     final assigneeCount = assignedToUids.length;
-    final leadMemberId = data['lead_member'] as String?;
-    final assignedByUid = data['assigned_by'] as String? ?? '';
+    final leadMemberId = data['leadmember'] as String?;
+    final assignedByUid = data['assignedby'] as String? ?? '';
 
     return AssignedTaskViewModel(
       docId: docId,

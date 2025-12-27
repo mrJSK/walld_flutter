@@ -4,9 +4,9 @@ import '../models/chat_channel.dart';
 import '../models/chat_conversation.dart';
 import '../models/chat_message.dart';
 import '../repositories/chat_repository.dart';
+import '../services/chat_storage_uploader.dart';
 import 'chat_input_bar.dart';
 import 'message_list.dart';
-
 class ChatShell extends StatelessWidget {
   final String tenantId;
   final ChatConversation conversation;
@@ -118,7 +118,7 @@ class ChatShell extends StatelessWidget {
         ChatInputBar(
           enabled: canSend,
           hintText: hint,
-          onSend: (text) => repo.sendTextMessage(
+          onSendText: (text) => repo.sendTextMessage(
             conversationId: conversation.conversationId,
             channel: channel,
             senderId: currentUserId,
@@ -126,7 +126,30 @@ class ChatShell extends StatelessWidget {
             text: text,
             sendTo: _resolveSendTo(),
           ),
+          onSendAttachments: ({
+            required List<ChatAttachment> attachments,
+            String? text,
+          }) async {
+            // 1. Upload local files (attachments[i].url = local path from picker)
+            final uploadedAttachments = await ChatStorageUploader.uploadAll(
+              tenantId: tenantId,
+              conversationId: conversation.conversationId,
+              localAttachments: attachments,
+            );
+
+            // 2. Save message in Firestore with ATTCHED_FILES using repository
+            await repo.sendFileMessage(
+              conversationId: conversation.conversationId,
+              channel: channel,
+              senderId: currentUserId,
+              senderRole: _roleForCurrentUser(),
+              attachments: uploadedAttachments,
+              text: text,
+              sendTo: _resolveSendTo(),
+            );
+          },
         ),
+
       ],
     );
   }

@@ -1,6 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_pdfview/flutter_pdfview.dart';
+import 'package:open_filex/open_filex.dart';
+import 'package:photo_view/photo_view.dart';
 import '../models/chat_message.dart';
 import '../../task/utils/user_helper.dart';
+import 'dart:io';
+
+import 'package:flutter/material.dart';
+import '../models/chat_message.dart';
+import '../services/chat_attachment_service.dart';
 
 class MessageBubble extends StatefulWidget {
   final ChatMessage message;
@@ -124,28 +132,39 @@ class _MessageBubbleState extends State<MessageBubble> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Message text
-                      Text(
-                        widget.message.text ?? '',
-                        style: TextStyle(
-                          color: widget.isMe ? Colors.white : Colors.white70,
-                          fontSize: 14,
+                      if (widget.message.text != null &&
+                          widget.message.text!.trim().isNotEmpty)
+                        Text(
+                          widget.message.text!,
+                          style: TextStyle(
+                            color: widget.isMe ? Colors.white : Colors.white70,
+                            fontSize: 14,
+                          ),
                         ),
-                      ),
+                      if (widget.message.attachments.isNotEmpty)
+                        const SizedBox(height: 6),
+                      if (widget.message.attachments.isNotEmpty)
+                        ...List.generate(
+                          widget.message.attachments.length,
+                          (index) => _AttachmentTile(
+                            tenantId: widget.tenantId,
+                            messageId: widget.message.id,
+                            conversationId: '', // fill from parent shell if needed
+                            attachment: widget.message.attachments[index],
+                            attachmentIndex: index,
+                          ),
+                        ),
                       const SizedBox(height: 4),
-
-                      // Timestamp
                       Text(
                         _formatTime(widget.message.createdAt),
                         style: TextStyle(
-                          color: widget.isMe
-                              ? Colors.white38
-                              : Colors.white24,
+                          color: widget.isMe ? Colors.white38 : Colors.white24,
                           fontSize: 10,
                         ),
                       ),
                     ],
                   ),
+
                 ),
               ],
             ),
@@ -182,5 +201,177 @@ class _MessageBubbleState extends State<MessageBubble> {
     } else {
       return '${time.day}/${time.month} ${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
     }
+  }
+}
+class _AttachmentTile extends StatefulWidget {
+  final String tenantId;
+  final String conversationId;
+  final String messageId;
+  final ChatAttachment attachment;
+  final int attachmentIndex;
+
+  const _AttachmentTile({
+    required this.tenantId,
+    required this.conversationId,
+    required this.messageId,
+    required this.attachment,
+    required this.attachmentIndex,
+  });
+
+  @override
+  State<_AttachmentTile> createState() => _AttachmentTileState();
+}
+
+class _AttachmentTileState extends State<_AttachmentTile> {
+  bool _downloading = false;
+  double _progress = 0;
+  String? _localPath;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadLocal();
+  }
+
+  Future<void> _loadLocal() async {
+    final path = await ChatAttachmentService.resolveLocalPath(
+      tenantId: widget.tenantId,
+      conversationId: widget.conversationId,
+      messageId: widget.messageId,
+      attachmentIndex: widget.attachmentIndex,
+    );
+    if (mounted) setState(() => _localPath = path);
+  }
+
+  Future<void> _download() async {
+    setState(() {
+      _downloading = true;
+      _progress = 0;
+    });
+
+    try {
+      final file = await ChatAttachmentService.downloadToLocal(
+        tenantId: widget.tenantId,
+        conversationId: widget.conversationId,
+        messageId: widget.messageId,
+        attachmentIndex: widget.attachmentIndex,
+        attachment: widget.attachment,
+        onProgress: (p) {
+          if (mounted) setState(() => _progress = p);
+        },
+      );
+      if (mounted) setState(() => _localPath = file.path);
+    } finally {
+      if (mounted) setState(() => _downloading = false);
+    }
+  }
+
+  Future<void> _open() async {
+    final path = _localPath;
+    if (path == null) return;
+    final mime = widget.attachment.mimeType;
+
+    if (mime.startsWith('image/')) {
+      await showDialog(
+        context: context,
+        builder: (_) => Dialog(
+          backgroundColor: Colors.black,
+          child: PhotoView(
+            imageProvider: FileImage(File(path)),
+          ),
+        ),
+      );
+    } else if (mime == 'application/pdf') {
+      await showDialog(
+        context: context,
+        builder: (_) => Dialog(
+          backgroundColor: Colors.black,
+          child: PDFView(
+            filePath: path,
+          ),
+        ),
+      );
+    } else {
+      await OpenFilex.open(path);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final a = widget.attachment;
+    final hasLocal = _localPath != null;
+
+    return Container(
+      margin: const EdgeInsets.only(top: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.18),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.white24),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            a.mimeType.startsWith('image/')
+                ? Icons.image
+                : a.mimeType == 'application/pdf'
+                    ? Icons.picture_as_pdf
+                    : Icons.insert_drive_file,
+            color: Colors.cyanAccent,
+            size: 20,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  a.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '${(a.sizeBytes / 1024).toStringAsFixed(1)} KB',
+                  style: const TextStyle(
+                    color: Colors.white38,
+                    fontSize: 11,
+                  ),
+                ),
+                if (_downloading)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4.0),
+                    child: LinearProgressIndicator(
+                      value: _progress,
+                      minHeight: 3,
+                      backgroundColor: Colors.white10,
+                      valueColor: const AlwaysStoppedAnimation<Color>(
+                        Colors.cyanAccent,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          TextButton(
+            onPressed: _downloading
+                ? null
+                : hasLocal
+                    ? _open
+                    : _download,
+            child: Text(
+              hasLocal ? 'Open' : 'Download',
+              style: const TextStyle(color: Colors.cyanAccent, fontSize: 12),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

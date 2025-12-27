@@ -243,7 +243,7 @@ class TaskFormRendererState extends State<TaskFormRenderer>
 
       setState(() {
         _nodeToHeadUserMap = nodeToHead;
-        _dropdownItems['subordinate_unit_selector'] = items;
+        _dropdownItems['subordinateunit_selector'] = items;
         if (_selectedNodeId == null && items.isNotEmpty) {
           _selectedNodeId = items.first.value;
         }
@@ -503,7 +503,7 @@ class TaskFormRendererState extends State<TaskFormRenderer>
   }
 
   Widget _buildSubordinateUnitDropdown() {
-    final items = _dropdownItems['subordinate_unit_selector'] ?? [];
+    final items = _dropdownItems['subordinateunit_selector'] ?? [];
 
     if (items.isEmpty) {
       return const Padding(
@@ -601,13 +601,13 @@ class TaskFormRendererState extends State<TaskFormRenderer>
               _leadMemberId = null; // reset lead
             });
 
-            if (type == 'subordinate_unit') {
+            if (type == 'subordinateunit') {
               _loadSubordinateUnits();
             }
           },
         ),
 
-        if (_assignmentType == 'subordinate_unit') ...[
+        if (_assignmentType == 'subordinateunit') ...[
           _buildSubordinateUnitDropdown(),
         ] else if (_assignmentType == 'team_member') ...[
           if (currentUserNodeId != null && currentUserLevel != null) ...[

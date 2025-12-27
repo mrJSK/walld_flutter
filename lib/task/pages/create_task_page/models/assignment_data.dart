@@ -1,6 +1,6 @@
 class AssignmentData {
-  final String assignmentType; // 'subordinate_unit' or 'team_member'
-  final String? selectedNodeId; // for subordinate_unit
+  final String assignmentType; // 'subordinateunit' or 'team_member'
+  final String? selectedNodeId; // for subordinateunit
   final List<String> selectedUserIds; // for team_member
   final String? groupName; // for multi-user team_member
   final String? leadMemberId; // ← NEW: lead member UID for groups
@@ -16,7 +16,7 @@ class AssignmentData {
   });
 
   bool get isValid {
-    if (assignmentType == 'subordinate_unit') {
+    if (assignmentType == 'subordinateunit') {
       return selectedNodeId != null && selectedNodeId != 'none';
     } else if (assignmentType == 'team_member') {
       if (selectedUserIds.isEmpty) return false;

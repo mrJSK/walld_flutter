@@ -11,7 +11,6 @@ class ChatRepository {
     FirebaseFirestore? firestore,
   }) : db = firestore ?? FirebaseFirestore.instance;
 
-  /// Base path: tenants/{tenantId}/CHATS/{conversationId}/{channelCollection}
   CollectionReference<Map<String, dynamic>> channelCollection(
     String conversationId,
     ChatChannel channel,
@@ -24,27 +23,23 @@ class ChatRepository {
         .collection(channel.firestoreCollection);
   }
 
-  /// Stream messages in a channel ordered by created_at
   Stream<List<ChatMessage>> streamMessages({
     required String conversationId,
     required ChatChannel channel,
   }) {
     return channelCollection(conversationId, channel)
-        .orderBy('created_at', descending: false)
+        .orderBy('createdat', descending: false)
         .snapshots()
-        .map((snap) => snap.docs
-            .map((doc) => ChatMessage.fromFirestore(doc))
-            .toList());
+        .map((snap) => snap.docs.map(ChatMessage.fromFirestore).toList());
   }
 
-  /// Send a text message
   Future<void> sendTextMessage({
     required String conversationId,
     required ChatChannel channel,
     required String senderId,
     required String senderRole,
     required String text,
-    String? sendTo, // Optional: only for manager communication
+    String? sendTo,
     MessageType type = MessageType.text,
   }) async {
     final message = ChatMessage(
@@ -53,23 +48,22 @@ class ChatRepository {
       senderRole: senderRole,
       type: type,
       text: text,
-      sendTo: sendTo, // Will be null for team_members_chat
       createdAt: DateTime.now(),
+      sendTo: sendTo,
     );
 
-    await channelCollection(conversationId, channel).add(message.toFirestore());
+    await channelCollection(conversationId, channel)
+        .add(message.toFirestore());
   }
 
-  /// Send a file or progress message with optional text
   Future<void> sendFileMessage({
     required String conversationId,
     required ChatChannel channel,
     required String senderId,
     required String senderRole,
-    required String fileUrl,
-    required String fileType,
+    required List<ChatAttachment> attachments,
     String? text,
-    String? sendTo, // Optional: only for manager communication
+    String? sendTo,
     MessageType type = MessageType.file,
   }) async {
     final message = ChatMessage(
@@ -78,12 +72,12 @@ class ChatRepository {
       senderRole: senderRole,
       type: type,
       text: text,
-      fileUrl: fileUrl,
-      fileType: fileType,
       createdAt: DateTime.now(),
-      sendTo: sendTo, // Will be null for team_members_chat
+      sendTo: sendTo,
+      attachments: attachments,
     );
 
-    await channelCollection(conversationId, channel).add(message.toFirestore());
+    await channelCollection(conversationId, channel)
+        .add(message.toFirestore());
   }
 }

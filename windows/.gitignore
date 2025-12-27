@@ -1,11 +1,11 @@
 flutter/ephemeral/
-APP_BUILDS_ZIP/**
+APP_BUILDS_ZIP/
 # Visual Studio user-specific files.
 *.suo
 *.user
 *.userosscache
 *.sln.docstates
-*.zip
+
 # Visual Studio build-related files.
 x64/
 x86/

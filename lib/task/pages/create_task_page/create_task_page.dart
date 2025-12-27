@@ -204,7 +204,7 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
     'title': values['title'] ?? '',
     'description': values['description'] ?? '',
     'status': 'PENDING',
-    'assigned_by': assignerUid,
+    'assignedby': assignerUid,
     if (assignedToUserId != null) 'assignedto': assignedToUserId,
     'created_at': now.toIso8601String(),
     'updatedat': now.toIso8601String(),

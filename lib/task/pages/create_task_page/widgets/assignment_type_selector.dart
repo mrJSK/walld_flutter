@@ -15,7 +15,7 @@ class AssignmentTypeSelector extends StatelessWidget {
   Widget build(BuildContext context) {
     final items = [
       const DropdownMenuItem(
-        value: 'subordinate_unit',
+        value: 'subordinateunit',
         child: Text(
           'Subordinate Unit (Department/Team)',
           style: TextStyle(color: Colors.white),
@@ -56,7 +56,7 @@ class AssignmentTypeSelector extends StatelessWidget {
             suffixIcon: const Icon(Icons.arrow_drop_down, color: Colors.cyanAccent),
           ),
           child: Text(
-            selectedType == 'subordinate_unit'
+            selectedType == 'subordinateunit'
                 ? 'Subordinate Unit'
                 : selectedType == 'team_member'
                     ? 'Team Member'
