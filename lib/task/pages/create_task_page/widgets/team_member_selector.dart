@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 class TeamMemberSelector extends StatefulWidget {
@@ -44,20 +45,26 @@ class _TeamMemberSelectorState extends State<TeamMemberSelector> {
     setState(() => _loading = true);
 
     try {
+      final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+
       final usersSnap = await FirebaseFirestore.instance
           .collection('tenants')
           .doc(widget.tenantId)
           .collection('users')
+          // ✅ SAME FILTERS AS OLD WORKING CODE
           .where('nodeId', isEqualTo: widget.currentNodeId)
           .where('level', isEqualTo: widget.currentLevel)
           .where('status', isEqualTo: 'active')
           .get();
 
-      _allUsers = usersSnap.docs.map((doc) {
+      _allUsers = usersSnap.docs
+          // ✅ EXCLUDE CURRENT USER (yourself)
+          .where((doc) => doc.id != currentUserId)
+          .map((doc) {
         final data = doc.data();
         final uid = doc.id;
 
-        // ✅ Use profile_data.fullName → fallback to fullName → fallback to uid
+        // ✅ Use profiledata.fullName → fullName → uid
         final fullName =
             data['profiledata']?['fullName'] ?? data['fullName'] ?? uid;
 
@@ -71,7 +78,7 @@ class _TeamMemberSelectorState extends State<TeamMemberSelector> {
       }).toList();
 
       _filteredUsers = List.from(_allUsers);
-      debugPrint('Loaded ${_allUsers.length} team members');
+      debugPrint('Loaded ${_allUsers.length} team members (filtered)');
     } catch (e) {
       debugPrint('Error loading team members: $e');
     } finally {
@@ -186,14 +193,14 @@ class _TeamMemberSelectorState extends State<TeamMemberSelector> {
                   value: isSelected,
                   onChanged: (_) => _toggleUser(uid),
                   title: Text(
-                    user['name'] as String, // ✅ shows fullName, not UID
+                    user['name'] as String,
                     style: const TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.w500,
                     ),
                   ),
                   subtitle: Text(
-                    user['designation'] as String, // e.g. "team_lead"
+                    user['designation'] as String,
                     style: const TextStyle(
                       color: Colors.white70,
                       fontSize: 12,

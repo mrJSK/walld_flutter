@@ -101,10 +101,13 @@ class ChatShell extends StatelessWidget {
                 );
               }
 
+              // In the MessageList widget call
               return MessageList(
                 messages: msgs,
                 currentUserId: currentUserId,
+                tenantId: tenantId, // ✅ ADD THIS
               );
+
             },
           ),
         ),

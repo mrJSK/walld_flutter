@@ -62,84 +62,95 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
     }
   }
 
-  Future<void> _createTaskFromPayload(
-    Map<String, dynamic> values,
-  ) async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('You must be logged in to create a task'),
-          backgroundColor: Colors.redAccent,
-        ),
-      );
-      return;
+  Future<void> _createTaskFromPayload(Map<String, dynamic> values) async {
+  final user = FirebaseAuth.instance.currentUser;
+  if (user == null) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('You must be logged in to create a task'),
+        backgroundColor: Colors.redAccent,
+      ),
+    );
+    return;
+  }
+
+  setState(() => _submitting = true);
+
+  try {
+    final now = DateTime.now();
+    final tasksCol = FirebaseFirestore.instance
+        .collection('tenants')
+        .doc(tenantId)
+        .collection('tasks');
+
+    final renderer = _rendererKey.currentState;
+    if (renderer == null) {
+      throw Exception('Form renderer not available');
     }
 
-    setState(() => _submitting = true);
+    final assignmentData = renderer.getAssignmentData();
+    if (assignmentData == null || !assignmentData.isValid) {
+      throw Exception('Invalid assignment data');
+    }
 
-    try {
-      final now = DateTime.now();
-      final tasksCol = FirebaseFirestore.instance
-          .collection('tenants')
-          .doc(tenantId)
-          .collection('tasks');
-
-      final renderer = _rendererKey.currentState;
-      if (renderer == null) {
-        throw Exception('Form renderer not available');
-      }
-
-      final assignmentData = renderer.getAssignmentData();
-      if (assignmentData == null || !assignmentData.isValid) {
-        throw Exception('Invalid assignment data');
-      }
-
-      if (assignmentData.assignmentType == 'subordinate_unit') {
-        final headUid =
-            assignmentData.nodeToHeadUserMap[assignmentData.selectedNodeId];
-        await _createSingleTask(
-          tasksCol,
-          values,
-          user.uid,
-          now,
-          headUid,
-          null,
-        );
-      } else if (assignmentData.assignmentType == 'team_member') {
-        // ✅ pass leadMemberId into multi-user creation
-        await _createTeamMemberTasks(
-          tasksCol,
-          values,
-          user.uid,
-          now,
-          assignmentData.selectedUserIds,
-          assignmentData.groupName,
-          assignmentData.leadMemberId, // PASS lead member ID
-        );
-      }
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Task(s) created successfully'),
-          backgroundColor: Colors.cyan,
-        ),
+    if (assignmentData.assignmentType == 'subordinateunit') {
+      final headUid = assignmentData.nodeToHeadUserMap[assignmentData.selectedNodeId];
+      await _createSingleTask(
+        tasksCol,
+        values,
+        user.uid,
+        now,
+        headUid,
+        null,
       );
-      _rendererKey.currentState?.resetForm();
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to create task: $e'),
-          backgroundColor: Colors.redAccent,
-        ),
+    } else if (assignmentData.assignmentType == 'teammember') {
+      // ✅ REMOVE CURRENT USER FROM SELECTION (double-check)
+      final assignedUsers = assignmentData.selectedUserIds
+          .where((uid) => uid != user.uid)
+          .toList();
+
+      if (assignedUsers.isEmpty) {
+        throw Exception('You must assign the task to at least one other team member');
+      }
+
+      await _createTeamMemberTasks(
+        tasksCol,
+        values,
+        user.uid,
+        now,
+        assignedUsers, // ✅ Uses filtered list
+        assignmentData.groupName,
+        assignmentData.leadMemberId,
       );
-    } finally {
-      if (mounted) setState(() => _submitting = false);
+    }
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Task(s) created successfully'),
+        backgroundColor: Colors.cyan,
+      ),
+    );
+
+    _rendererKey.currentState?.resetForm();
+  } catch (e) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Failed to create task: $e'),
+        backgroundColor: Colors.redAccent,
+      ),
+    );
+  } finally {
+    if (mounted) {
+      setState(() => _submitting = false);
     }
   }
+}
+
 
   // single-assignee path (subordinate unit)
   Future<void> _createSingleTask(
@@ -344,4 +355,5 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
       ],
     );
   }
+  
 }
