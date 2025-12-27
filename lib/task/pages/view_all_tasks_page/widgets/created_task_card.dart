@@ -1,24 +1,20 @@
 import 'package:flutter/material.dart';
-import '../models/assigned_task_view_model.dart';
+import '../models/created_task_view_model.dart';
 
-class AssignedTaskCard extends StatelessWidget {
-  final AssignedTaskViewModel task;
+class CreatedTaskCard extends StatelessWidget {
+  final CreatedTaskViewModel task;
   final bool isSelected;
   final VoidCallback onTap;
-  final String currentUserId;
 
-  const AssignedTaskCard({
+  const CreatedTaskCard({
     super.key,
     required this.task,
     required this.isSelected,
     required this.onTap,
-    required this.currentUserId,
   });
 
   @override
   Widget build(BuildContext context) {
-    final isLead = task.isUserLead(currentUserId);
-    
     return GestureDetector(
       onTap: onTap,
       child: Container(
@@ -119,8 +115,8 @@ class AssignedTaskCard extends StatelessWidget {
               const SizedBox(height: 8),
             ],
 
-            // "YOU ARE THE LEAD" badge
-            if (isLead) ...[
+            // Lead badge (if assigned)
+            if (task.hasLead) ...[
               Container(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 10,
@@ -143,7 +139,7 @@ class AssignedTaskCard extends StatelessWidget {
                     ),
                     SizedBox(width: 4),
                     Text(
-                      'YOU ARE THE LEAD',
+                      'LEAD ASSIGNED',
                       style: TextStyle(
                         color: Colors.amber,
                         fontSize: 11,

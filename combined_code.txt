@@ -85,6 +85,15 @@ Root: lib (lib)
 │   │   │   │   ├── task_form_renderer.dart
 │   │   │   │   └── team_member_selector.dart
 │   │   │   └── create_task_page.dart
+│   │   ├── view_all_tasks_page/
+│   │   │   ├── models/
+│   │   │   │   └── created_task_view_model.dart
+│   │   │   ├── widgets/
+│   │   │   │   ├── created_task_card.dart
+│   │   │   │   ├── created_task_list.dart
+│   │   │   │   ├── created_task_workspace.dart
+│   │   │   │   └── manager_task_details_panel.dart
+│   │   │   └── view_all_tasks_page.dart
 │   │   ├── view_assigned_tasks_page/
 │   │   │   ├── models/
 │   │   │   │   └── assigned_task_view_model.dart
@@ -95,8 +104,7 @@ Root: lib (lib)
 │   │   │   │   ├── lead_badge.dart
 │   │   │   │   └── task_details_panel.dart
 │   │   │   └── view_assigned_tasks_page.dart
-│   │   ├── complete_task_page.dart
-│   │   └── view_all_tasks_page.dart
+│   │   └── complete_task_page.dart
 │   ├── widgets/
 │   │   └── task_side_panel.dart
 │   ├── task_tabs_manifest.dart
@@ -421,25 +429,22 @@ class ChatConversation {
 ================================================================================
 
 // File: lib\chat\models\chat_message.dart
-// lib/chat/models/chat_message.dart
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-enum MessageType {
-  text,
-  file,
-  progress,
-}
+enum MessageType { text, file, progress }
 
 class ChatMessage {
   final String id;
   final String senderId;
-  final String senderRole; // "member", "lead", "manager"
+  final String senderRole;
   final MessageType type;
   final String? text;
   final String? fileUrl;
-  final String? fileType; // "image", "pdf", "excel", etc.
+  final String? fileType;
   final DateTime createdAt;
+
+  // NEW: who this message is sent *to*
+  final String? sendTo; // e.g. 'lead', 'manager', 'all', or a UID
 
   ChatMessage({
     required this.id,
@@ -450,9 +455,12 @@ class ChatMessage {
     this.fileUrl,
     this.fileType,
     required this.createdAt,
+    this.sendTo,
   });
 
-  factory ChatMessage.fromFirestore(DocumentSnapshot<Map<String, dynamic>> doc) {
+  factory ChatMessage.fromFirestore(
+    DocumentSnapshot<Map<String, dynamic>> doc,
+  ) {
     final data = doc.data() ?? {};
     final typeStr = (data['type'] ?? 'text') as String;
     final type = MessageType.values.firstWhere(
@@ -479,6 +487,7 @@ class ChatMessage {
       fileUrl: data['file_url'] as String?,
       fileType: data['file_type'] as String?,
       createdAt: createdAt,
+      sendTo: data['send_to'] as String?, // NEW
     );
   }
 
@@ -491,6 +500,7 @@ class ChatMessage {
       if (fileUrl != null) 'file_url': fileUrl,
       if (fileType != null) 'file_type': fileType,
       'created_at': Timestamp.fromDate(createdAt),
+      if (sendTo != null) 'send_to': sendTo, // NEW
     };
   }
 }
@@ -549,6 +559,7 @@ class ChatRepository {
     required String senderId,
     required String senderRole,
     required String text,
+    String? sendTo, // NEW
     MessageType type = MessageType.text,
   }) async {
     final message = ChatMessage(
@@ -557,6 +568,7 @@ class ChatRepository {
       senderRole: senderRole,
       type: type,
       text: text,
+      sendTo: sendTo, // NEW
       createdAt: DateTime.now(),
     );
 
@@ -574,6 +586,7 @@ class ChatRepository {
     required String fileUrl,
     required String fileType,
     String? text,
+    String? sendTo, // NEW
     MessageType type = MessageType.file,
   }) async {
     final message = ChatMessage(
@@ -819,20 +832,36 @@ class ChatShell extends StatelessWidget {
           onSend: (text) => repo.sendTextMessage(
             conversationId: conversation.conversationId,
             channel: channel,
-            senderId: currentUserId,
-            senderRole: _roleForCurrentUser(),
+            senderId: currentUserId,             // sender_id = current user
+            senderRole: roleForCurrentUser(),
             text: text,
+            sendTo: _resolveSendTo(),           // NEW
           ),
         ),
+
+
       ],
     );
   }
 
-  String _roleForCurrentUser() {
-    if (currentUserId == conversation.assignedByUid) return 'manager';
-    if (currentUserId == conversation.leadMemberUid) return 'lead';
-    return 'member';
+  String _resolveSendTo() {
+  // For manager chat, always send to the assigned_by user
+  if (channel == ChatChannel.assignedBy) {
+    return conversation.assignedByUid;
   }
+
+  // For teamMembers channel you can choose semantics:
+  // maybe broadcast / no specific target
+  return conversation.assignedByUid; // or '' / some other UID as needed
+}
+
+String roleForCurrentUser() {
+  if (currentUserId == conversation.assignedByUid) return 'manager';
+  if (currentUserId == conversation.leadMemberUid) return 'lead';
+  return 'member';
+}
+
+
 }
 
 ================================================================================
@@ -9141,7 +9170,7 @@ class _FreeDragResizeItemState extends State<FreeDragResizeItem> {
 import 'package:flutter/material.dart';
 import '../core/wallpaper_service.dart'; // NEW IMPORT
 import 'pages/create_task_page/create_task_page.dart';
-import 'pages/view_all_tasks_page.dart';
+import 'pages/view_all_tasks_page/view_all_tasks_page.dart';
 import 'pages/view_assigned_tasks_page/view_assigned_tasks_page.dart';
 import 'pages/complete_task_page.dart';
 
@@ -9211,7 +9240,7 @@ import '../core/wallpaper_service.dart';
 
 import 'pages/complete_task_page.dart';
 import 'pages/create_task_page/create_task_page.dart';
-import 'pages/view_all_tasks_page.dart';
+import 'pages/view_all_tasks_page/view_all_tasks_page.dart';
 import 'pages/view_assigned_tasks_page/view_assigned_tasks_page.dart';
 
 import 'task_tabs_manifest.dart';
@@ -9337,26 +9366,6 @@ class CompleteTaskPage extends StatelessWidget {
     );
   }
 }
-
-================================================================================
-
-// File: lib\task\pages\view_all_tasks_page.dart
-import 'package:flutter/material.dart';
-// lib/task/pages/view_all_tasks_page.dart
-class ViewAllTasksPage extends StatelessWidget {
-  const ViewAllTasksPage({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return const Center(
-      child: Text(
-        'View All Tasks full-screen page placeholder',
-        style: TextStyle(color: Colors.white70),
-      ),
-    );
-  }
-}
-
 
 ================================================================================
 
@@ -11103,6 +11112,818 @@ class _TeamMemberSelectorState extends State<TeamMemberSelector> {
             ),
           ),
       ],
+    );
+  }
+}
+
+================================================================================
+
+// File: lib\task\pages\view_all_tasks_page\view_all_tasks_page.dart
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
+
+import 'models/created_task_view_model.dart';
+import 'widgets/created_task_list.dart';
+import 'widgets/created_task_workspace.dart';
+
+class ViewAllTasksPage extends StatefulWidget {
+  const ViewAllTasksPage({super.key});
+  static const String tenantId = 'default_tenant';
+
+  @override
+  State<ViewAllTasksPage> createState() => _ViewAllTasksPageState();
+}
+
+class _ViewAllTasksPageState extends State<ViewAllTasksPage> {
+  CreatedTaskViewModel? selectedTask;
+
+  @override
+  Widget build(BuildContext context) {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      return const Center(
+        child: Text('You must be logged in'),
+      );
+    }
+
+    final uid = user.uid;
+    
+    // Query: WHERE assignedBy == currentUserUid
+    final stream = FirebaseFirestore.instance
+        .collection('tenants')
+        .doc(ViewAllTasksPage.tenantId)
+        .collection('tasks')
+        .where('assigned_by', isEqualTo: uid)  // KEY DIFFERENCE
+        .orderBy('created_at', descending: true)
+        .snapshots();
+
+    return StreamBuilder<QuerySnapshot>(
+      stream: stream,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        final docs = snapshot.data?.docs ?? [];
+        final models = docs.map((doc) {
+          return CreatedTaskViewModel.fromFirestore(
+            docId: doc.id,
+            data: doc.data() as Map<String, dynamic>,
+          );
+        }).toList();
+
+        if (models.isEmpty) {
+          return const Center(
+            child: Text('You have not created any tasks yet.'),
+          );
+        }
+
+        // Ensure selectedTask is still valid
+        if (selectedTask != null) {
+          final exists = models.any((t) => t.docId == selectedTask!.docId);
+          if (!exists) selectedTask = null;
+        }
+
+        return Row(
+          children: [
+            // LEFT: List of created tasks
+            Expanded(
+              flex: 2,
+              child: CreatedTaskList(
+                tasks: models,
+                selectedTaskId: selectedTask?.docId,
+                onTaskSelected: (task) {
+                  setState(() => selectedTask = task);
+                },
+              ),
+            ),
+            // RIGHT: Workspace with chat to lead
+            Expanded(
+              flex: 3,
+              child: selectedTask == null
+                  ? buildEmptyWorkspace()
+                  : CreatedTaskWorkspace(
+                      task: selectedTask!,
+                      currentUserUid: uid,
+                      tenantId: ViewAllTasksPage.tenantId,
+                      onBack: () {
+                        setState(() => selectedTask = null);
+                      },
+                    ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget buildEmptyWorkspace() {
+    return const Center(
+      child: Text('Select a task from the left'),
+    );
+  }
+}
+
+================================================================================
+
+// File: lib\task\pages\view_all_tasks_page\models\created_task_view_model.dart
+class CreatedTaskViewModel {
+  final String docId;
+  final String title;
+  final String description;
+  final String status;
+  final String priority;
+  final DateTime? dueDate;
+  final String groupName;
+  final List<String> assignedToUids;
+  final int assigneeCount;
+  final String? leadMemberId;  // UID of the lead
+
+  CreatedTaskViewModel({
+    required this.docId,
+    required this.title,
+    required this.description,
+    required this.status,
+    required this.priority,
+    required this.dueDate,
+    required this.groupName,
+    required this.assignedToUids,
+    required this.assigneeCount,
+    required this.leadMemberId,
+  });
+
+  factory CreatedTaskViewModel.fromFirestore({
+    required String docId,
+    required Map<String, dynamic> data,
+  }) {
+    final title = data['title'] ?? '';
+    final description = data['description'] ?? '';
+    final status = data['status'] ?? 'PENDING';
+    final priority = data['custom_fields']?['priority'] ?? '';
+    final dueIso = data['due_date'] ?? '';
+    DateTime? due;
+    if (dueIso.isNotEmpty) {
+      try {
+        due = DateTime.parse(dueIso);
+      } catch (_) {}
+    }
+
+    final groupName = data['group_name'] ?? '';
+    final assignedTo = data['assigned_to'] ?? '';
+    final assignedToUids = assignedTo.isEmpty
+        ? <String>[]
+        : assignedTo.split(',').map((s) => s.trim()).toList();
+    final assigneeCount = assignedToUids.length;
+    final leadMemberId = data['lead_member'] as String?;
+
+    return CreatedTaskViewModel(
+      docId: docId,
+      title: title,
+      description: description,
+      status: status,
+      priority: priority,
+      dueDate: due,
+      groupName: groupName,
+      assignedToUids: assignedToUids,
+      assigneeCount: assigneeCount,
+      leadMemberId: leadMemberId,
+    );
+  }
+
+  bool get hasLead => leadMemberId != null && leadMemberId!.isNotEmpty;
+}
+
+================================================================================
+
+// File: lib\task\pages\view_all_tasks_page\widgets\created_task_card.dart
+import 'package:flutter/material.dart';
+import '../models/created_task_view_model.dart';
+
+class CreatedTaskCard extends StatelessWidget {
+  final CreatedTaskViewModel task;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  const CreatedTaskCard({
+    super.key,
+    required this.task,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? Colors.cyan.withOpacity(0.12)
+              : Colors.white.withOpacity(0.04),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isSelected
+                ? Colors.cyan.withOpacity(0.6)
+                : Colors.white.withOpacity(0.1),
+            width: isSelected ? 2 : 1,
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header: Title + Member count
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    task.title.isEmpty ? 'Untitled Task' : task.title,
+                    style: TextStyle(
+                      color: isSelected ? Colors.cyan : Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                // Member count badge
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.purple.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: Colors.purple.withOpacity(0.6),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.people,
+                        size: 14,
+                        color: Colors.purpleAccent,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        '${task.assigneeCount}',
+                        style: const TextStyle(
+                          color: Colors.purpleAccent,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+
+            // Group name
+            if (task.groupName.isNotEmpty) ...[
+              Row(
+                children: [
+                  const Icon(
+                    Icons.label_outline,
+                    size: 14,
+                    color: Colors.white54,
+                  ),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      task.groupName,
+                      style: const TextStyle(
+                        color: Colors.white54,
+                        fontSize: 13,
+                        fontStyle: FontStyle.italic,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+            ],
+
+            // Lead badge (if assigned)
+            if (task.hasLead) ...[
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.amber.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: Colors.amber.withOpacity(0.5),
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: const [
+                    Icon(
+                      Icons.star,
+                      size: 14,
+                      color: Colors.amber,
+                    ),
+                    SizedBox(width: 4),
+                    Text(
+                      'LEAD ASSIGNED',
+                      style: TextStyle(
+                        color: Colors.amber,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+
+            // Status and Priority badges
+            Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              children: [
+                _buildStatusBadge(task.status),
+                if (task.priority.isNotEmpty)
+                  _buildPriorityBadge(task.priority),
+              ],
+            ),
+
+            // Due date
+            if (task.dueDate != null) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Icon(
+                    Icons.calendar_today,
+                    size: 12,
+                    color: _getDueDateColor(task.dueDate!),
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Due: ${_formatDate(task.dueDate!)}',
+                    style: TextStyle(
+                      color: _getDueDateColor(task.dueDate!),
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStatusBadge(String status) {
+    final color = _getStatusColor(status);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withOpacity(0.6)),
+      ),
+      child: Text(
+        status.toUpperCase(),
+        style: TextStyle(
+          color: color,
+          fontSize: 10,
+          fontWeight: FontWeight.bold,
+          letterSpacing: 0.5,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPriorityBadge(String priority) {
+    final color = _getPriorityColor(priority);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withOpacity(0.6)),
+      ),
+      child: Text(
+        priority.toUpperCase(),
+        style: TextStyle(
+          color: color,
+          fontSize: 10,
+          fontWeight: FontWeight.bold,
+          letterSpacing: 0.5,
+        ),
+      ),
+    );
+  }
+
+  Color _getStatusColor(String status) {
+    switch (status.toUpperCase()) {
+      case 'COMPLETED':
+        return Colors.green;
+      case 'IN_PROGRESS':
+      case 'IN PROGRESS':
+        return Colors.blue;
+      case 'PENDING':
+        return Colors.orange;
+      case 'CANCELLED':
+        return Colors.red;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  Color _getPriorityColor(String priority) {
+    switch (priority.toUpperCase()) {
+      case 'CRITICAL':
+        return Colors.redAccent;
+      case 'HIGH':
+        return Colors.deepOrangeAccent;
+      case 'MEDIUM':
+        return Colors.yellowAccent;
+      case 'LOW':
+        return Colors.lightGreenAccent;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  Color _getDueDateColor(DateTime dueDate) {
+    final now = DateTime.now();
+    final difference = dueDate.difference(now);
+
+    if (difference.isNegative) {
+      // Overdue
+      return Colors.redAccent;
+    } else if (difference.inDays <= 1) {
+      // Due soon (within 24 hours)
+      return Colors.orangeAccent;
+    } else if (difference.inDays <= 3) {
+      // Due in 2-3 days
+      return Colors.yellowAccent;
+    } else {
+      // More than 3 days
+      return Colors.white70;
+    }
+  }
+
+  String _formatDate(DateTime date) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final taskDate = DateTime(date.year, date.month, date.day);
+    final difference = taskDate.difference(today).inDays;
+
+    if (difference == 0) {
+      return 'Today at ${_formatTime(date)}';
+    } else if (difference == 1) {
+      return 'Tomorrow at ${_formatTime(date)}';
+    } else if (difference == -1) {
+      return 'Yesterday';
+    } else if (difference < 0) {
+      return '${difference.abs()} days ago';
+    } else {
+      return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')} ${_formatTime(date)}';
+    }
+  }
+
+  String _formatTime(DateTime date) {
+    final hour = date.hour.toString().padLeft(2, '0');
+    final minute = date.minute.toString().padLeft(2, '0');
+    return '$hour:$minute';
+  }
+}
+
+================================================================================
+
+// File: lib\task\pages\view_all_tasks_page\widgets\created_task_list.dart
+import 'package:flutter/material.dart';
+import '../models/created_task_view_model.dart';
+import 'created_task_card.dart';
+
+class CreatedTaskList extends StatelessWidget {
+  final List<CreatedTaskViewModel> tasks;
+  final String? selectedTaskId;
+  final Function(CreatedTaskViewModel) onTaskSelected;
+
+  const CreatedTaskList({
+    super.key,
+    required this.tasks,
+    required this.selectedTaskId,
+    required this.onTaskSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (tasks.isEmpty) {
+      return _buildEmptyState();
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Header
+        Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Tasks You Created',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '${tasks.length} task${tasks.length == 1 ? '' : 's'}',
+                style: const TextStyle(
+                  color: Colors.white60,
+                  fontSize: 14,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const Divider(color: Colors.white12, height: 1),
+        
+        // Task list
+        Expanded(
+          child: ListView.builder(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            itemCount: tasks.length,
+            itemBuilder: (context, index) {
+              final task = tasks[index];
+              final isSelected = task.docId == selectedTaskId;
+
+              return CreatedTaskCard(
+                task: task,
+                isSelected: isSelected,
+                onTap: () => onTaskSelected(task),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.assignment_outlined,
+            size: 80,
+            color: Colors.white.withOpacity(0.2),
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            'No Tasks Created Yet',
+            style: TextStyle(
+              color: Colors.white70,
+              fontSize: 18,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Create a new task to get started',
+            style: TextStyle(
+              color: Colors.white38,
+              fontSize: 14,
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+================================================================================
+
+// File: lib\task\pages\view_all_tasks_page\widgets\created_task_workspace.dart
+import 'package:flutter/material.dart';
+import '../models/created_task_view_model.dart';
+import '../../../../chat/models/chat_channel.dart';
+import '../../../../chat/models/chat_conversation.dart';
+import '../../../../chat/widgets/chat_shell.dart';
+import 'manager_task_details_panel.dart';
+
+class CreatedTaskWorkspace extends StatefulWidget {
+  final CreatedTaskViewModel task;
+  final String currentUserUid;
+  final String tenantId;
+  final VoidCallback onBack;
+
+  const CreatedTaskWorkspace({
+    super.key,
+    required this.task,
+    required this.currentUserUid,
+    required this.tenantId,
+    required this.onBack,
+  });
+
+  @override
+  State<CreatedTaskWorkspace> createState() => _CreatedTaskWorkspaceState();
+}
+
+class _CreatedTaskWorkspaceState extends State<CreatedTaskWorkspace> {
+  String activeView = 'details'; // 'details' or 'chat'
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        // Top bar
+        Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.arrow_back, color: Colors.cyan),
+                onPressed: widget.onBack,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  widget.task.title.isEmpty ? 'Task' : widget.task.title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              // Toggle button to switch views
+              TextButton.icon(
+                onPressed: () {
+                  setState(() {
+                    activeView = activeView == 'details' ? 'chat' : 'details';
+                  });
+                },
+                icon: Icon(
+                  activeView == 'details' ? Icons.chat : Icons.info_outline,
+                  color: Colors.cyan,
+                ),
+                label: Text(
+                  activeView == 'details' ? 'Chat with Lead' : 'Task Details',
+                  style: const TextStyle(color: Colors.cyan),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const Divider(color: Colors.white24, height: 1),
+        // Content
+        Expanded(
+          child: activeView == 'details'
+              ? ManagerTaskDetailsPanel(task: widget.task)
+              : buildManagerChat(),
+        ),
+      ],
+    );
+  }
+
+  Widget buildManagerChat() {
+    // Manager chats with LEAD only using assigned_by_chat
+    if (!widget.task.hasLead) {
+      return const Center(
+        child: Text(
+          'No lead assigned to this task',
+          style: TextStyle(color: Colors.white70),
+        ),
+      );
+    }
+
+    final conversation = ChatConversation(
+      conversationId: widget.task.docId,
+      taskTitle: widget.task.title,
+      assignedByUid: widget.currentUserUid,  // You are the manager
+      assignedToUids: widget.task.assignedToUids,
+      leadMemberUid: widget.task.leadMemberId,
+    );
+
+    return ChatShell(
+      tenantId: widget.tenantId,
+      conversation: conversation,
+      channel: ChatChannel.assignedBy,  // Manager <-> Lead channel
+      currentUserId: widget.currentUserUid,
+    );
+  }
+}
+
+================================================================================
+
+// File: lib\task\pages\view_all_tasks_page\widgets\manager_task_details_panel.dart
+import 'package:flutter/material.dart';
+import '../models/created_task_view_model.dart';
+
+class ManagerTaskDetailsPanel extends StatelessWidget {
+  final CreatedTaskViewModel task;
+
+  const ManagerTaskDetailsPanel({
+    super.key,
+    required this.task,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Title
+          const Text(
+            'Task Overview',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 16),
+          // Description
+          if (task.description.isNotEmpty) ...[
+            const Text(
+              'Description',
+              style: TextStyle(color: Colors.white70, fontSize: 14),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              task.description,
+              style: const TextStyle(color: Colors.white),
+            ),
+            const SizedBox(height: 16),
+          ],
+          // Status & Priority
+          Row(
+            children: [
+              _buildChip('Status', task.status, Colors.cyanAccent),
+              const SizedBox(width: 8),
+              if (task.priority.isNotEmpty)
+                _buildChip('Priority', task.priority, Colors.deepOrangeAccent),
+            ],
+          ),
+          const SizedBox(height: 16),
+          // Assignees
+          Text(
+            'Assigned to ${task.assigneeCount} member(s)',
+            style: const TextStyle(color: Colors.white70),
+          ),
+          const SizedBox(height: 8),
+          // Lead info
+          if (task.hasLead)
+            Text(
+              'Lead: ${task.leadMemberId}',
+              style: const TextStyle(color: Colors.amberAccent),
+            ),
+          // Due date
+          if (task.dueDate != null) ...[
+            const SizedBox(height: 16),
+            Text(
+              'Due: ${task.dueDate}',
+              style: const TextStyle(color: Colors.white60),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildChip(String label, String value, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.8)),
+      ),
+      child: Text(
+        '$label: $value',
+        style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w600),
+      ),
     );
   }
 }

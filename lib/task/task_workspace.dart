@@ -8,7 +8,7 @@ import '../core/wallpaper_service.dart';
 
 import 'pages/complete_task_page.dart';
 import 'pages/create_task_page/create_task_page.dart';
-import 'pages/view_all_tasks_page.dart';
+import 'pages/view_all_tasks_page/view_all_tasks_page.dart';
 import 'pages/view_assigned_tasks_page/view_assigned_tasks_page.dart';
 
 import 'task_tabs_manifest.dart';

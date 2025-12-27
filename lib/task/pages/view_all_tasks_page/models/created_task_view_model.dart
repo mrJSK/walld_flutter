@@ -1,4 +1,4 @@
-class AssignedTaskViewModel {
+class CreatedTaskViewModel {
   final String docId;
   final String title;
   final String description;
@@ -9,9 +9,8 @@ class AssignedTaskViewModel {
   final List<String> assignedToUids;
   final int assigneeCount;
   final String? leadMemberId;
-  final String assignedByUid;
 
-  AssignedTaskViewModel({
+  CreatedTaskViewModel({
     required this.docId,
     required this.title,
     required this.description,
@@ -22,17 +21,9 @@ class AssignedTaskViewModel {
     required this.assignedToUids,
     required this.assigneeCount,
     required this.leadMemberId,
-    required this.assignedByUid,
   });
 
-  // ADD THIS METHOD
-  bool isUserLead(String userId) {
-    return leadMemberId != null && leadMemberId == userId;
-  }
-
-  bool get hasLead => leadMemberId != null && leadMemberId!.isNotEmpty;
-
-  factory AssignedTaskViewModel.fromFirestore({
+  factory CreatedTaskViewModel.fromFirestore({
     required String docId,
     required Map<String, dynamic> data,
   }) {
@@ -60,12 +51,13 @@ class AssignedTaskViewModel {
 
     final groupName = data['group_name'] as String? ?? '';
     
-    // Safe list handling for assigned_to
+    // FIXED: Safe list handling for assigned_to
     List<String> assignedToUids = [];
     final assignedTo = data['assigned_to'];
     
     if (assignedTo != null) {
       if (assignedTo is String) {
+        // If it's a comma-separated string
         if (assignedTo.isNotEmpty) {
           assignedToUids = assignedTo
               .split(',')
@@ -74,6 +66,7 @@ class AssignedTaskViewModel {
               .toList();
         }
       } else if (assignedTo is List) {
+        // If it's already a list (from Firestore array)
         assignedToUids = assignedTo
             .map((e) => e.toString())
             .where((s) => s.isNotEmpty)
@@ -83,9 +76,8 @@ class AssignedTaskViewModel {
     
     final assigneeCount = assignedToUids.length;
     final leadMemberId = data['lead_member'] as String?;
-    final assignedByUid = data['assigned_by'] as String? ?? '';
 
-    return AssignedTaskViewModel(
+    return CreatedTaskViewModel(
       docId: docId,
       title: title,
       description: description,
@@ -96,7 +88,8 @@ class AssignedTaskViewModel {
       assignedToUids: assignedToUids,
       assigneeCount: assigneeCount,
       leadMemberId: leadMemberId,
-      assignedByUid: assignedByUid,
     );
   }
+
+  bool get hasLead => leadMemberId != null && leadMemberId!.isNotEmpty;
 }

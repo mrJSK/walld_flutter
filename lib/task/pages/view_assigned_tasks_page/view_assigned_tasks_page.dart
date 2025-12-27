@@ -95,22 +95,19 @@ class _ViewAssignedTasksPageState extends State<ViewAssignedTasksPage> {
 
         return Row(
           children: [
-            // LEFT: list of assigned tasks
+            // LEFT: List of assigned tasks
             Expanded(
               flex: 2,
               child: AssignedTaskList(
-                tenantId: ViewAssignedTasksPage.tenantId,
-                currentUserUid: uid,
                 tasks: models,
                 selectedTaskId: _selectedTask?.docId,
+                currentUserId: uid,  // ADD THIS
                 onTaskSelected: (task) {
                   setState(() => _selectedTask = task);
                 },
               ),
             ),
-
-
-            // RIGHT: details / workspace for selected task
+            // RIGHT: Workspace
             Expanded(
               flex: 3,
               child: _selectedTask == null
@@ -126,6 +123,7 @@ class _ViewAssignedTasksPageState extends State<ViewAssignedTasksPage> {
             ),
           ],
         );
+
       },
     );
   }

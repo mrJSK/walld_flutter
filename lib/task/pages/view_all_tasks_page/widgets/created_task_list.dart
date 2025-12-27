@@ -1,19 +1,17 @@
 import 'package:flutter/material.dart';
-import '../models/assigned_task_view_model.dart';
-import 'assigned_task_card.dart';
+import '../models/created_task_view_model.dart';
+import 'created_task_card.dart';
 
-class AssignedTaskList extends StatelessWidget {
-  final List<AssignedTaskViewModel> tasks;
+class CreatedTaskList extends StatelessWidget {
+  final List<CreatedTaskViewModel> tasks;
   final String? selectedTaskId;
-  final Function(AssignedTaskViewModel) onTaskSelected;
-  final String currentUserId;
+  final Function(CreatedTaskViewModel) onTaskSelected;
 
-  const AssignedTaskList({
+  const CreatedTaskList({
     super.key,
     required this.tasks,
     required this.selectedTaskId,
     required this.onTaskSelected,
-    required this.currentUserId,
   });
 
   @override
@@ -32,7 +30,7 @@ class AssignedTaskList extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                'Assigned Tasks',
+                'Tasks You Created',
                 style: TextStyle(
                   color: Colors.white,
                   fontSize: 22,
@@ -61,11 +59,10 @@ class AssignedTaskList extends StatelessWidget {
               final task = tasks[index];
               final isSelected = task.docId == selectedTaskId;
 
-              return AssignedTaskCard(
+              return CreatedTaskCard(
                 task: task,
                 isSelected: isSelected,
                 onTap: () => onTaskSelected(task),
-                currentUserId: currentUserId,
               );
             },
           ),
@@ -86,7 +83,7 @@ class AssignedTaskList extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           const Text(
-            'No Assigned Tasks',
+            'No Tasks Created Yet',
             style: TextStyle(
               color: Colors.white70,
               fontSize: 18,
@@ -95,7 +92,7 @@ class AssignedTaskList extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           const Text(
-            'You have no tasks assigned to you',
+            'Create a new task to get started',
             style: TextStyle(
               color: Colors.white38,
               fontSize: 14,
