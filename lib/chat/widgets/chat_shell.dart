@@ -1,5 +1,3 @@
-// lib/chat/widgets/chat_shell.dart
-
 import 'package:flutter/material.dart';
 
 import '../models/chat_channel.dart';
@@ -23,21 +21,21 @@ class ChatShell extends StatelessWidget {
     required this.currentUserId,
   });
 
-  bool get _canSend {
+  bool get canSend {
     switch (channel) {
       case ChatChannel.teamMembers:
         return conversation.canSendToTeamChannel(currentUserId);
-      case ChatChannel.assignedBy:
+      case ChatChannel.managerCommunication:
         return conversation.canSendToAssignedByChannel(currentUserId);
     }
   }
 
-  String get _hint {
+  String get hint {
     switch (channel) {
       case ChatChannel.teamMembers:
         return 'Message team members';
-      case ChatChannel.assignedBy:
-        return 'Ask doubt / share progress with manager';
+      case ChatChannel.managerCommunication:
+        return 'Escalate to manager / Share progress';
     }
   }
 
@@ -47,7 +45,7 @@ class ChatShell extends StatelessWidget {
 
     return Column(
       children: [
-        // header
+        // Header
         Padding(
           padding: const EdgeInsets.only(bottom: 8),
           child: Row(
@@ -61,7 +59,7 @@ class ChatShell extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              if (!_canSend)
+              if (!canSend)
                 const Text(
                   '(read only)',
                   style: TextStyle(
@@ -74,7 +72,7 @@ class ChatShell extends StatelessWidget {
           ),
         ),
 
-        // messages
+        // Messages
         Expanded(
           child: StreamBuilder<List<ChatMessage>>(
             stream: repo.streamMessages(
@@ -85,8 +83,7 @@ class ChatShell extends StatelessWidget {
               if (snapshot.connectionState == ConnectionState.waiting) {
                 return const Center(
                   child: CircularProgressIndicator(
-                    valueColor:
-                        AlwaysStoppedAnimation<Color>(Colors.cyanAccent),
+                    valueColor: AlwaysStoppedAnimation<Color>(Colors.cyanAccent),
                     strokeWidth: 2,
                   ),
                 );
@@ -97,7 +94,7 @@ class ChatShell extends StatelessWidget {
               if (msgs.isEmpty) {
                 return const Center(
                   child: Text(
-                    'No messages yet.\nStart the conversation.',
+                    'No messages yet. Start the conversation.',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: Colors.white38, fontSize: 11),
                   ),
@@ -114,40 +111,33 @@ class ChatShell extends StatelessWidget {
 
         const SizedBox(height: 8),
 
+        // Input bar
         ChatInputBar(
-          enabled: _canSend,
-          hintText: _hint,
+          enabled: canSend,
+          hintText: hint,
           onSend: (text) => repo.sendTextMessage(
             conversationId: conversation.conversationId,
             channel: channel,
-            senderId: currentUserId,             // sender_id = current user
-            senderRole: roleForCurrentUser(),
+            senderId: currentUserId,
+            senderRole: _roleForCurrentUser(),
             text: text,
-            sendTo: _resolveSendTo(),           // NEW
+            sendTo: _resolveSendTo(),
           ),
         ),
-
-
       ],
     );
   }
 
-  String _resolveSendTo() {
-  // For manager chat, always send to the assigned_by user
-  if (channel == ChatChannel.assignedBy) {
-    return conversation.assignedByUid;
+  String? _resolveSendTo() {
+    if (channel == ChatChannel.managerCommunication) {
+      return conversation.assignedByUid;
+    }
+    return null;
   }
 
-  // For teamMembers channel you can choose semantics:
-  // maybe broadcast / no specific target
-  return conversation.assignedByUid; // or '' / some other UID as needed
-}
-
-String roleForCurrentUser() {
-  if (currentUserId == conversation.assignedByUid) return 'manager';
-  if (currentUserId == conversation.leadMemberUid) return 'lead';
-  return 'member';
-}
-
-
+  String _roleForCurrentUser() {
+    if (currentUserId == conversation.assignedByUid) return 'manager';
+    if (currentUserId == conversation.leadMemberUid) return 'lead';
+    return 'member';
+  }
 }

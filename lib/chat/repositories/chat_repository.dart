@@ -1,25 +1,22 @@
-// lib/chat/repositories/chat_repository.dart
-
 import 'package:cloud_firestore/cloud_firestore.dart';
-
 import '../models/chat_channel.dart';
 import '../models/chat_message.dart';
 
 class ChatRepository {
   final String tenantId;
-  final FirebaseFirestore _db;
+  final FirebaseFirestore db;
 
   ChatRepository({
     required this.tenantId,
     FirebaseFirestore? firestore,
-  }) : _db = firestore ?? FirebaseFirestore.instance;
+  }) : db = firestore ?? FirebaseFirestore.instance;
 
-  /// Base path: /tenants/{tenantId}/CHATS/{conversationId}/{channelCollection}
-  CollectionReference<Map<String, dynamic>> _channelCollection(
+  /// Base path: tenants/{tenantId}/CHATS/{conversationId}/{channelCollection}
+  CollectionReference<Map<String, dynamic>> channelCollection(
     String conversationId,
     ChatChannel channel,
   ) {
-    return _db
+    return db
         .collection('tenants')
         .doc(tenantId)
         .collection('CHATS')
@@ -32,14 +29,12 @@ class ChatRepository {
     required String conversationId,
     required ChatChannel channel,
   }) {
-    return _channelCollection(conversationId, channel)
+    return channelCollection(conversationId, channel)
         .orderBy('created_at', descending: false)
         .snapshots()
-        .map(
-          (snap) => snap.docs
-              .map((doc) => ChatMessage.fromFirestore(doc))
-              .toList(),
-        );
+        .map((snap) => snap.docs
+            .map((doc) => ChatMessage.fromFirestore(doc))
+            .toList());
   }
 
   /// Send a text message
@@ -49,7 +44,7 @@ class ChatRepository {
     required String senderId,
     required String senderRole,
     required String text,
-    String? sendTo, // NEW
+    String? sendTo, // Optional: only for manager communication
     MessageType type = MessageType.text,
   }) async {
     final message = ChatMessage(
@@ -58,13 +53,11 @@ class ChatRepository {
       senderRole: senderRole,
       type: type,
       text: text,
-      sendTo: sendTo, // NEW
+      sendTo: sendTo, // Will be null for team_members_chat
       createdAt: DateTime.now(),
     );
 
-    await _channelCollection(conversationId, channel).add(
-      message.toFirestore(),
-    );
+    await channelCollection(conversationId, channel).add(message.toFirestore());
   }
 
   /// Send a file or progress message with optional text
@@ -76,7 +69,7 @@ class ChatRepository {
     required String fileUrl,
     required String fileType,
     String? text,
-    String? sendTo, // NEW
+    String? sendTo, // Optional: only for manager communication
     MessageType type = MessageType.file,
   }) async {
     final message = ChatMessage(
@@ -88,10 +81,9 @@ class ChatRepository {
       fileUrl: fileUrl,
       fileType: fileType,
       createdAt: DateTime.now(),
+      sendTo: sendTo, // Will be null for team_members_chat
     );
 
-    await _channelCollection(conversationId, channel).add(
-      message.toFirestore(),
-    );
+    await channelCollection(conversationId, channel).add(message.toFirestore());
   }
 }

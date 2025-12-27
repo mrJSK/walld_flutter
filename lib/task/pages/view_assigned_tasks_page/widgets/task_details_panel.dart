@@ -1,314 +1,198 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-
-import '../../../../core/glass_container.dart';
 import '../models/assigned_task_view_model.dart';
-import 'lead_badge.dart';
 
-class TaskDetailsPanel extends StatefulWidget {
+class TaskDetailsPanel extends StatelessWidget {
   final AssignedTaskViewModel task;
-  final String currentUserUid;
-  final VoidCallback onAskDoubt;
-  final VoidCallback onSubmitProgress;
 
   const TaskDetailsPanel({
     super.key,
     required this.task,
-    required this.currentUserUid,
-    required this.onAskDoubt,
-    required this.onSubmitProgress,
   });
 
   @override
-  State<TaskDetailsPanel> createState() => _TaskDetailsPanelState();
-}
-
-class _TaskDetailsPanelState extends State<TaskDetailsPanel> {
-  static const String tenantId = 'default_tenant';
-
-  String? _assignedByName;
-  List<String>? _assignedToNames;
-  String? _leadMemberName;
-  bool _loadingNames = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadNames();
-  }
-
-  @override
-  void didUpdateWidget(covariant TaskDetailsPanel oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.task.docId != widget.task.docId) {
-      _loadNames();
-    }
-  }
-
-  Future<void> _loadNames() async {
-    setState(() {
-      _loadingNames = true;
-      _assignedByName = null;
-      _assignedToNames = null;
-      _leadMemberName = null;
-    });
-
-    try {
-      final assignedByUid = widget.task.assignedByUid;
-      final leadUid = widget.task.leadMemberId;
-      final assigneeUids = widget.task.assignedToUids;
-
-      final futures = <Future<void>>[];
-
-      if (assignedByUid != null) {
-        futures.add(_loadSingleUserName(assignedByUid)
-            .then((name) => _assignedByName = name));
-      }
-
-      if (leadUid != null) {
-        futures.add(_loadSingleUserName(leadUid)
-            .then((name) => _leadMemberName = name));
-      }
-
-      if (assigneeUids.isNotEmpty) {
-        futures.add(_loadMultipleUserNames(assigneeUids)
-            .then((names) => _assignedToNames = names));
-      }
-
-      await Future.wait(futures);
-    } catch (e) {
-      debugPrint('Error loading names for task details: $e');
-    } finally {
-      if (mounted) {
-        setState(() {
-          _loadingNames = false;
-        });
-      }
-    }
-  }
-
-  Future<String> _loadSingleUserName(String uid) async {
-    try {
-      final doc = await FirebaseFirestore.instance
-          .collection('tenants')
-          .doc(tenantId)
-          .collection('users')
-          .doc(uid)
-          .get();
-
-      if (!doc.exists) return uid;
-
-      final data = doc.data();
-      final fullName = data?['profiledata']?['fullName'] ??
-          data?['fullName'] ??
-          uid;
-      return fullName.toString();
-    } catch (_) {
-      return uid;
-    }
-  }
-
-  Future<List<String>> _loadMultipleUserNames(List<String> uids) async {
-    final results = <String>[];
-    for (final uid in uids) {
-      results.add(await _loadSingleUserName(uid));
-    }
-    return results;
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final task = widget.task;
-    final isCurrentUserLead =
-        task.leadMemberId != null && task.leadMemberId == widget.currentUserUid;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Header row: title + lead badge (if current user is lead)
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Expanded(
-              child: Text(
-                task.title.isEmpty ? '(No title)' : task.title,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            const SizedBox(width: 8),
-            LeadBadge(isCurrentUserLead: isCurrentUserLead),
-          ],
-        ),
-
-        const SizedBox(height: 8),
-
-        if (task.groupName.isNotEmpty)
-          Text(
-            'Group: ${task.groupName}',
-            style: const TextStyle(
-              color: Colors.purpleAccent,
-              fontSize: 12,
-              fontStyle: FontStyle.italic,
-            ),
-          ),
-
-        const SizedBox(height: 4),
-
-        if (task.description.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: Text(
-              task.description,
-              style: const TextStyle(
-                color: Colors.white70,
-                fontSize: 13,
-              ),
-            ),
-          ),
-
-        const Divider(color: Colors.white10, height: 16),
-
-        if (_loadingNames)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 8),
-            child: SizedBox(
-              height: 20,
-              width: 20,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                valueColor: AlwaysStoppedAnimation(Colors.cyanAccent),
-              ),
-            ),
-          )
-        else
-          _buildMetaRows(isCurrentUserLead),
-
-        const Spacer(),
-
-        _buildFooterButtons(isCurrentUserLead),
-      ],
-    );
-  }
-
-  Widget _buildMetaRows(bool isCurrentUserLead) {
-    final task = widget.task;
-
-    final assignedBy = _assignedByName ?? task.assignedByUid ?? 'Unknown';
-    final assignees = _assignedToNames ?? task.assignedToUids;
-    final lead = _leadMemberName ?? task.leadMemberId ?? '—';
-
-    final leadLabel = isCurrentUserLead ? 'You ($lead)' : lead;
-
-    final due = task.dueDate;
-    final dueText = due == null
-        ? '—'
-        : '${_monthName(due.month)} ${due.day}, ${due.year} '
-          'at ${due.hour.toString().padLeft(2, '0')}:${due.minute.toString().padLeft(2, '0')}';
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _metaRow('Assigned by', assignedBy),
-        const SizedBox(height: 4),
-        _metaRow('Assigned to', assignees.isEmpty ? '—' : assignees.join(', ')),
-        const SizedBox(height: 4),
-        _metaRow('Lead', leadLabel),
-        const SizedBox(height: 4),
-        _metaRow('Status', task.status),
-        const SizedBox(height: 4),
-        _metaRow('Priority', task.priority.isEmpty ? '—' : task.priority),
-        const SizedBox(height: 4),
-        _metaRow('Due date', dueText),
-      ],
-    );
-  }
-
-  Widget _metaRow(String label, String value) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          width: 90,
-          child: Text(
-            '$label:',
-            style: const TextStyle(
-              color: Colors.white54,
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ),
-        const SizedBox(width: 4),
-        Expanded(
-          child: Text(
-            value,
-            style: const TextStyle(
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Title
+          const Text(
+            'Task Overview',
+            style: TextStyle(
               color: Colors.white,
-              fontSize: 12,
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
             ),
           ),
-        ),
-      ],
+          const SizedBox(height: 16),
+
+          // Description
+          if (task.description.isNotEmpty) ...[
+            const Text(
+              'Description',
+              style: TextStyle(
+                color: Colors.white70,
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              task.description,
+              style: const TextStyle(color: Colors.white),
+            ),
+            const SizedBox(height: 16),
+          ],
+
+          // Group Name
+          if (task.groupName.isNotEmpty) ...[
+            _buildInfoRow(
+              icon: Icons.label_outline,
+              label: 'Group',
+              value: task.groupName,
+            ),
+            const SizedBox(height: 12),
+          ],
+
+          // Status & Priority
+          Row(
+            children: [
+              _buildChip('Status', task.status, Colors.cyanAccent),
+              const SizedBox(width: 8),
+              if (task.priority.isNotEmpty)
+                _buildChip('Priority', task.priority, Colors.deepOrangeAccent),
+            ],
+          ),
+          const SizedBox(height: 16),
+
+          // Assignees
+          _buildInfoRow(
+            icon: Icons.people,
+            label: 'Team Members',
+            value: '${task.assigneeCount} member(s)',
+          ),
+          const SizedBox(height: 12),
+
+          // Lead info
+          if (task.hasLead) ...[
+            _buildInfoRow(
+              icon: Icons.star,
+              label: 'Lead Member',
+              value: task.leadMemberId ?? 'Not assigned',
+              valueColor: Colors.amberAccent,
+            ),
+            const SizedBox(height: 12),
+          ],
+
+          // Due date
+          if (task.dueDate != null) ...[
+            _buildInfoRow(
+              icon: Icons.calendar_today,
+              label: 'Due Date',
+              value: _formatDueDate(task.dueDate!),
+              valueColor: _getDueDateColor(task.dueDate!),
+            ),
+          ],
+        ],
+      ),
     );
   }
 
-  Widget _buildFooterButtons(bool isCurrentUserLead) {
+  Widget _buildInfoRow({
+    required IconData icon,
+    required String label,
+    required String value,
+    Color? valueColor,
+  }) {
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Expanded(
-          child: OutlinedButton.icon(
-            onPressed: widget.onAskDoubt,
-            style: OutlinedButton.styleFrom(
-              side: const BorderSide(color: Colors.cyanAccent),
-              foregroundColor: Colors.cyanAccent,
-              padding: const EdgeInsets.symmetric(vertical: 10),
-              textStyle: const TextStyle(fontSize: 12),
-            ),
-            icon: const Icon(Icons.help_outline_rounded, size: 16),
-            label: const Text('Ask Doubt'),
-          ),
+        Icon(
+          icon,
+          size: 18,
+          color: Colors.white54,
         ),
         const SizedBox(width: 8),
         Expanded(
-          child: FilledButton.icon(
-            onPressed: isCurrentUserLead ? widget.onSubmitProgress : null,
-            style: FilledButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 10),
-              backgroundColor:
-                  isCurrentUserLead ? Colors.greenAccent : Colors.green.shade200,
-              foregroundColor: Colors.black,
-              textStyle: const TextStyle(fontSize: 12),
-            ),
-            icon: const Icon(Icons.task_alt_rounded, size: 16),
-            label: const Text('Submit Progress'),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: const TextStyle(
+                  color: Colors.white54,
+                  fontSize: 12,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                value,
+                style: TextStyle(
+                  color: valueColor ?? Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
           ),
         ),
       ],
     );
   }
 
-  String _monthName(int month) {
-    const names = [
-      'January',
-      'February',
-      'March',
-      'April',
-      'May',
-      'June',
-      'July',
-      'August',
-      'September',
-      'October',
-      'November',
-      'December',
-    ];
-    if (month < 1 || month > 12) return month.toString();
-    return names[month - 1];
+  Widget _buildChip(String label, String value, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.8)),
+      ),
+      child: Text(
+        '$label: ${value.toUpperCase()}',
+        style: TextStyle(
+          color: color,
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+
+  Color _getDueDateColor(DateTime dueDate) {
+    final now = DateTime.now();
+    final difference = dueDate.difference(now);
+
+    if (difference.isNegative) {
+      return Colors.redAccent;
+    } else if (difference.inDays <= 1) {
+      return Colors.orangeAccent;
+    } else if (difference.inDays <= 3) {
+      return Colors.yellowAccent;
+    } else {
+      return Colors.white70;
+    }
+  }
+
+  String _formatDueDate(DateTime date) {
+    final now = DateTime.now();
+    final difference = date.difference(now);
+
+    if (difference.isNegative) {
+      return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')} (Overdue)';
+    } else if (difference.inDays == 0) {
+      return 'Today at ${_formatTime(date)}';
+    } else if (difference.inDays == 1) {
+      return 'Tomorrow at ${_formatTime(date)}';
+    } else {
+      return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')} at ${_formatTime(date)}';
+    }
+  }
+
+  String _formatTime(DateTime date) {
+    final hour = date.hour.toString().padLeft(2, '0');
+    final minute = date.minute.toString().padLeft(2, '0');
+    return '$hour:$minute';
   }
 }

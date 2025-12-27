@@ -11,9 +11,9 @@ class ChatMessage {
   final String? fileUrl;
   final String? fileType;
   final DateTime createdAt;
-
-  // NEW: who this message is sent *to*
-  final String? sendTo; // e.g. 'lead', 'manager', 'all', or a UID
+  
+  /// Only used in managerCommunication channel
+  final String? sendTo;
 
   ChatMessage({
     required this.id,
@@ -56,7 +56,7 @@ class ChatMessage {
       fileUrl: data['file_url'] as String?,
       fileType: data['file_type'] as String?,
       createdAt: createdAt,
-      sendTo: data['send_to'] as String?, // NEW
+      sendTo: data['send_to'] as String?, // May be null for team_members_chat
     );
   }
 
@@ -69,7 +69,8 @@ class ChatMessage {
       if (fileUrl != null) 'file_url': fileUrl,
       if (fileType != null) 'file_type': fileType,
       'created_at': Timestamp.fromDate(createdAt),
-      if (sendTo != null) 'send_to': sendTo, // NEW
+      // Only include send_to if it's not null (for manager communication)
+      if (sendTo != null) 'send_to': sendTo,
     };
   }
 }

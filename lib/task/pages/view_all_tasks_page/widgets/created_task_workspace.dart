@@ -83,29 +83,30 @@ class _CreatedTaskWorkspaceState extends State<CreatedTaskWorkspace> {
   }
 
   Widget buildManagerChat() {
-    // Manager chats with LEAD only using assigned_by_chat
-    if (!widget.task.hasLead) {
-      return const Center(
-        child: Text(
-          'No lead assigned to this task',
-          style: TextStyle(color: Colors.white70),
-        ),
-      );
-    }
-
-    final conversation = ChatConversation(
-      conversationId: widget.task.docId,
-      taskTitle: widget.task.title,
-      assignedByUid: widget.currentUserUid,  // You are the manager
-      assignedToUids: widget.task.assignedToUids,
-      leadMemberUid: widget.task.leadMemberId,
-    );
-
-    return ChatShell(
-      tenantId: widget.tenantId,
-      conversation: conversation,
-      channel: ChatChannel.assignedBy,  // Manager <-> Lead channel
-      currentUserId: widget.currentUserUid,
+  // Manager chats with LEAD only using manager_communication_chat
+  if (!widget.task.hasLead) {
+    return const Center(
+      child: Text(
+        'No lead assigned to this task',
+        style: TextStyle(color: Colors.white70),
+      ),
     );
   }
+
+  final conversation = ChatConversation(
+    conversationId: widget.task.docId,
+    taskTitle: widget.task.title,
+    assignedByUid: widget.currentUserUid, // You are the manager
+    assignedToUids: widget.task.assignedToUids,
+    leadMemberUid: widget.task.leadMemberId,
+  );
+
+  return ChatShell(
+    tenantId: widget.tenantId,
+    conversation: conversation,
+    channel: ChatChannel.managerCommunication, // ✅ FIXED: Changed from assignedByUid
+    currentUserId: widget.currentUserUid,
+  );
+}
+
 }
