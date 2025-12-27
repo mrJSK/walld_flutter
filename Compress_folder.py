@@ -36,7 +36,7 @@ def zip_folder(source_folder, output_path):
 
 # === CONFIGURATION - SET YOUR PATHS HERE ===
 SOURCE_FOLDER_PATH = r"F:\WALLD_Flutter\walld_flutter\build\windows\x64\runner\Release"  # Folder to compress (CHANGE THIS)
-OUTPUT_ZIP_PATH = r"F:\WALLD_Flutter\walld_flutter"       # Where to save the zip (CHANGE THIS)
+OUTPUT_ZIP_PATH = r"F:\WALLD_Flutter\walld_flutter\APP_BUILDS_ZIP"       # Where to save the zip (CHANGE THIS)
 
 # Run the zipping process
 if __name__ == "__main__":
