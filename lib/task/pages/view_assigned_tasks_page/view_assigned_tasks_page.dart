@@ -38,7 +38,7 @@ class _ViewAssignedTasksPageState extends State<ViewAssignedTasksPage> {
         .collection('tenants')
         .doc(ViewAssignedTasksPage.tenantId)
         .collection('tasks')
-        .orderBy('created_at', descending: true)
+        .orderBy('createdat', descending: true)
         .snapshots();
 
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
@@ -61,7 +61,7 @@ class _ViewAssignedTasksPageState extends State<ViewAssignedTasksPage> {
         // Filter tasks where current uid is in assigned_to (comma-separated)
         final myTasks = allDocs.where((doc) {
           final data = doc.data();
-          final assignedTo = (data['assigned_to'] ?? '') as String;
+          final assignedTo = (data['assignedto'] ?? '') as String;
           if (assignedTo.isEmpty) return false;
           final assignees =
               assignedTo.split(',').map((s) => s.trim()).toList();

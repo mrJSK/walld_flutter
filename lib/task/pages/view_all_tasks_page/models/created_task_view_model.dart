@@ -32,14 +32,14 @@ class CreatedTaskViewModel {
     final status = data['status'] as String? ?? 'PENDING';
     
     // Safe priority extraction
-    final customFields = data['custom_fields'];
+    final customFields = data['customfields'];
     String priority = '';
     if (customFields != null && customFields is Map) {
       priority = customFields['priority'] as String? ?? '';
     }
     
     // Safe due date parsing
-    final dueIso = data['due_date'] as String? ?? '';
+    final dueIso = data['duedate'] as String? ?? '';
     DateTime? due;
     if (dueIso.isNotEmpty) {
       try {
@@ -49,11 +49,11 @@ class CreatedTaskViewModel {
       }
     }
 
-    final groupName = data['group_name'] as String? ?? '';
+    final groupName = data['groupname'] as String? ?? '';
     
     // FIXED: Safe list handling for assigned_to
     List<String> assignedToUids = [];
-    final assignedTo = data['assigned_to'];
+    final assignedTo = data['assignedto'];
     
     if (assignedTo != null) {
       if (assignedTo is String) {
@@ -75,7 +75,7 @@ class CreatedTaskViewModel {
     }
     
     final assigneeCount = assignedToUids.length;
-    final leadMemberId = data['lead_member'] as String?;
+    final leadMemberId = data['leadmember'] as String?;
 
     return CreatedTaskViewModel(
       docId: docId,

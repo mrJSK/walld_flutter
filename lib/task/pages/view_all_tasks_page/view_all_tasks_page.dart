@@ -37,8 +37,8 @@ Widget build(BuildContext context) {
       .collection('tenants')
       .doc(ViewAllTasksPage.tenantId)
       .collection('tasks')
-      .where('assigned_by', isEqualTo: uid)
-      .orderBy('created_at', descending: true)
+      .where('assignedby', isEqualTo: uid)
+      .orderBy('createdat', descending: true)
       .snapshots();
 
   return StreamBuilder<QuerySnapshot>(
