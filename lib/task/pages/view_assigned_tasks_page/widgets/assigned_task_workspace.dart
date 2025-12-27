@@ -39,7 +39,6 @@ class _AssignedTaskWorkspaceState extends State<AssignedTaskWorkspace> {
     );
   }
 
-
   Widget _buildTopBar(bool isLead) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -179,83 +178,86 @@ class _AssignedTaskWorkspaceState extends State<AssignedTaskWorkspace> {
   }
 
   Widget _buildContent() {
-  switch (activeView) {
-    case 'manager':
-      return _buildManagerChat();
-    case 'team':
-      return _buildTeamChat();
-    default:
-      return TaskDetailsPanel(task: widget.task);
+    switch (activeView) {
+      case 'manager':
+        return _buildManagerChat();
+      case 'team':
+        return _buildTeamChat();
+      default:
+        return TaskDetailsPanel(
+          task: widget.task,
+          tenantId: widget.tenantId,
+        );
+    }
   }
-}
 
-Widget _buildManagerChat() {
-  // Only lead can access manager communication
-  if (!widget.task.isUserLead(widget.currentUserUid)) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.lock_outline,
-              size: 64,
-              color: Colors.white.withOpacity(0.2),
-            ),
-            const SizedBox(height: 16),
-            const Text(
-              'Only the lead member can communicate with the manager',
-              style: TextStyle(
-                color: Colors.white70,
-                fontSize: 16,
+  // ✅ MOVED INSIDE THE CLASS
+  Widget _buildManagerChat() {
+    // Only lead can access manager communication
+    if (!widget.task.isUserLead(widget.currentUserUid)) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.lock_outline,
+                size: 64,
+                color: Colors.white.withOpacity(0.2),
               ),
-              textAlign: TextAlign.center,
-            ),
-          ],
+              const SizedBox(height: 16),
+              const Text(
+                'Only the lead member can communicate with the manager',
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontSize: 16,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
         ),
+      );
+    }
+
+    final conversation = ChatConversation(
+      conversationId: widget.task.docId,
+      taskTitle: widget.task.title,
+      assignedByUid: widget.task.assignedByUid,
+      assignedToUids: widget.task.assignedToUids,
+      leadMemberUid: widget.task.leadMemberId,
+    );
+
+    return Padding(
+      padding: const EdgeInsets.all(16.0),
+      child: ChatShell(
+        tenantId: widget.tenantId,
+        conversation: conversation,
+        channel: ChatChannel.managerCommunication,
+        currentUserId: widget.currentUserUid,
       ),
     );
   }
 
-  final conversation = ChatConversation(
-    conversationId: widget.task.docId,
-    taskTitle: widget.task.title,
-    assignedByUid: widget.task.assignedByUid,
-    assignedToUids: widget.task.assignedToUids,
-    leadMemberUid: widget.task.leadMemberId,
-  );
+  // ✅ MOVED INSIDE THE CLASS
+  Widget _buildTeamChat() {
+    final conversation = ChatConversation(
+      conversationId: widget.task.docId,
+      taskTitle: widget.task.title,
+      assignedByUid: widget.task.assignedByUid,
+      assignedToUids: widget.task.assignedToUids,
+      leadMemberUid: widget.task.leadMemberId,
+    );
 
-  return Padding(
-    padding: const EdgeInsets.all(16.0),
-    child: ChatShell(
-      tenantId: widget.tenantId,
-      conversation: conversation,
-      channel: ChatChannel.managerCommunication,
-      currentUserId: widget.currentUserUid,
-    ),
-  );
-}
-
-Widget _buildTeamChat() {
-  final conversation = ChatConversation(
-    conversationId: widget.task.docId,
-    taskTitle: widget.task.title,
-    assignedByUid: widget.task.assignedByUid,
-    assignedToUids: widget.task.assignedToUids,
-    leadMemberUid: widget.task.leadMemberId,
-  );
-
-  return Padding(
-    padding: const EdgeInsets.all(16.0),
-    child: ChatShell(
-      tenantId: widget.tenantId,
-      conversation: conversation,
-      channel: ChatChannel.teamMembers,
-      currentUserId: widget.currentUserUid,
-    ),
-  );
-}
-
-}
-
+    return Padding(
+      padding: const EdgeInsets.all(16.0),
+      child: ChatShell(
+        tenantId: widget.tenantId,
+        conversation: conversation,
+        channel: ChatChannel.teamMembers,
+        currentUserId: widget.currentUserUid,
+      ),
+    );
+  }
+} // ✅ CLASS CLOSING BRACE HERE

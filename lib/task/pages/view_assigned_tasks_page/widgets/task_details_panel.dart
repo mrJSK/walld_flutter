@@ -1,13 +1,48 @@
 import 'package:flutter/material.dart';
 import '../models/assigned_task_view_model.dart';
+import '../../../utils/user_helper.dart';
 
-class TaskDetailsPanel extends StatelessWidget {
+class TaskDetailsPanel extends StatefulWidget {
   final AssignedTaskViewModel task;
+  final String tenantId;
 
   const TaskDetailsPanel({
     super.key,
     required this.task,
+    required this.tenantId,
   });
+
+  @override
+  State<TaskDetailsPanel> createState() => _TaskDetailsPanelState();
+}
+
+class _TaskDetailsPanelState extends State<TaskDetailsPanel> {
+  String? leadMemberName;
+  bool isLoadingLeadName = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchLeadMemberName();
+  }
+
+  Future<void> _fetchLeadMemberName() async {
+    if (widget.task.hasLead && widget.task.leadMemberId != null) {
+      setState(() => isLoadingLeadName = true);
+      
+      final name = await UserHelper.getUserDisplayName(
+        tenantId: widget.tenantId,
+        userId: widget.task.leadMemberId!,
+      );
+      
+      if (mounted) {
+        setState(() {
+          leadMemberName = name;
+          isLoadingLeadName = false;
+        });
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -28,7 +63,7 @@ class TaskDetailsPanel extends StatelessWidget {
           const SizedBox(height: 16),
 
           // Description
-          if (task.description.isNotEmpty) ...[
+          if (widget.task.description.isNotEmpty) ...[
             const Text(
               'Description',
               style: TextStyle(
@@ -39,18 +74,18 @@ class TaskDetailsPanel extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             Text(
-              task.description,
+              widget.task.description,
               style: const TextStyle(color: Colors.white),
             ),
             const SizedBox(height: 16),
           ],
 
           // Group Name
-          if (task.groupName.isNotEmpty) ...[
+          if (widget.task.groupName.isNotEmpty) ...[
             _buildInfoRow(
               icon: Icons.label_outline,
               label: 'Group',
-              value: task.groupName,
+              value: widget.task.groupName,
             ),
             const SizedBox(height: 12),
           ],
@@ -58,10 +93,10 @@ class TaskDetailsPanel extends StatelessWidget {
           // Status & Priority
           Row(
             children: [
-              _buildChip('Status', task.status, Colors.cyanAccent),
+              _buildChip('Status', widget.task.status, Colors.cyanAccent),
               const SizedBox(width: 8),
-              if (task.priority.isNotEmpty)
-                _buildChip('Priority', task.priority, Colors.deepOrangeAccent),
+              if (widget.task.priority.isNotEmpty)
+                _buildChip('Priority', widget.task.priority, Colors.deepOrangeAccent),
             ],
           ),
           const SizedBox(height: 16),
@@ -70,28 +105,65 @@ class TaskDetailsPanel extends StatelessWidget {
           _buildInfoRow(
             icon: Icons.people,
             label: 'Team Members',
-            value: '${task.assigneeCount} member(s)',
+            value: '${widget.task.assigneeCount} member(s)',
           ),
           const SizedBox(height: 12),
 
-          // Lead info
-          if (task.hasLead) ...[
-            _buildInfoRow(
-              icon: Icons.star,
-              label: 'Lead Member',
-              value: task.leadMemberId ?? 'Not assigned',
-              valueColor: Colors.amberAccent,
+          // Lead Member with name
+          if (widget.task.hasLead) ...[
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(
+                  Icons.star,
+                  size: 18,
+                  color: Colors.amberAccent,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Lead Member',
+                        style: TextStyle(
+                          color: Colors.white54,
+                          fontSize: 12,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      isLoadingLeadName
+                          ? const SizedBox(
+                              height: 14,
+                              width: 14,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation(Colors.amberAccent),
+                              ),
+                            )
+                          : Text(
+                              leadMemberName ?? widget.task.leadMemberId ?? 'Not assigned',
+                              style: const TextStyle(
+                                color: Colors.amberAccent,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                    ],
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 12),
           ],
 
           // Due date
-          if (task.dueDate != null) ...[
+          if (widget.task.dueDate != null) ...[
             _buildInfoRow(
               icon: Icons.calendar_today,
               label: 'Due Date',
-              value: _formatDueDate(task.dueDate!),
-              valueColor: _getDueDateColor(task.dueDate!),
+              value: _formatDueDate(widget.task.dueDate!),
+              valueColor: _getDueDateColor(widget.task.dueDate!),
             ),
           ],
         ],
