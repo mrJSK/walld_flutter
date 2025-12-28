@@ -396,7 +396,7 @@ extension ChatChannelExt on ChatChannel {
 ================================================================================
 
 // File: lib\chat\models\chat_conversation.dart
-// lib/chat/models/chat_conversation.dart
+import 'package:flutter/foundation.dart';
 
 /// Metadata about a conversation (task context)
 class ChatConversation {
@@ -418,14 +418,27 @@ class ChatConversation {
     this.dueDate,
   });
 
-  /// Helper: check if a user can send to assignedBy channel
+  /// Helper: check if a user can send to assignedBy channel (Manager Communication)
+  /// Only lead member OR manager can send
   bool canSendToAssignedByChannel(String currentUserUid) {
-    return currentUserUid == leadMemberUid || currentUserUid == assignedByUid;
+    final result = currentUserUid == leadMemberUid || currentUserUid == assignedByUid;
+    debugPrint('  canSendToAssignedByChannel: $result (current=$currentUserUid, lead=$leadMemberUid, manager=$assignedByUid)');
+    return result;
   }
 
-  /// Helper: check if a user can send to team members channel
+  /// Helper: check if a user can send to team members channel (Team Collaboration)
+  /// Any assigned team member OR lead member can send
   bool canSendToTeamChannel(String currentUserUid) {
-    return assignedToUids.contains(currentUserUid);
+    // Lead member can always send to team channel
+    if (currentUserUid == leadMemberUid) {
+      debugPrint('  ✅ User is lead member');
+      return true;
+    }
+    
+    // Any assigned team member can send
+    final isAssigned = assignedToUids.contains(currentUserUid);
+    debugPrint('  ${isAssigned ? "✅" : "❌"} User in assignedToUids: $isAssigned');
+    return isAssigned;
   }
 }
 
@@ -1344,6 +1357,7 @@ import '../repositories/chat_repository.dart';
 import '../services/chat_storage_uploader.dart';
 import 'chat_input_bar.dart';
 import 'message_list.dart';
+
 class ChatShell extends StatelessWidget {
   final String tenantId;
   final ChatConversation conversation;
@@ -1359,11 +1373,24 @@ class ChatShell extends StatelessWidget {
   });
 
   bool get canSend {
+    // DEBUG: Log permission check
+    debugPrint('🔐 ChatShell canSend check:');
+    debugPrint('  Channel: ${channel.displayName}');
+    debugPrint('  CurrentUserId: $currentUserId');
+    debugPrint('  AssignedByUid: ${conversation.assignedByUid}');
+    debugPrint('  LeadMemberUid: ${conversation.leadMemberUid}');
+    debugPrint('  AssignedToUids: ${conversation.assignedToUids}');
+
     switch (channel) {
       case ChatChannel.teamMembers:
-        return conversation.canSendToTeamChannel(currentUserId);
+        final result = conversation.canSendToTeamChannel(currentUserId);
+        debugPrint('  ✅ Team channel permission: $result');
+        return result;
+
       case ChatChannel.managerCommunication:
-        return conversation.canSendToAssignedByChannel(currentUserId);
+        final result = conversation.canSendToAssignedByChannel(currentUserId);
+        debugPrint('  ✅ Manager channel permission: $result');
+        return result;
     }
   }
 
@@ -1405,6 +1432,21 @@ class ChatShell extends StatelessWidget {
                     fontStyle: FontStyle.italic,
                   ),
                 ),
+              // DEBUG: Show permission details
+              if (!canSend)
+                Tooltip(
+                  message: 'Current: $currentUserId\n'
+                      'Lead: ${conversation.leadMemberUid}\n'
+                      'Assigned: ${conversation.assignedToUids}',
+                  child: const Padding(
+                    padding: EdgeInsets.only(left: 4),
+                    child: Icon(
+                      Icons.info_outline,
+                      size: 12,
+                      color: Colors.white24,
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
@@ -1438,13 +1480,11 @@ class ChatShell extends StatelessWidget {
                 );
               }
 
-              // In the MessageList widget call
               return MessageList(
                 messages: msgs,
                 currentUserId: currentUserId,
-                tenantId: tenantId, // ✅ ADD THIS
+                tenantId: tenantId,
               );
-
             },
           ),
         ),
@@ -1455,18 +1495,29 @@ class ChatShell extends StatelessWidget {
         ChatInputBar(
           enabled: canSend,
           hintText: hint,
-          onSendText: (text) => repo.sendTextMessage(
-            conversationId: conversation.conversationId,
-            channel: channel,
-            senderId: currentUserId,
-            senderRole: _roleForCurrentUser(),
-            text: text,
-            sendTo: _resolveSendTo(),
-          ),
+          onSendText: (text) async {
+            debugPrint('📤 Sending text message...');
+            debugPrint('  ConversationId: ${conversation.conversationId}');
+            debugPrint('  Channel: ${channel.firestoreCollection}');
+            debugPrint('  SenderId: $currentUserId');
+
+            await repo.sendTextMessage(
+              conversationId: conversation.conversationId,
+              channel: channel,
+              senderId: currentUserId,
+              senderRole: _roleForCurrentUser,
+              text: text,
+              sendTo: _resolveSendTo,
+            );
+
+            debugPrint('✅ Text message sent successfully');
+          },
           onSendAttachments: ({
             required List<ChatAttachment> attachments,
             String? text,
           }) async {
+            debugPrint('📎 Sending file message with ${attachments.length} attachments...');
+
             // 1. Upload local files (attachments[i].url = local path from picker)
             final uploadedAttachments = await ChatStorageUploader.uploadAll(
               tenantId: tenantId,
@@ -1474,31 +1525,32 @@ class ChatShell extends StatelessWidget {
               localAttachments: attachments,
             );
 
-            // 2. Save message in Firestore with ATTCHED_FILES using repository
+            // 2. Save message in Firestore with ATTCHEDFILES using repository
             await repo.sendFileMessage(
               conversationId: conversation.conversationId,
               channel: channel,
               senderId: currentUserId,
-              senderRole: _roleForCurrentUser(),
+              senderRole: _roleForCurrentUser,
               attachments: uploadedAttachments,
               text: text,
-              sendTo: _resolveSendTo(),
+              sendTo: _resolveSendTo,
             );
+
+            debugPrint('✅ File message sent successfully');
           },
         ),
-
       ],
     );
   }
 
-  String? _resolveSendTo() {
+  String? get _resolveSendTo {
     if (channel == ChatChannel.managerCommunication) {
       return conversation.assignedByUid;
     }
     return null;
   }
 
-  String _roleForCurrentUser() {
+  String get _roleForCurrentUser {
     if (currentUserId == conversation.assignedByUid) return 'manager';
     if (currentUserId == conversation.leadMemberUid) return 'lead';
     return 'member';
@@ -2165,7 +2217,6 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
-
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -2177,7 +2228,7 @@ class WallpaperService extends ChangeNotifier {
   static final WallpaperService instance = WallpaperService._();
   WallpaperService._();
 
-  static const _prefsWallpaperKey = 'wallpaper_path';
+  static const prefsWallpaperKey = 'wallpaper_path';
   static const prefsGlobalOpacityKey = 'global_widget_opacity';
   static const prefsGlobalBlurKey = 'global_widget_blur';
 
@@ -2187,18 +2238,19 @@ class WallpaperService extends ChangeNotifier {
   bool isLoaded = false;
 
   ui.Image? _cachedDecodedImage;
-  ImageProvider? cachedImageProvider;
+  ImageProvider? _cachedImageProvider;
   DateTime _lastNotify = DateTime.fromMillisecondsSinceEpoch(0);
 
+  /// Load settings from cache (called once at startup)
   Future<void> loadSettings() async {
     if (isLoaded) return;
 
     final prefs = await SharedPreferences.getInstance();
-    wallpaperPath = prefs.getString(_prefsWallpaperKey);
+    wallpaperPath = prefs.getString(prefsWallpaperKey);
     globalGlassOpacity = prefs.getDouble(prefsGlobalOpacityKey) ?? 0.12;
     globalGlassBlur = prefs.getDouble(prefsGlobalBlurKey) ?? 16.0;
 
-    debugPrint('✅ [GLASS] Loaded from cache: blur=$globalGlassBlur, opacity=$globalGlassOpacity');
+    debugPrint('💎 GLASS: Loaded from cache → blur=$globalGlassBlur, opacity=$globalGlassOpacity');
 
     if (wallpaperPath != null && File(wallpaperPath!).existsSync()) {
       await _precacheWallpaper();
@@ -2210,19 +2262,74 @@ class WallpaperService extends ChangeNotifier {
     _notifyNow();
   }
 
+  /// Save ALL settings (wallpaper + glass)
   Future<void> saveSettings() async {
     final prefs = await SharedPreferences.getInstance();
+
     if (wallpaperPath != null) {
-      await prefs.setString(_prefsWallpaperKey, wallpaperPath!);
+      await prefs.setString(prefsWallpaperKey, wallpaperPath!);
     } else {
-      await prefs.remove(_prefsWallpaperKey);
+      await prefs.remove(prefsWallpaperKey);
     }
+
     await prefs.setDouble(prefsGlobalOpacityKey, globalGlassOpacity);
     await prefs.setDouble(prefsGlobalBlurKey, globalGlassBlur);
-    debugPrint('💾 [GLASS] Full settings saved: blur=$globalGlassBlur, opacity=$globalGlassOpacity');
+
+    debugPrint('💾 GLASS: Full settings saved → blur=$globalGlassBlur, opacity=$globalGlassOpacity');
     _notifyNow();
   }
 
+  /// FIXED: Blur setter with AWAITED save
+  void setGlassBlur(double blur) {
+    final oldBlur = globalGlassBlur;
+    final clampedBlur = blur.clamp(0.0, 40.0);
+
+    // Block performance overrides that reset to 0.0
+    if (clampedBlur == 0.0 && oldBlur > 5.0) {
+      debugPrint('🛡️ GLASS PROTECTED: Blocked blur=0.0, keeping $oldBlur (throttledNotify)');
+      return; // BLOCK IT!
+    }
+
+    globalGlassBlur = clampedBlur;
+    debugPrint('💎 GLASS: Blur → $globalGlassBlur');
+    _throttledNotify();
+    
+    // FIXED: Now properly awaited via scheduleMicrotask
+    scheduleMicrotask(() => _saveGlassSettingsOnly());
+  }
+
+  /// FIXED: Opacity setter with AWAITED save
+  void setGlassOpacity(double opacity) {
+    final oldOpacity = globalGlassOpacity;
+    final clampedOpacity = opacity.clamp(0.02, 0.40);
+
+    // Block performance overrides that reset to 0.04
+    if (clampedOpacity < 0.05 && oldOpacity > 0.10) {
+      debugPrint('🛡️ GLASS PROTECTED: Blocked opacity=$clampedOpacity, keeping $oldOpacity (throttledNotify)');
+      return; // BLOCK IT!
+    }
+
+    globalGlassOpacity = clampedOpacity;
+    debugPrint('💎 GLASS: Opacity → $globalGlassOpacity');
+    _throttledNotify();
+    
+    // FIXED: Now properly awaited via scheduleMicrotask
+    scheduleMicrotask(() => _saveGlassSettingsOnly());
+  }
+
+  /// FIXED: Fast save only glass settings (now with better error handling)
+  Future<void> _saveGlassSettingsOnly() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setDouble(prefsGlobalOpacityKey, globalGlassOpacity);
+      await prefs.setDouble(prefsGlobalBlurKey, globalGlassBlur);
+      debugPrint('✅ GLASS: Saved to cache → blur=$globalGlassBlur, opacity=$globalGlassOpacity');
+    } catch (e) {
+      debugPrint('❌ GLASS: Save failed → $e');
+    }
+  }
+
+  /// Pick wallpaper
   Future<void> pickWallpaper() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.image,
@@ -2239,61 +2346,12 @@ class WallpaperService extends ChangeNotifier {
     await saveSettings();
   }
 
+  /// Reset wallpaper
   Future<void> resetWallpaper() async {
     wallpaperPath = null;
-    cachedImageProvider = null;
+    _cachedImageProvider = null;
     _cachedDecodedImage = null;
     await saveSettings();
-  }
-
-  // In lib/core/wallpaper_service.dart - Replace the setters:
-
-void setGlassBlur(double blur) {
-  final oldBlur = globalGlassBlur;
-  final clampedBlur = blur.clamp(0.0, 40.0);
-  
-  // 🛡️ BLOCK performance overrides that reset to 0.0
-  if (clampedBlur == 0.0 && oldBlur > 5.0) {
-    debugPrint('🛡️ [GLASS PROTECTED] Blocked blur=0.0 → keeping $oldBlur');
-    _throttledNotify();
-    return; // BLOCK IT!
-  }
-  
-  globalGlassBlur = clampedBlur;
-  debugPrint('🔵 [GLASS] Blur → $globalGlassBlur');
-  _throttledNotify();
-  unawaited(_saveGlassSettingsOnly());
-}
-
-void setGlassOpacity(double opacity) {
-  final oldOpacity = globalGlassOpacity;
-  final clampedOpacity = opacity.clamp(0.02, 0.40);
-  
-  // 🛡️ BLOCK performance overrides that reset to 0.04
-  if (clampedOpacity <= 0.05 && oldOpacity > 0.10) {
-    debugPrint('🛡️ [GLASS PROTECTED] Blocked opacity=$clampedOpacity → keeping $oldOpacity');
-    _throttledNotify();
-    return; // BLOCK IT!
-  }
-  
-  globalGlassOpacity = clampedOpacity;
-  debugPrint('🔵 [GLASS] Opacity → $globalGlassOpacity');
-  _throttledNotify();
-  unawaited(_saveGlassSettingsOnly());
-}
-
-
-
-  // ✅ NEW: Fast save (only glass settings, not wallpaper)
-  Future<void> _saveGlassSettingsOnly() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setDouble(prefsGlobalOpacityKey, globalGlassOpacity);
-      await prefs.setDouble(prefsGlobalBlurKey, globalGlassBlur);
-      debugPrint('✅ [GLASS] Saved to cache: blur=$globalGlassBlur, opacity=$globalGlassOpacity');
-    } catch (e) {
-      debugPrint('❌ [GLASS] Save failed: $e');
-    }
   }
 
   void _throttledNotify() {
@@ -2315,17 +2373,17 @@ void setGlassOpacity(double opacity) {
     final file = File(path);
     if (!file.existsSync()) {
       wallpaperPath = null;
-      cachedImageProvider = null;
+      _cachedImageProvider = null;
       _cachedDecodedImage = null;
       return;
     }
 
     try {
-      cachedImageProvider = FileImage(file);
-      final imageStream = cachedImageProvider!.resolve(const ImageConfiguration());
+      _cachedImageProvider = FileImage(file);
+      final imageStream = _cachedImageProvider!.resolve(const ImageConfiguration());
       final completer = Completer<void>();
-      late final ImageStreamListener listener;
 
+      late final ImageStreamListener listener;
       listener = ImageStreamListener(
         (ImageInfo info, bool _) {
           _cachedDecodedImage = info.image;
@@ -2334,7 +2392,7 @@ void setGlassOpacity(double opacity) {
         },
         onError: (_, __) {
           imageStream.removeListener(listener);
-          cachedImageProvider = null;
+          _cachedImageProvider = null;
           _cachedDecodedImage = null;
           completer.complete();
         },
@@ -2342,16 +2400,16 @@ void setGlassOpacity(double opacity) {
 
       imageStream.addListener(listener);
       await completer.future;
-    } catch (_) {
-      cachedImageProvider = null;
+    } catch (e) {
+      _cachedImageProvider = null;
       _cachedDecodedImage = null;
     }
   }
 
   Future<String> _copyAndNormalizeWallpaper(
-    String pickedPath, [
+    String pickedPath, {
     int maxDimension = 2560,
-  ]) async {
+  }) async {
     final appDir = await getApplicationSupportDirectory();
     final wpDir = Directory(p.join(appDir.path, 'wallpapers'));
     if (!await wpDir.exists()) {
@@ -2368,16 +2426,15 @@ void setGlassOpacity(double opacity) {
 
       final srcW = img.width;
       final srcH = img.height;
-
       final scale = math.min(
         1.0,
         maxDimension / math.max(srcW.toDouble(), srcH.toDouble()),
       );
+
       final targetW = (srcW * scale).round();
       final targetH = (srcH * scale).round();
 
       ui.Image outImage = img;
-
       if (scale < 1.0) {
         codec.dispose();
         final codec2 = await ui.instantiateImageCodec(
@@ -2416,10 +2473,10 @@ void setGlassOpacity(double opacity) {
   }
 
   BoxDecoration get backgroundDecoration {
-    if (cachedImageProvider != null && _cachedDecodedImage != null) {
+    if (_cachedImageProvider != null && _cachedDecodedImage != null) {
       return BoxDecoration(
         image: DecorationImage(
-          image: cachedImageProvider!,
+          image: _cachedImageProvider!,
           fit: BoxFit.cover,
         ),
       );
@@ -2429,22 +2486,27 @@ void setGlassOpacity(double opacity) {
       gradient: LinearGradient(
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,
-        colors: [Color(0xFF050716), Color(0xFF020308)],
+        colors: [
+          Color(0xFF050716),
+          Color(0xFF020308),
+        ],
       ),
     );
   }
 
-  // Legacy method (kept for backward compatibility)
+  /// Legacy method (kept for backward compatibility)
   Future<void> updateGlass({
     required double blur,
     required double opacity,
   }) async {
     globalGlassBlur = blur.clamp(0.0, 30.0);
     globalGlassOpacity = opacity.clamp(0.0, 1.0);
+
     final prefs = await SharedPreferences.getInstance();
     await prefs.setDouble(prefsGlobalBlurKey, globalGlassBlur);
     await prefs.setDouble(prefsGlobalOpacityKey, globalGlassOpacity);
-    debugPrint('💾 [GLASS] Legacy updateGlass() saved: blur=$globalGlassBlur, opacity=$globalGlassOpacity');
+
+    debugPrint('💾 GLASS: Legacy updateGlass saved → blur=$globalGlassBlur, opacity=$globalGlassOpacity');
     notifyListeners();
   }
 }
@@ -12386,7 +12448,6 @@ Widget build(BuildContext context) {
                 ? buildEmptyWorkspace()
                 : CreatedTaskWorkspace(
                     task: selectedTask!,
-                    currentUserUid: uid,
                     tenantId: ViewAllTasksPage.tenantId,
                     onBack: () {
                       setState(() => selectedTask = null);
@@ -12958,7 +13019,10 @@ class CreatedTaskList extends StatelessWidget {
 ================================================================================
 
 // File: lib\task\pages\view_all_tasks_page\widgets\created_task_workspace.dart
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+
 import '../../../../chat/models/chat_channel.dart';
 import '../../../../chat/models/chat_conversation.dart';
 import '../../../../chat/widgets/chat_shell.dart';
@@ -12967,14 +13031,12 @@ import 'manager_task_details_panel.dart';
 
 class CreatedTaskWorkspace extends StatefulWidget {
   final CreatedTaskViewModel task;
-  final String currentUserUid;
   final String tenantId;
   final VoidCallback onBack;
 
   const CreatedTaskWorkspace({
     super.key,
     required this.task,
-    required this.currentUserUid,
     required this.tenantId,
     required this.onBack,
   });
@@ -12983,188 +13045,166 @@ class CreatedTaskWorkspace extends StatefulWidget {
   State<CreatedTaskWorkspace> createState() => _CreatedTaskWorkspaceState();
 }
 
-class _CreatedTaskWorkspaceState extends State<CreatedTaskWorkspace>
-    with SingleTickerProviderStateMixin {
-  late final TabController _tabController;
-  late final ChatConversation _conversation;
-  late final bool _showBothTabs;
+class _CreatedTaskWorkspaceState extends State<CreatedTaskWorkspace> {
+  String activeView = 'details'; // details | manager
 
-  @override
-  void initState() {
-    super.initState();
-
-    // ✅ Show both tabs only if assigneeCount > 1
-    _showBothTabs = widget.task.assigneeCount > 1;
-
-    _tabController = TabController(
-      length: _showBothTabs ? 2 : 1,
-      vsync: this,
-    );
-
-    _conversation = ChatConversation(
-      conversationId: widget.task.docId,
-      taskTitle: widget.task.title,
-      assignedByUid: widget.currentUserUid,
-      assignedToUids: widget.task.assignedToUids,
-      leadMemberUid: widget.task.leadMemberId,
-      groupName: widget.task.groupName,
-      dueDate: widget.task.dueDate,
-    );
-
-    debugPrint(
-        'WORKSPACE: assigneeCount=${widget.task.assigneeCount}, '
-        'showBothTabs=$_showBothTabs');
-  }
-
-  @override
-  void dispose() {
-    _tabController.dispose();
-    super.dispose();
-  }
+  String get currentUserUid => FirebaseAuth.instance.currentUser?.uid ?? '';
 
   @override
   Widget build(BuildContext context) {
+    return Column(
+      children: [
+        _buildTopBar(),
+        const Divider(color: Colors.white24, height: 1),
+        Expanded(child: _buildContent()),
+      ],
+    );
+  }
+
+  Widget _buildTopBar() {
     return Container(
-      decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.3),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white.withOpacity(0.1)),
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Header with back button
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Row(
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.arrow_back, color: Colors.white),
-                  onPressed: widget.onBack,
-                ),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        widget.task.title,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      if (widget.task.groupName.isNotEmpty)
-                        Text(
-                          widget.task.groupName,
-                          style: const TextStyle(
-                            color: Colors.white60,
-                            fontSize: 13,
-                          ),
-                        ),
-                    ],
+          // Header row with back button and title
+          Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.arrow_back, color: Colors.cyan),
+                onPressed: widget.onBack,
+                tooltip: 'Back',
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  widget.task.title.isEmpty ? 'TASK' : widget.task.title.toUpperCase(),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 0.5,
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
+          
+          const SizedBox(height: 16),
 
-          // Tab bar (only show if both tabs are needed)
-          if (_showBothTabs)
-            TabBar(
-              controller: _tabController,
-              indicatorColor: Colors.cyanAccent,
-              labelColor: Colors.cyanAccent,
-              unselectedLabelColor: Colors.white60,
-              tabs: const [
-                Tab(
-                  icon: Icon(Icons.info_outline),
-                  text: 'Task Details',
-                ),
-                Tab(
-                  icon: Icon(Icons.people),
-                  text: 'Team Collaboration',
-                ),
-              ],
-            )
-          else
-            Container(
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              decoration: const BoxDecoration(
-                border: Border(
-                  bottom: BorderSide(color: Colors.white12),
+          // Tab buttons
+          Row(
+            children: [
+              Expanded(
+                child: _buildTabButton(
+                  icon: Icons.info_outline,
+                  label: 'Task Details',
+                  isActive: activeView == 'details',
+                  onTap: () => setState(() => activeView = 'details'),
                 ),
               ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: const [
-                  Icon(Icons.info_outline, color: Colors.cyanAccent, size: 20),
-                  SizedBox(width: 8),
-                  Text(
-                    'Task Details',
-                    style: TextStyle(
-                      color: Colors.cyanAccent,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildTabButton(
+                  icon: Icons.support_agent,
+                  label: 'Manager Communication',
+                  isActive: activeView == 'manager',
+                  onTap: () => setState(() => activeView = 'manager'),
+                  activeColor: Colors.greenAccent,
+                ),
               ),
-            ),
-
-          const Divider(color: Colors.white12, height: 1),
-
-          // Content
-          Expanded(
-            child: _showBothTabs
-                ? TabBarView(
-                    controller: _tabController,
-                    children: [
-                      // Tab 1: Task Details + Manager Chat
-                      _buildManagerChatTab(),
-
-                      // Tab 2: Team Collaboration Chat
-                      ChatShell(
-                        tenantId: widget.tenantId,
-                        conversation: _conversation,
-                        channel: ChatChannel.teamMembers,
-                        currentUserId: widget.currentUserUid,
-                      ),
-                    ],
-                  )
-                : _buildManagerChatTab(), // Single member: only manager chat
+            ],
           ),
         ],
       ),
     );
   }
 
-  Widget _buildManagerChatTab() {
-    return Row(
-      children: [
-        // Left: Task details panel
-        Expanded(
-          flex: 2,
-          child: ManagerTaskDetailsPanel(
-            task: widget.task,
-            tenantId: widget.tenantId,
+  Widget _buildTabButton({
+    required IconData icon,
+    required String label,
+    required bool isActive,
+    required VoidCallback onTap,
+    Color activeColor = Colors.cyanAccent,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeInOut,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: isActive
+              ? activeColor.withOpacity(0.15)
+              : Colors.white.withOpacity(0.05),
+          borderRadius: BorderRadius.circular(30),
+          border: Border.all(
+            color: isActive ? activeColor : Colors.white.withOpacity(0.2),
+            width: isActive ? 2 : 1,
           ),
         ),
-
-        const VerticalDivider(color: Colors.white12, width: 1),
-
-        // Right: Manager communication chat
-        Expanded(
-          flex: 3,
-          child: ChatShell(
-            tenantId: widget.tenantId,
-            conversation: _conversation,
-            channel: ChatChannel.managerCommunication,
-            currentUserId: widget.currentUserUid,
-          ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              color: isActive ? activeColor : Colors.white60,
+              size: 20,
+            ),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: isActive ? activeColor : Colors.white60,
+                  fontSize: 14,
+                  fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
+                ),
+              ),
+            ),
+          ],
         ),
-      ],
+      ),
+    );
+  }
+
+  Widget _buildContent() {
+    switch (activeView) {
+      case 'manager':
+        return _buildManagerCommunication();
+
+      case 'details':
+      default:
+        return ManagerTaskDetailsPanel(
+          task: widget.task,
+          tenantId: widget.tenantId,
+        );
+    }
+  }
+
+  Widget _buildManagerCommunication() {
+    final conversation = ChatConversation(
+      conversationId: widget.task.docId,
+      taskTitle: widget.task.title,
+      assignedByUid: currentUserUid,
+      assignedToUids: widget.task.assignedToUids,
+      leadMemberUid: widget.task.leadMemberId,
+      groupName: widget.task.groupName,
+      dueDate: widget.task.dueDate,
+    );
+
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: ChatShell(
+        tenantId: widget.tenantId,
+        conversation: conversation,
+        channel: ChatChannel.managerCommunication,
+        currentUserId: currentUserUid,
+      ),
     );
   }
 }
@@ -13562,7 +13602,6 @@ class _ViewAssignedTasksPageState extends State<ViewAssignedTasksPage> {
                   ? _buildEmptyWorkspace()
                   : AssignedTaskWorkspace(
                       task: _selectedTask!,
-                      currentUserUid: uid,
                       tenantId: ViewAssignedTasksPage.tenantId,
                       onBack: () {
                         setState(() => _selectedTask = null);
@@ -14164,23 +14203,26 @@ class AssignedTaskList extends StatelessWidget {
 ================================================================================
 
 // File: lib\task\pages\view_assigned_tasks_page\widgets\assigned_task_workspace.dart
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:walld_flutter/task/pages/view_assigned_tasks_page/widgets/task_details_panel.dart';
+
 import '../../../../chat/models/chat_channel.dart';
 import '../../../../chat/models/chat_conversation.dart';
 import '../../../../chat/widgets/chat_shell.dart';
 import '../models/assigned_task_view_model.dart';
+import 'task_details_panel.dart';
+
+enum TaskRole { manager, lead, member }
 
 class AssignedTaskWorkspace extends StatefulWidget {
   final AssignedTaskViewModel task;
-  final String currentUserUid;
   final String tenantId;
   final VoidCallback onBack;
 
   const AssignedTaskWorkspace({
     super.key,
     required this.task,
-    required this.currentUserUid,
     required this.tenantId,
     required this.onBack,
   });
@@ -14190,151 +14232,183 @@ class AssignedTaskWorkspace extends StatefulWidget {
 }
 
 class _AssignedTaskWorkspaceState extends State<AssignedTaskWorkspace> {
-  String activeView = 'details'; // 'details', 'manager', 'team'
+  String activeView = 'details'; // details | manager | team
+
+  String get currentUserUid => FirebaseAuth.instance.currentUser?.uid ?? '';
+
+  TaskRole get role {
+    if (currentUserUid == widget.task.assignedByUid) {
+      return TaskRole.manager;
+    }
+    if (widget.task.isUserLead(currentUserUid)) {
+      return TaskRole.lead;
+    }
+    return TaskRole.member;
+  }
+
+  bool get showManagerComm =>
+      role == TaskRole.manager || role == TaskRole.lead;
+
+  bool get showTeamCollab => role == TaskRole.lead || role == TaskRole.member;
+
+  @override
+  void initState() {
+    super.initState();
+    _validateActiveView();
+  }
+
+  void _validateActiveView() {
+    if (!showManagerComm && activeView == 'manager') {
+      activeView = 'details';
+    }
+    if (!showTeamCollab && activeView == 'team') {
+      activeView = 'details';
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final isLead = widget.task.isUserLead(widget.currentUserUid);
-
     return Column(
       children: [
-        _buildTopBar(isLead),
+        _buildTopBar(),
         const Divider(color: Colors.white24, height: 1),
         Expanded(child: _buildContent()),
       ],
     );
   }
 
-  Widget _buildTopBar(bool isLead) {
+  Widget _buildTopBar() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Header row with back button and title
           Row(
             children: [
               IconButton(
                 icon: const Icon(Icons.arrow_back, color: Colors.cyan),
                 onPressed: widget.onBack,
+                tooltip: 'Back',
               ),
               const SizedBox(width: 8),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      widget.task.title.isEmpty ? 'Task' : widget.task.title,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    if (isLead)
-                      Container(
-                        margin: const EdgeInsets.only(top: 4),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.amber.withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.amber.withOpacity(0.5)),
-                        ),
-                        child: const Text(
-                          'YOU ARE THE LEAD',
-                          style: TextStyle(
-                            color: Colors.amber,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: _buildActionButton(
-                  icon: Icons.info_outline,
-                  label: 'Task Details',
-                  isActive: activeView == 'details',
-                  onTap: () => setState(() => activeView = 'details'),
-                ),
-              ),
-              const SizedBox(width: 8),
-              if (isLead)
-                Expanded(
-                  child: _buildActionButton(
-                    icon: Icons.support_agent,
-                    label: 'Manager Communication',
-                    isActive: activeView == 'manager',
-                    onTap: () => setState(() => activeView = 'manager'),
-                    color: Colors.cyanAccent,
+                child: Text(
+                  widget.task.title.isEmpty ? 'TASK' : widget.task.title.toUpperCase(),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 0.5,
                   ),
                 ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _buildActionButton(
-                  icon: Icons.groups,
-                  label: 'Team Collaboration',
-                  isActive: activeView == 'team',
-                  onTap: () => setState(() => activeView = 'team'),
-                  color: Colors.greenAccent,
-                ),
               ),
             ],
           ),
+          
+          const SizedBox(height: 16),
+
+          // Tab buttons (responsive to role)
+          _buildTabButtons(),
         ],
       ),
     );
   }
 
-  Widget _buildActionButton({
+  Widget _buildTabButtons() {
+    final List<Widget> buttons = [];
+
+    // Task Details (always visible)
+    buttons.add(
+      Expanded(
+        child: _buildTabButton(
+          icon: Icons.info_outline,
+          label: 'Task Details',
+          isActive: activeView == 'details',
+          onTap: () => setState(() => activeView = 'details'),
+        ),
+      ),
+    );
+
+    // Manager Communication (Manager + Lead)
+    if (showManagerComm) {
+      buttons.add(const SizedBox(width: 12));
+      buttons.add(
+        Expanded(
+          child: _buildTabButton(
+            icon: Icons.support_agent,
+            label: 'Manager Communication',
+            isActive: activeView == 'manager',
+            onTap: () => setState(() => activeView = 'manager'),
+            activeColor: Colors.cyanAccent,
+          ),
+        ),
+      );
+    }
+
+    // Team Collaboration (Lead + Members)
+    if (showTeamCollab) {
+      buttons.add(const SizedBox(width: 12));
+      buttons.add(
+        Expanded(
+          child: _buildTabButton(
+            icon: Icons.group,
+            label: 'Team Collaboration',
+            isActive: activeView == 'team',
+            onTap: () => setState(() => activeView = 'team'),
+            activeColor: Colors.greenAccent,
+          ),
+        ),
+      );
+    }
+
+    return Row(children: buttons);
+  }
+
+  Widget _buildTabButton({
     required IconData icon,
     required String label,
     required bool isActive,
     required VoidCallback onTap,
-    Color color = Colors.white70,
+    Color activeColor = Colors.cyanAccent,
   }) {
     return GestureDetector(
       onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeInOut,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(
           color: isActive
-              ? color.withOpacity(0.15)
+              ? activeColor.withOpacity(0.15)
               : Colors.white.withOpacity(0.05),
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(30),
           border: Border.all(
-            color: isActive ? color : Colors.white24,
+            color: isActive ? activeColor : Colors.white.withOpacity(0.2),
             width: isActive ? 2 : 1,
           ),
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
-          mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 16, color: isActive ? color : Colors.white54),
-            const SizedBox(width: 4),
+            Icon(
+              icon,
+              color: isActive ? activeColor : Colors.white60,
+              size: 20,
+            ),
+            const SizedBox(width: 8),
             Flexible(
               child: Text(
                 label,
-                style: TextStyle(
-                  color: isActive ? color : Colors.white54,
-                  fontSize: 10,
-                  fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
-                ),
-                textAlign: TextAlign.center,
-                maxLines: 2,
+                maxLines: 1,
                 overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: isActive ? activeColor : Colors.white60,
+                  fontSize: 14,
+                  fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
+                ),
               ),
             ),
           ],
@@ -14344,11 +14418,21 @@ class _AssignedTaskWorkspaceState extends State<AssignedTaskWorkspace> {
   }
 
   Widget _buildContent() {
+    if (!showManagerComm && activeView == 'manager') {
+      activeView = 'details';
+    }
+    if (!showTeamCollab && activeView == 'team') {
+      activeView = 'details';
+    }
+
     switch (activeView) {
       case 'manager':
-        return _buildManagerChat();
+        return _buildManagerCommunication();
+
       case 'team':
-        return _buildTeamChat();
+        return _buildTeamCollaboration();
+
+      case 'details':
       default:
         return TaskDetailsPanel(
           task: widget.task,
@@ -14357,76 +14441,50 @@ class _AssignedTaskWorkspaceState extends State<AssignedTaskWorkspace> {
     }
   }
 
-  // ✅ MOVED INSIDE THE CLASS
-  Widget _buildManagerChat() {
-    // Only lead can access manager communication
-    if (!widget.task.isUserLead(widget.currentUserUid)) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                Icons.lock_outline,
-                size: 64,
-                color: Colors.white.withOpacity(0.2),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'Only the lead member can communicate with the manager',
-                style: TextStyle(
-                  color: Colors.white70,
-                  fontSize: 16,
-                ),
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
+  Widget _buildManagerCommunication() {
     final conversation = ChatConversation(
       conversationId: widget.task.docId,
       taskTitle: widget.task.title,
       assignedByUid: widget.task.assignedByUid,
       assignedToUids: widget.task.assignedToUids,
       leadMemberUid: widget.task.leadMemberId,
+      groupName: widget.task.groupName,
+      dueDate: widget.task.dueDate,
     );
 
     return Padding(
-      padding: const EdgeInsets.all(16.0),
+      padding: const EdgeInsets.all(16),
       child: ChatShell(
         tenantId: widget.tenantId,
         conversation: conversation,
         channel: ChatChannel.managerCommunication,
-        currentUserId: widget.currentUserUid,
+        currentUserId: currentUserUid,
       ),
     );
   }
 
-  // ✅ MOVED INSIDE THE CLASS
-  Widget _buildTeamChat() {
+  Widget _buildTeamCollaboration() {
     final conversation = ChatConversation(
       conversationId: widget.task.docId,
       taskTitle: widget.task.title,
       assignedByUid: widget.task.assignedByUid,
       assignedToUids: widget.task.assignedToUids,
       leadMemberUid: widget.task.leadMemberId,
+      groupName: widget.task.groupName,
+      dueDate: widget.task.dueDate,
     );
 
     return Padding(
-      padding: const EdgeInsets.all(16.0),
+      padding: const EdgeInsets.all(16),
       child: ChatShell(
         tenantId: widget.tenantId,
         conversation: conversation,
         channel: ChatChannel.teamMembers,
-        currentUserId: widget.currentUserUid,
+        currentUserId: currentUserUid,
       ),
     );
   }
-} // ✅ CLASS CLOSING BRACE HERE
+}
 
 ================================================================================
 

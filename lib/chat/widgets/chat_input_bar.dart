@@ -41,42 +41,55 @@ class _ChatInputBarState extends State<ChatInputBar> {
   }
 
   /// ✅ FIXED: Main send handler
-  Future<void> _handleSend() async {
-    if (!widget.enabled || _sending) return;
-
-    // If files are selected, send them (with or without message)
-    if (_selectedFiles.isNotEmpty) {
-      await _sendFilesWithMessage();
-      return;
-    }
-
-    // Otherwise, send text only if not empty
-    final text = _controller.text.trim();
-    if (text.isNotEmpty) {
-      await _sendTextOnly(text);
-    }
+  // Add this at the TOP of handleSend, sendTextOnly, sendFilesWithMessage
+Future<void> _handleSend() async {
+  debugPrint('🔘 [ChatInputBar] SEND BUTTON CLICKED');
+  debugPrint('🔘 [ChatInputBar] enabled: ${widget.enabled}, sending: $_sending');
+  debugPrint('🔘 [ChatInputBar] selectedFiles: ${_selectedFiles.length}');
+  debugPrint('🔘 [ChatInputBar] text: "${_controller.text.trim()}"');
+  
+  if (!widget.enabled || _sending) {
+    debugPrint('🔘 [ChatInputBar] BLOCKED: disabled or sending');
+    return;
   }
 
-  Future<void> _sendTextOnly(String text) async {
-    setState(() => _sending = true);
-
-    try {
-      await widget.onSendText(text);
-      _controller.clear();
-    } catch (e) {
-      debugPrint('❌ Error sending text: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to send: $e'),
-            backgroundColor: Colors.redAccent,
-          ),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _sending = false);
-    }
+  if (_selectedFiles.isNotEmpty) {
+    debugPrint('🔘 [ChatInputBar] → sendFilesWithMessage');
+    await _sendFilesWithMessage();
+    return;
   }
+
+  final text = _controller.text.trim();
+  if (text.isNotEmpty) {
+    debugPrint('🔘 [ChatInputBar] → sendTextOnly: "$text"');
+    await _sendTextOnly(text);
+  } else {
+    debugPrint('🔘 [ChatInputBar] BLOCKED: no text or files');
+  }
+}
+
+Future<void> _sendTextOnly(String text) async {
+  debugPrint('📝 [ChatInputBar.sendTextOnly] START');
+  setState(() => _sending = true);
+  try {
+    debugPrint('📝 [ChatInputBar.sendTextOnly] CALLING onSendText');
+    await widget.onSendText(text);
+    debugPrint('📝 [ChatInputBar.sendTextOnly] onSendText SUCCESS');
+    _controller.clear();
+  } catch (e, st) {
+    debugPrint('❌ [ChatInputBar.sendTextOnly] ERROR: $e');
+    debugPrint('📍 [ChatInputBar.sendTextOnly] STACK: $st');
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to send: $e'), backgroundColor: Colors.redAccent),
+      );
+    }
+  } finally {
+    if (mounted) setState(() => _sending = false);
+    debugPrint('📝 [ChatInputBar.sendTextOnly] END');
+  }
+}
+
 
   Future<void> _sendFilesWithMessage() async {
     setState(() => _sending = true);
@@ -251,26 +264,33 @@ class _ChatInputBarState extends State<ChatInputBar> {
             const SizedBox(width: 8),
 
             // Send button - ALWAYS enabled if files or text present
+            // FIXED: Send button - Enable whenever input is enabled, not content-based
             IconButton(
-              onPressed: (widget.enabled &&
-                      !_sending &&
-                      (_selectedFiles.isNotEmpty ||
-                          _controller.text.trim().isNotEmpty))
-                  ? _handleSend
-                  : null,
+              onPressed: widget.enabled && !_sending
+                  ? () {
+                      debugPrint('🚀 [SendButton] CLICK DETECTED - onPressed ACTIVE');
+                      _handleSend();
+                    }
+                  : () {
+                      debugPrint('🚫 [SendButton] CLICK BLOCKED - enabled: ${widget.enabled}, sending: $_sending');
+                    },
               icon: _sending
                   ? const SizedBox(
                       width: 16,
                       height: 16,
                       child: CircularProgressIndicator(
                         strokeWidth: 2,
-                        valueColor:
-                            AlwaysStoppedAnimation<Color>(Colors.cyanAccent),
+                        valueColor: AlwaysStoppedAnimation<Color>(Colors.cyanAccent),
                       ),
                     )
-                  : const Icon(Icons.send_rounded, color: Colors.cyanAccent),
+                  : const Icon(
+                      Icons.send_rounded,
+                      color: Colors.cyanAccent,
+                    ),
               tooltip: 'Send',
             ),
+
+
           ],
         ),
       ],

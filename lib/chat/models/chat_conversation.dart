@@ -1,4 +1,4 @@
-// lib/chat/models/chat_conversation.dart
+import 'package:flutter/foundation.dart';
 
 /// Metadata about a conversation (task context)
 class ChatConversation {
@@ -20,13 +20,26 @@ class ChatConversation {
     this.dueDate,
   });
 
-  /// Helper: check if a user can send to assignedBy channel
+  /// Helper: check if a user can send to assignedBy channel (Manager Communication)
+  /// Only lead member OR manager can send
   bool canSendToAssignedByChannel(String currentUserUid) {
-    return currentUserUid == leadMemberUid || currentUserUid == assignedByUid;
+    final result = currentUserUid == leadMemberUid || currentUserUid == assignedByUid;
+    debugPrint('  canSendToAssignedByChannel: $result (current=$currentUserUid, lead=$leadMemberUid, manager=$assignedByUid)');
+    return result;
   }
 
-  /// Helper: check if a user can send to team members channel
+  /// Helper: check if a user can send to team members channel (Team Collaboration)
+  /// Any assigned team member OR lead member can send
   bool canSendToTeamChannel(String currentUserUid) {
-    return assignedToUids.contains(currentUserUid);
+    // Lead member can always send to team channel
+    if (currentUserUid == leadMemberUid) {
+      debugPrint('  ✅ User is lead member');
+      return true;
+    }
+    
+    // Any assigned team member can send
+    final isAssigned = assignedToUids.contains(currentUserUid);
+    debugPrint('  ${isAssigned ? "✅" : "❌"} User in assignedToUids: $isAssigned');
+    return isAssigned;
   }
 }

@@ -43,6 +43,14 @@ class ChatRepository {
     String? sendTo,
     MessageType type = MessageType.text,
   }) async {
+    debugPrint('🔥 [Repo.sendTextMessage] START');
+    debugPrint('🔥 [Repo] Tenant: $tenantId');
+    debugPrint('🔥 [Repo] Conversation: $conversationId');
+    debugPrint('🔥 [Repo] Channel: ${channel.firestoreCollection}');
+    debugPrint('🔥 [Repo] Sender: $senderId ($senderRole)');
+    debugPrint('🔥 [Repo] Text: "$text"');
+    debugPrint('🔥 [Repo] sendTo: $sendTo');
+
     try {
       final message = ChatMessage(
         id: '',
@@ -54,19 +62,21 @@ class ChatRepository {
         sendTo: sendTo,
       );
 
-      debugPrint('💬 Sending text message to Firestore...');
-      debugPrint('Path: tenants/$tenantId/CHATS/$conversationId/${channel.firestoreCollection}');
+      debugPrint('🔥 [Repo] Full Firestore path:');
+      final collection = _channelCollection(conversationId, channel);
+      debugPrint('🔥 [Repo] PATH: tenants/$tenantId/CHATS/$conversationId/${channel.firestoreCollection}');
+      
+      debugPrint('🔥 [Repo] Message data: ${message.toFirestore()}');
 
-      await _channelCollection(conversationId, channel)
-          .add(message.toFirestore());
-
-      debugPrint('✅ Text message saved to Firestore');
+      final docRef = await collection.add(message.toFirestore());
+      debugPrint('✅ [Repo.sendTextMessage] SUCCESS - DocID: ${docRef.id}');
     } catch (e, stackTrace) {
-      debugPrint('❌ Firestore error (text): $e');
-      debugPrint('Stack trace: $stackTrace');
+      debugPrint('❌ [Repo.sendTextMessage] FIRESTORE ERROR: $e');
+      debugPrint('📍 [Repo.sendTextMessage] FULL STACK: $stackTrace');
       rethrow;
     }
   }
+
 
   Future<void> sendFileMessage({
     required String conversationId,

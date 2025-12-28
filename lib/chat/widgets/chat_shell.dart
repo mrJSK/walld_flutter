@@ -7,6 +7,7 @@ import '../repositories/chat_repository.dart';
 import '../services/chat_storage_uploader.dart';
 import 'chat_input_bar.dart';
 import 'message_list.dart';
+
 class ChatShell extends StatelessWidget {
   final String tenantId;
   final ChatConversation conversation;
@@ -22,11 +23,24 @@ class ChatShell extends StatelessWidget {
   });
 
   bool get canSend {
+    // DEBUG: Log permission check
+    debugPrint('🔐 ChatShell canSend check:');
+    debugPrint('  Channel: ${channel.displayName}');
+    debugPrint('  CurrentUserId: $currentUserId');
+    debugPrint('  AssignedByUid: ${conversation.assignedByUid}');
+    debugPrint('  LeadMemberUid: ${conversation.leadMemberUid}');
+    debugPrint('  AssignedToUids: ${conversation.assignedToUids}');
+
     switch (channel) {
       case ChatChannel.teamMembers:
-        return conversation.canSendToTeamChannel(currentUserId);
+        final result = conversation.canSendToTeamChannel(currentUserId);
+        debugPrint('  ✅ Team channel permission: $result');
+        return result;
+
       case ChatChannel.managerCommunication:
-        return conversation.canSendToAssignedByChannel(currentUserId);
+        final result = conversation.canSendToAssignedByChannel(currentUserId);
+        debugPrint('  ✅ Manager channel permission: $result');
+        return result;
     }
   }
 
@@ -68,6 +82,21 @@ class ChatShell extends StatelessWidget {
                     fontStyle: FontStyle.italic,
                   ),
                 ),
+              // DEBUG: Show permission details
+              if (!canSend)
+                Tooltip(
+                  message: 'Current: $currentUserId\n'
+                      'Lead: ${conversation.leadMemberUid}\n'
+                      'Assigned: ${conversation.assignedToUids}',
+                  child: const Padding(
+                    padding: EdgeInsets.only(left: 4),
+                    child: Icon(
+                      Icons.info_outline,
+                      size: 12,
+                      color: Colors.white24,
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
@@ -101,13 +130,11 @@ class ChatShell extends StatelessWidget {
                 );
               }
 
-              // In the MessageList widget call
               return MessageList(
                 messages: msgs,
                 currentUserId: currentUserId,
-                tenantId: tenantId, // ✅ ADD THIS
+                tenantId: tenantId,
               );
-
             },
           ),
         ),
@@ -118,18 +145,38 @@ class ChatShell extends StatelessWidget {
         ChatInputBar(
           enabled: canSend,
           hintText: hint,
-          onSendText: (text) => repo.sendTextMessage(
-            conversationId: conversation.conversationId,
-            channel: channel,
-            senderId: currentUserId,
-            senderRole: _roleForCurrentUser(),
-            text: text,
-            sendTo: _resolveSendTo(),
-          ),
+          onSendText: (text) async {
+            debugPrint('📤 [ChatShell.onSendText] START: "$text"');
+            debugPrint('📤 [ChatShell] TenantId: $tenantId');
+            debugPrint('📤 [ChatShell] ConversationId: ${conversation.conversationId}');
+            debugPrint('📤 [ChatShell] Channel: ${channel.displayName} (${channel.firestoreCollection})');
+            debugPrint('📤 [ChatShell] CurrentUserId: $currentUserId');
+            debugPrint('📤 [ChatShell] Role: $_roleForCurrentUser');
+            debugPrint('📤 [ChatShell] sendTo: ${_resolveSendTo}');
+
+            try {
+              await repo.sendTextMessage(
+                conversationId: conversation.conversationId,
+                channel: channel,
+                senderId: currentUserId,
+                senderRole: _roleForCurrentUser,
+                text: text,
+                sendTo: _resolveSendTo,
+              );
+              debugPrint('✅ [ChatShell.onSendText] SUCCESS');
+            } catch (e, st) {
+              debugPrint('❌ [ChatShell.onSendText] FAILED: $e');
+              debugPrint('📍 [ChatShell.onSendText] STACK: $st');
+              rethrow;
+            }
+          },
+
           onSendAttachments: ({
             required List<ChatAttachment> attachments,
             String? text,
           }) async {
+            debugPrint('📎 Sending file message with ${attachments.length} attachments...');
+
             // 1. Upload local files (attachments[i].url = local path from picker)
             final uploadedAttachments = await ChatStorageUploader.uploadAll(
               tenantId: tenantId,
@@ -137,31 +184,32 @@ class ChatShell extends StatelessWidget {
               localAttachments: attachments,
             );
 
-            // 2. Save message in Firestore with ATTCHED_FILES using repository
+            // 2. Save message in Firestore with ATTCHEDFILES using repository
             await repo.sendFileMessage(
               conversationId: conversation.conversationId,
               channel: channel,
               senderId: currentUserId,
-              senderRole: _roleForCurrentUser(),
+              senderRole: _roleForCurrentUser,
               attachments: uploadedAttachments,
               text: text,
-              sendTo: _resolveSendTo(),
+              sendTo: _resolveSendTo,
             );
+
+            debugPrint('✅ File message sent successfully');
           },
         ),
-
       ],
     );
   }
 
-  String? _resolveSendTo() {
+  String? get _resolveSendTo {
     if (channel == ChatChannel.managerCommunication) {
       return conversation.assignedByUid;
     }
     return null;
   }
 
-  String _roleForCurrentUser() {
+  String get _roleForCurrentUser {
     if (currentUserId == conversation.assignedByUid) return 'manager';
     if (currentUserId == conversation.leadMemberUid) return 'lead';
     return 'member';
