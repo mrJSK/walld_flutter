@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import '../models/chat_channel.dart';
 import '../models/chat_message.dart';
 
@@ -11,7 +12,7 @@ class ChatRepository {
     FirebaseFirestore? firestore,
   }) : db = firestore ?? FirebaseFirestore.instance;
 
-  CollectionReference<Map<String, dynamic>> channelCollection(
+  CollectionReference<Map<String, dynamic>> _channelCollection(
     String conversationId,
     ChatChannel channel,
   ) {
@@ -27,7 +28,7 @@ class ChatRepository {
     required String conversationId,
     required ChatChannel channel,
   }) {
-    return channelCollection(conversationId, channel)
+    return _channelCollection(conversationId, channel)
         .orderBy('createdat', descending: false)
         .snapshots()
         .map((snap) => snap.docs.map(ChatMessage.fromFirestore).toList());
@@ -42,18 +43,29 @@ class ChatRepository {
     String? sendTo,
     MessageType type = MessageType.text,
   }) async {
-    final message = ChatMessage(
-      id: '',
-      senderId: senderId,
-      senderRole: senderRole,
-      type: type,
-      text: text,
-      createdAt: DateTime.now(),
-      sendTo: sendTo,
-    );
+    try {
+      final message = ChatMessage(
+        id: '',
+        senderId: senderId,
+        senderRole: senderRole,
+        type: type,
+        text: text,
+        createdAt: DateTime.now(),
+        sendTo: sendTo,
+      );
 
-    await channelCollection(conversationId, channel)
-        .add(message.toFirestore());
+      debugPrint('💬 Sending text message to Firestore...');
+      debugPrint('Path: tenants/$tenantId/CHATS/$conversationId/${channel.firestoreCollection}');
+
+      await _channelCollection(conversationId, channel)
+          .add(message.toFirestore());
+
+      debugPrint('✅ Text message saved to Firestore');
+    } catch (e, stackTrace) {
+      debugPrint('❌ Firestore error (text): $e');
+      debugPrint('Stack trace: $stackTrace');
+      rethrow;
+    }
   }
 
   Future<void> sendFileMessage({
@@ -66,18 +78,32 @@ class ChatRepository {
     String? sendTo,
     MessageType type = MessageType.file,
   }) async {
-    final message = ChatMessage(
-      id: '',
-      senderId: senderId,
-      senderRole: senderRole,
-      type: type,
-      text: text,
-      createdAt: DateTime.now(),
-      sendTo: sendTo,
-      attachments: attachments,
-    );
+    try {
+      final message = ChatMessage(
+        id: '',
+        senderId: senderId,
+        senderRole: senderRole,
+        type: type,
+        text: text,
+        createdAt: DateTime.now(),
+        sendTo: sendTo,
+        attachments: attachments,
+      );
 
-    await channelCollection(conversationId, channel)
-        .add(message.toFirestore());
+      debugPrint('📎 Sending file message to Firestore...');
+      debugPrint('Attachments: ${attachments.length}');
+      debugPrint('Path: tenants/$tenantId/CHATS/$conversationId/${channel.firestoreCollection}');
+
+      final data = message.toFirestore();
+      debugPrint('Message data: $data');
+
+      await _channelCollection(conversationId, channel).add(data);
+
+      debugPrint('✅ File message saved to Firestore');
+    } catch (e, stackTrace) {
+      debugPrint('❌ Firestore error (file): $e');
+      debugPrint('Stack trace: $stackTrace');
+      rethrow;
+    }
   }
 }
