@@ -1,20 +1,23 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:walld_flutter/task/pages/view_assigned_tasks_page/widgets/task_details_panel.dart';
+
 import '../../../../chat/models/chat_channel.dart';
 import '../../../../chat/models/chat_conversation.dart';
 import '../../../../chat/widgets/chat_shell.dart';
 import '../models/assigned_task_view_model.dart';
+import 'task_details_panel.dart';
+
+enum TaskRole { manager, lead, member }
 
 class AssignedTaskWorkspace extends StatefulWidget {
   final AssignedTaskViewModel task;
-  final String currentUserUid;
   final String tenantId;
   final VoidCallback onBack;
 
   const AssignedTaskWorkspace({
     super.key,
     required this.task,
-    required this.currentUserUid,
     required this.tenantId,
     required this.onBack,
   });
@@ -24,151 +27,183 @@ class AssignedTaskWorkspace extends StatefulWidget {
 }
 
 class _AssignedTaskWorkspaceState extends State<AssignedTaskWorkspace> {
-  String activeView = 'details'; // 'details', 'manager', 'team'
+  String activeView = 'details'; // details | manager | team
+
+  String get currentUserUid => FirebaseAuth.instance.currentUser?.uid ?? '';
+
+  TaskRole get role {
+    if (currentUserUid == widget.task.assignedByUid) {
+      return TaskRole.manager;
+    }
+    if (widget.task.isUserLead(currentUserUid)) {
+      return TaskRole.lead;
+    }
+    return TaskRole.member;
+  }
+
+  bool get showManagerComm =>
+      role == TaskRole.manager || role == TaskRole.lead;
+
+  bool get showTeamCollab => role == TaskRole.lead || role == TaskRole.member;
+
+  @override
+  void initState() {
+    super.initState();
+    _validateActiveView();
+  }
+
+  void _validateActiveView() {
+    if (!showManagerComm && activeView == 'manager') {
+      activeView = 'details';
+    }
+    if (!showTeamCollab && activeView == 'team') {
+      activeView = 'details';
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    final isLead = widget.task.isUserLead(widget.currentUserUid);
-
     return Column(
       children: [
-        _buildTopBar(isLead),
+        _buildTopBar(),
         const Divider(color: Colors.white24, height: 1),
         Expanded(child: _buildContent()),
       ],
     );
   }
 
-  Widget _buildTopBar(bool isLead) {
+  Widget _buildTopBar() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Header row with back button and title
           Row(
             children: [
               IconButton(
                 icon: const Icon(Icons.arrow_back, color: Colors.cyan),
                 onPressed: widget.onBack,
+                tooltip: 'Back',
               ),
               const SizedBox(width: 8),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      widget.task.title.isEmpty ? 'Task' : widget.task.title,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    if (isLead)
-                      Container(
-                        margin: const EdgeInsets.only(top: 4),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.amber.withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.amber.withOpacity(0.5)),
-                        ),
-                        child: const Text(
-                          'YOU ARE THE LEAD',
-                          style: TextStyle(
-                            color: Colors.amber,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: _buildActionButton(
-                  icon: Icons.info_outline,
-                  label: 'Task Details',
-                  isActive: activeView == 'details',
-                  onTap: () => setState(() => activeView = 'details'),
-                ),
-              ),
-              const SizedBox(width: 8),
-              if (isLead)
-                Expanded(
-                  child: _buildActionButton(
-                    icon: Icons.support_agent,
-                    label: 'Manager Communication',
-                    isActive: activeView == 'manager',
-                    onTap: () => setState(() => activeView = 'manager'),
-                    color: Colors.cyanAccent,
+                child: Text(
+                  widget.task.title.isEmpty ? 'TASK' : widget.task.title.toUpperCase(),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 0.5,
                   ),
                 ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _buildActionButton(
-                  icon: Icons.groups,
-                  label: 'Team Collaboration',
-                  isActive: activeView == 'team',
-                  onTap: () => setState(() => activeView = 'team'),
-                  color: Colors.greenAccent,
-                ),
               ),
             ],
           ),
+          
+          const SizedBox(height: 16),
+
+          // Tab buttons (responsive to role)
+          _buildTabButtons(),
         ],
       ),
     );
   }
 
-  Widget _buildActionButton({
+  Widget _buildTabButtons() {
+    final List<Widget> buttons = [];
+
+    // Task Details (always visible)
+    buttons.add(
+      Expanded(
+        child: _buildTabButton(
+          icon: Icons.info_outline,
+          label: 'Task Details',
+          isActive: activeView == 'details',
+          onTap: () => setState(() => activeView = 'details'),
+        ),
+      ),
+    );
+
+    // Manager Communication (Manager + Lead)
+    if (showManagerComm) {
+      buttons.add(const SizedBox(width: 12));
+      buttons.add(
+        Expanded(
+          child: _buildTabButton(
+            icon: Icons.support_agent,
+            label: 'Manager Communication',
+            isActive: activeView == 'manager',
+            onTap: () => setState(() => activeView = 'manager'),
+            activeColor: Colors.cyanAccent,
+          ),
+        ),
+      );
+    }
+
+    // Team Collaboration (Lead + Members)
+    if (showTeamCollab) {
+      buttons.add(const SizedBox(width: 12));
+      buttons.add(
+        Expanded(
+          child: _buildTabButton(
+            icon: Icons.group,
+            label: 'Team Collaboration',
+            isActive: activeView == 'team',
+            onTap: () => setState(() => activeView = 'team'),
+            activeColor: Colors.greenAccent,
+          ),
+        ),
+      );
+    }
+
+    return Row(children: buttons);
+  }
+
+  Widget _buildTabButton({
     required IconData icon,
     required String label,
     required bool isActive,
     required VoidCallback onTap,
-    Color color = Colors.white70,
+    Color activeColor = Colors.cyanAccent,
   }) {
     return GestureDetector(
       onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeInOut,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(
           color: isActive
-              ? color.withOpacity(0.15)
+              ? activeColor.withOpacity(0.15)
               : Colors.white.withOpacity(0.05),
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(30),
           border: Border.all(
-            color: isActive ? color : Colors.white24,
+            color: isActive ? activeColor : Colors.white.withOpacity(0.2),
             width: isActive ? 2 : 1,
           ),
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
-          mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 16, color: isActive ? color : Colors.white54),
-            const SizedBox(width: 4),
+            Icon(
+              icon,
+              color: isActive ? activeColor : Colors.white60,
+              size: 20,
+            ),
+            const SizedBox(width: 8),
             Flexible(
               child: Text(
                 label,
-                style: TextStyle(
-                  color: isActive ? color : Colors.white54,
-                  fontSize: 10,
-                  fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
-                ),
-                textAlign: TextAlign.center,
-                maxLines: 2,
+                maxLines: 1,
                 overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: isActive ? activeColor : Colors.white60,
+                  fontSize: 14,
+                  fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
+                ),
               ),
             ),
           ],
@@ -178,11 +213,21 @@ class _AssignedTaskWorkspaceState extends State<AssignedTaskWorkspace> {
   }
 
   Widget _buildContent() {
+    if (!showManagerComm && activeView == 'manager') {
+      activeView = 'details';
+    }
+    if (!showTeamCollab && activeView == 'team') {
+      activeView = 'details';
+    }
+
     switch (activeView) {
       case 'manager':
-        return _buildManagerChat();
+        return _buildManagerCommunication();
+
       case 'team':
-        return _buildTeamChat();
+        return _buildTeamCollaboration();
+
+      case 'details':
       default:
         return TaskDetailsPanel(
           task: widget.task,
@@ -191,73 +236,47 @@ class _AssignedTaskWorkspaceState extends State<AssignedTaskWorkspace> {
     }
   }
 
-  // ✅ MOVED INSIDE THE CLASS
-  Widget _buildManagerChat() {
-    // Only lead can access manager communication
-    if (!widget.task.isUserLead(widget.currentUserUid)) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                Icons.lock_outline,
-                size: 64,
-                color: Colors.white.withOpacity(0.2),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'Only the lead member can communicate with the manager',
-                style: TextStyle(
-                  color: Colors.white70,
-                  fontSize: 16,
-                ),
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
+  Widget _buildManagerCommunication() {
     final conversation = ChatConversation(
       conversationId: widget.task.docId,
       taskTitle: widget.task.title,
       assignedByUid: widget.task.assignedByUid,
       assignedToUids: widget.task.assignedToUids,
       leadMemberUid: widget.task.leadMemberId,
+      groupName: widget.task.groupName,
+      dueDate: widget.task.dueDate,
     );
 
     return Padding(
-      padding: const EdgeInsets.all(16.0),
+      padding: const EdgeInsets.all(16),
       child: ChatShell(
         tenantId: widget.tenantId,
         conversation: conversation,
         channel: ChatChannel.managerCommunication,
-        currentUserId: widget.currentUserUid,
+        currentUserId: currentUserUid,
       ),
     );
   }
 
-  // ✅ MOVED INSIDE THE CLASS
-  Widget _buildTeamChat() {
+  Widget _buildTeamCollaboration() {
     final conversation = ChatConversation(
       conversationId: widget.task.docId,
       taskTitle: widget.task.title,
       assignedByUid: widget.task.assignedByUid,
       assignedToUids: widget.task.assignedToUids,
       leadMemberUid: widget.task.leadMemberId,
+      groupName: widget.task.groupName,
+      dueDate: widget.task.dueDate,
     );
 
     return Padding(
-      padding: const EdgeInsets.all(16.0),
+      padding: const EdgeInsets.all(16),
       child: ChatShell(
         tenantId: widget.tenantId,
         conversation: conversation,
         channel: ChatChannel.teamMembers,
-        currentUserId: widget.currentUserUid,
+        currentUserId: currentUserUid,
       ),
     );
   }
-} // ✅ CLASS CLOSING BRACE HERE
+}

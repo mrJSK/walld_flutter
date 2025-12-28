@@ -1,4 +1,7 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+
 import '../../../../chat/models/chat_channel.dart';
 import '../../../../chat/models/chat_conversation.dart';
 import '../../../../chat/widgets/chat_shell.dart';
@@ -7,14 +10,12 @@ import 'manager_task_details_panel.dart';
 
 class CreatedTaskWorkspace extends StatefulWidget {
   final CreatedTaskViewModel task;
-  final String currentUserUid;
   final String tenantId;
   final VoidCallback onBack;
 
   const CreatedTaskWorkspace({
     super.key,
     required this.task,
-    required this.currentUserUid,
     required this.tenantId,
     required this.onBack,
   });
@@ -23,188 +24,166 @@ class CreatedTaskWorkspace extends StatefulWidget {
   State<CreatedTaskWorkspace> createState() => _CreatedTaskWorkspaceState();
 }
 
-class _CreatedTaskWorkspaceState extends State<CreatedTaskWorkspace>
-    with SingleTickerProviderStateMixin {
-  late final TabController _tabController;
-  late final ChatConversation _conversation;
-  late final bool _showBothTabs;
+class _CreatedTaskWorkspaceState extends State<CreatedTaskWorkspace> {
+  String activeView = 'details'; // details | manager
 
-  @override
-  void initState() {
-    super.initState();
-
-    // ✅ Show both tabs only if assigneeCount > 1
-    _showBothTabs = widget.task.assigneeCount > 1;
-
-    _tabController = TabController(
-      length: _showBothTabs ? 2 : 1,
-      vsync: this,
-    );
-
-    _conversation = ChatConversation(
-      conversationId: widget.task.docId,
-      taskTitle: widget.task.title,
-      assignedByUid: widget.currentUserUid,
-      assignedToUids: widget.task.assignedToUids,
-      leadMemberUid: widget.task.leadMemberId,
-      groupName: widget.task.groupName,
-      dueDate: widget.task.dueDate,
-    );
-
-    debugPrint(
-        'WORKSPACE: assigneeCount=${widget.task.assigneeCount}, '
-        'showBothTabs=$_showBothTabs');
-  }
-
-  @override
-  void dispose() {
-    _tabController.dispose();
-    super.dispose();
-  }
+  String get currentUserUid => FirebaseAuth.instance.currentUser?.uid ?? '';
 
   @override
   Widget build(BuildContext context) {
+    return Column(
+      children: [
+        _buildTopBar(),
+        const Divider(color: Colors.white24, height: 1),
+        Expanded(child: _buildContent()),
+      ],
+    );
+  }
+
+  Widget _buildTopBar() {
     return Container(
-      decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.3),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white.withOpacity(0.1)),
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Header with back button
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Row(
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.arrow_back, color: Colors.white),
-                  onPressed: widget.onBack,
-                ),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        widget.task.title,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      if (widget.task.groupName.isNotEmpty)
-                        Text(
-                          widget.task.groupName,
-                          style: const TextStyle(
-                            color: Colors.white60,
-                            fontSize: 13,
-                          ),
-                        ),
-                    ],
+          // Header row with back button and title
+          Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.arrow_back, color: Colors.cyan),
+                onPressed: widget.onBack,
+                tooltip: 'Back',
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  widget.task.title.isEmpty ? 'TASK' : widget.task.title.toUpperCase(),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 0.5,
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
+          
+          const SizedBox(height: 16),
 
-          // Tab bar (only show if both tabs are needed)
-          if (_showBothTabs)
-            TabBar(
-              controller: _tabController,
-              indicatorColor: Colors.cyanAccent,
-              labelColor: Colors.cyanAccent,
-              unselectedLabelColor: Colors.white60,
-              tabs: const [
-                Tab(
-                  icon: Icon(Icons.info_outline),
-                  text: 'Task Details',
-                ),
-                Tab(
-                  icon: Icon(Icons.people),
-                  text: 'Team Collaboration',
-                ),
-              ],
-            )
-          else
-            Container(
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              decoration: const BoxDecoration(
-                border: Border(
-                  bottom: BorderSide(color: Colors.white12),
+          // Tab buttons
+          Row(
+            children: [
+              Expanded(
+                child: _buildTabButton(
+                  icon: Icons.info_outline,
+                  label: 'Task Details',
+                  isActive: activeView == 'details',
+                  onTap: () => setState(() => activeView = 'details'),
                 ),
               ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: const [
-                  Icon(Icons.info_outline, color: Colors.cyanAccent, size: 20),
-                  SizedBox(width: 8),
-                  Text(
-                    'Task Details',
-                    style: TextStyle(
-                      color: Colors.cyanAccent,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildTabButton(
+                  icon: Icons.support_agent,
+                  label: 'Manager Communication',
+                  isActive: activeView == 'manager',
+                  onTap: () => setState(() => activeView = 'manager'),
+                  activeColor: Colors.greenAccent,
+                ),
               ),
-            ),
-
-          const Divider(color: Colors.white12, height: 1),
-
-          // Content
-          Expanded(
-            child: _showBothTabs
-                ? TabBarView(
-                    controller: _tabController,
-                    children: [
-                      // Tab 1: Task Details + Manager Chat
-                      _buildManagerChatTab(),
-
-                      // Tab 2: Team Collaboration Chat
-                      ChatShell(
-                        tenantId: widget.tenantId,
-                        conversation: _conversation,
-                        channel: ChatChannel.teamMembers,
-                        currentUserId: widget.currentUserUid,
-                      ),
-                    ],
-                  )
-                : _buildManagerChatTab(), // Single member: only manager chat
+            ],
           ),
         ],
       ),
     );
   }
 
-  Widget _buildManagerChatTab() {
-    return Row(
-      children: [
-        // Left: Task details panel
-        Expanded(
-          flex: 2,
-          child: ManagerTaskDetailsPanel(
-            task: widget.task,
-            tenantId: widget.tenantId,
+  Widget _buildTabButton({
+    required IconData icon,
+    required String label,
+    required bool isActive,
+    required VoidCallback onTap,
+    Color activeColor = Colors.cyanAccent,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeInOut,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: isActive
+              ? activeColor.withOpacity(0.15)
+              : Colors.white.withOpacity(0.05),
+          borderRadius: BorderRadius.circular(30),
+          border: Border.all(
+            color: isActive ? activeColor : Colors.white.withOpacity(0.2),
+            width: isActive ? 2 : 1,
           ),
         ),
-
-        const VerticalDivider(color: Colors.white12, width: 1),
-
-        // Right: Manager communication chat
-        Expanded(
-          flex: 3,
-          child: ChatShell(
-            tenantId: widget.tenantId,
-            conversation: _conversation,
-            channel: ChatChannel.managerCommunication,
-            currentUserId: widget.currentUserUid,
-          ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              color: isActive ? activeColor : Colors.white60,
+              size: 20,
+            ),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: isActive ? activeColor : Colors.white60,
+                  fontSize: 14,
+                  fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
+                ),
+              ),
+            ),
+          ],
         ),
-      ],
+      ),
+    );
+  }
+
+  Widget _buildContent() {
+    switch (activeView) {
+      case 'manager':
+        return _buildManagerCommunication();
+
+      case 'details':
+      default:
+        return ManagerTaskDetailsPanel(
+          task: widget.task,
+          tenantId: widget.tenantId,
+        );
+    }
+  }
+
+  Widget _buildManagerCommunication() {
+    final conversation = ChatConversation(
+      conversationId: widget.task.docId,
+      taskTitle: widget.task.title,
+      assignedByUid: currentUserUid,
+      assignedToUids: widget.task.assignedToUids,
+      leadMemberUid: widget.task.leadMemberId,
+      groupName: widget.task.groupName,
+      dueDate: widget.task.dueDate,
+    );
+
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: ChatShell(
+        tenantId: widget.tenantId,
+        conversation: conversation,
+        channel: ChatChannel.managerCommunication,
+        currentUserId: currentUserUid,
+      ),
     );
   }
 }

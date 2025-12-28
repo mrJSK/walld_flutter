@@ -233,7 +233,6 @@ Widget build(BuildContext context) {
                 ? buildEmptyWorkspace()
                 : CreatedTaskWorkspace(
                     task: selectedTask!,
-                    currentUserUid: uid,
                     tenantId: ViewAllTasksPage.tenantId,
                     onBack: () {
                       setState(() => selectedTask = null);

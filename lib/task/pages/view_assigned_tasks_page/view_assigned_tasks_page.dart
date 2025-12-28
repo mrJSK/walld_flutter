@@ -114,7 +114,6 @@ class _ViewAssignedTasksPageState extends State<ViewAssignedTasksPage> {
                   ? _buildEmptyWorkspace()
                   : AssignedTaskWorkspace(
                       task: _selectedTask!,
-                      currentUserUid: uid,
                       tenantId: ViewAssignedTasksPage.tenantId,
                       onBack: () {
                         setState(() => _selectedTask = null);
