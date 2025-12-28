@@ -155,13 +155,13 @@ class TaskFormRepository {
       'title': values['title'] ?? '',
       'description': values['description'] ?? '',
       'status': 'PENDING',
-      'created_by': createdBy,
-      'created_at': now.toIso8601String(),
-      'updated_at': now.toIso8601String(),
+      'createdby': createdBy,
+      'createdat': now.toIso8601String(),
+      'updatedat': now.toIso8601String(),
     };
 
     if (values['dueDate'] != null && values['dueDate'] is DateTime) {
-      core['due_date'] = (values['dueDate'] as DateTime).toIso8601String();
+      core['duedate'] = (values['dueDate'] as DateTime).toIso8601String();
     }
 
     final custom = Map<String, dynamic>.from(values)

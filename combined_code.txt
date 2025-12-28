@@ -10,6 +10,9 @@ Root: lib (lib)
 │   │   └── chat_message.dart
 │   ├── repositories/
 │   │   └── chat_repository.dart
+│   ├── services/
+│   │   ├── chat_attachment_service.dart
+│   │   └── chat_storage_uploader.dart
 │   └── widgets/
 │       ├── chat_input_bar.dart
 │       ├── chat_shell.dart
@@ -433,18 +436,57 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 enum MessageType { text, file, progress }
 
+class ChatAttachment {
+  final String url;
+  final String name;
+  final String mimeType;
+  final int sizeBytes;
+  final bool compressed;
+
+  ChatAttachment({
+    required this.url,
+    required this.name,
+    required this.mimeType,
+    required this.sizeBytes,
+    required this.compressed,
+  });
+
+  factory ChatAttachment.fromMap(Map<String, dynamic> map) {
+    return ChatAttachment(
+      url: map['url'] as String? ?? '',
+      name: map['name'] as String? ?? '',
+      mimeType: map['type'] as String? ?? '',
+      sizeBytes: (map['size'] as num?)?.toInt() ?? 0,
+      compressed: map['compressed'] as bool? ?? false,
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'url': url,
+      'name': name,
+      'type': mimeType,
+      'size': sizeBytes,
+      'compressed': compressed,
+    };
+  }
+}
+
 class ChatMessage {
   final String id;
   final String senderId;
   final String senderRole;
   final MessageType type;
   final String? text;
+
+  // legacy single file fields – keep for backward compatibility
   final String? fileUrl;
   final String? fileType;
+
+  final List<ChatAttachment> attachments;
+
   final DateTime createdAt;
   final String? sendTo;
-  
-  // Optional: cached sender name (fetched from users collection)
   String? senderName;
 
   ChatMessage({
@@ -458,19 +500,21 @@ class ChatMessage {
     required this.createdAt,
     this.sendTo,
     this.senderName,
+    this.attachments = const [],
   });
 
   factory ChatMessage.fromFirestore(
     DocumentSnapshot<Map<String, dynamic>> doc,
   ) {
     final data = doc.data() ?? {};
+
     final typeStr = (data['type'] ?? 'text') as String;
     final type = MessageType.values.firstWhere(
       (t) => t.name == typeStr,
       orElse: () => MessageType.text,
     );
 
-    final timestamp = data['created_at'];
+    final timestamp = data['createdat'];
     DateTime createdAt;
     if (timestamp is Timestamp) {
       createdAt = timestamp.toDate();
@@ -480,31 +524,46 @@ class ChatMessage {
       createdAt = DateTime.now();
     }
 
+    final rawList = (data['ATTCHED_FILES'] as List?) ?? const [];
+    final attachments = rawList
+        .whereType<Map<String, dynamic>>()
+        .map(ChatAttachment.fromMap)
+        .toList();
+
     return ChatMessage(
       id: doc.id,
-      senderId: data['sender_id'] as String? ?? '',
-      senderRole: data['sender_role'] as String? ?? 'member',
+      senderId: data['senderid'] as String? ?? '',
+      senderRole: data['senderrole'] as String? ?? 'member',
       type: type,
       text: data['text'] as String?,
-      fileUrl: data['file_url'] as String?,
-      fileType: data['file_type'] as String?,
+      fileUrl: data['fileurl'] as String?,
+      fileType: data['filetype'] as String?,
       createdAt: createdAt,
-      sendTo: data['send_to'] as String?,
-      senderName: null, // Will be fetched separately
+      sendTo: data['sendto'] as String?,
+      senderName: null,
+      attachments: attachments,
     );
   }
 
   Map<String, dynamic> toFirestore() {
-    return {
-      'sender_id': senderId,
-      'sender_role': senderRole,
+    final map = <String, dynamic>{
+      'senderid': senderId,
+      'senderrole': senderRole,
       'type': type.name,
-      if (text != null) 'text': text,
-      if (fileUrl != null) 'file_url': fileUrl,
-      if (fileType != null) 'file_type': fileType,
-      'created_at': Timestamp.fromDate(createdAt),
-      if (sendTo != null) 'send_to': sendTo,
+      'createdat': Timestamp.fromDate(createdAt),
     };
+
+    if (text != null) map['text'] = text;
+    if (fileUrl != null) map['fileurl'] = fileUrl;
+    if (fileType != null) map['filetype'] = fileType;
+
+    if (attachments.isNotEmpty) {
+      map['ATTCHED_FILES'] = attachments.map((a) => a.toMap()).toList();
+    }
+
+    if (sendTo != null) map['sendto'] = sendTo;
+
+    return map;
   }
 }
 
@@ -524,7 +583,6 @@ class ChatRepository {
     FirebaseFirestore? firestore,
   }) : db = firestore ?? FirebaseFirestore.instance;
 
-  /// Base path: tenants/{tenantId}/CHATS/{conversationId}/{channelCollection}
   CollectionReference<Map<String, dynamic>> channelCollection(
     String conversationId,
     ChatChannel channel,
@@ -537,27 +595,23 @@ class ChatRepository {
         .collection(channel.firestoreCollection);
   }
 
-  /// Stream messages in a channel ordered by created_at
   Stream<List<ChatMessage>> streamMessages({
     required String conversationId,
     required ChatChannel channel,
   }) {
     return channelCollection(conversationId, channel)
-        .orderBy('created_at', descending: false)
+        .orderBy('createdat', descending: false)
         .snapshots()
-        .map((snap) => snap.docs
-            .map((doc) => ChatMessage.fromFirestore(doc))
-            .toList());
+        .map((snap) => snap.docs.map(ChatMessage.fromFirestore).toList());
   }
 
-  /// Send a text message
   Future<void> sendTextMessage({
     required String conversationId,
     required ChatChannel channel,
     required String senderId,
     required String senderRole,
     required String text,
-    String? sendTo, // Optional: only for manager communication
+    String? sendTo,
     MessageType type = MessageType.text,
   }) async {
     final message = ChatMessage(
@@ -566,23 +620,22 @@ class ChatRepository {
       senderRole: senderRole,
       type: type,
       text: text,
-      sendTo: sendTo, // Will be null for team_members_chat
       createdAt: DateTime.now(),
+      sendTo: sendTo,
     );
 
-    await channelCollection(conversationId, channel).add(message.toFirestore());
+    await channelCollection(conversationId, channel)
+        .add(message.toFirestore());
   }
 
-  /// Send a file or progress message with optional text
   Future<void> sendFileMessage({
     required String conversationId,
     required ChatChannel channel,
     required String senderId,
     required String senderRole,
-    required String fileUrl,
-    required String fileType,
+    required List<ChatAttachment> attachments,
     String? text,
-    String? sendTo, // Optional: only for manager communication
+    String? sendTo,
     MessageType type = MessageType.file,
   }) async {
     final message = ChatMessage(
@@ -591,31 +644,267 @@ class ChatRepository {
       senderRole: senderRole,
       type: type,
       text: text,
-      fileUrl: fileUrl,
-      fileType: fileType,
       createdAt: DateTime.now(),
-      sendTo: sendTo, // Will be null for team_members_chat
+      sendTo: sendTo,
+      attachments: attachments,
     );
 
-    await channelCollection(conversationId, channel).add(message.toFirestore());
+    await channelCollection(conversationId, channel)
+        .add(message.toFirestore());
+  }
+}
+
+================================================================================
+
+// File: lib\chat\services\chat_attachment_service.dart
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:http/http.dart' as http;
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../models/chat_message.dart';
+
+class ChatAttachmentService {
+  static const _prefsKey = 'chat_downloads_v1';
+
+  static Future<File> downloadToLocal({
+    required String tenantId,
+    required String conversationId,
+    required String messageId,
+    required int attachmentIndex,
+    required ChatAttachment attachment,
+    void Function(double progress)? onProgress,
+  }) async {
+    final uri = Uri.parse(attachment.url);
+    final response = await http.Client().send(http.Request('GET', uri));
+
+    final baseDir = await getApplicationSupportDirectory();
+    final dir = Directory(
+      p.join(
+        baseDir.path,
+        'attachments',
+        tenantId,
+        conversationId,
+        messageId,
+      ),
+    );
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+    }
+
+    final filePath = p.join(dir.path, attachment.name);
+    final file = File(filePath);
+    final sink = file.openWrite();
+
+    final contentLength = response.contentLength ?? 0;
+    int received = 0;
+
+    await for (final chunk in response.stream) {
+      received += chunk.length;
+      sink.add(chunk);
+      if (contentLength > 0 && onProgress != null) {
+        onProgress(received / contentLength);
+      }
+    }
+
+    await sink.close();
+
+    await _persistDownload(
+      tenantId: tenantId,
+      conversationId: conversationId,
+      messageId: messageId,
+      attachmentIndex: attachmentIndex,
+      localPath: file.path,
+      remoteUrl: attachment.url,
+      mimeType: attachment.mimeType,
+      fileName: attachment.name,
+      sizeBytes: await file.length(),
+    );
+
+    return file;
+  }
+
+  static Future<Map<String, dynamic>> _loadMap() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_prefsKey);
+    if (raw == null || raw.isEmpty) return {'downloads': []};
+    try {
+      return jsonDecode(raw) as Map<String, dynamic>;
+    } catch (_) {
+      return {'downloads': []};
+    }
+  }
+
+  static Future<void> _saveMap(Map<String, dynamic> map) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_prefsKey, jsonEncode(map));
+  }
+
+  static Future<void> _persistDownload({
+    required String tenantId,
+    required String conversationId,
+    required String messageId,
+    required int attachmentIndex,
+    required String localPath,
+    required String remoteUrl,
+    required String mimeType,
+    required String fileName,
+    required int sizeBytes,
+  }) async {
+    final map = await _loadMap();
+    final list = (map['downloads'] as List?) ?? [];
+
+    list.removeWhere((e) =>
+        e['tenantId'] == tenantId &&
+        e['conversationId'] == conversationId &&
+        e['messageId'] == messageId &&
+        e['attachmentIndex'] == attachmentIndex);
+
+    list.add({
+      'tenantId': tenantId,
+      'conversationId': conversationId,
+      'messageId': messageId,
+      'attachmentIndex': attachmentIndex,
+      'remoteUrl': remoteUrl,
+      'fileName': fileName,
+      'mimeType': mimeType,
+      'localPath': localPath,
+      'sizeBytes': sizeBytes,
+      'downloadedAt': DateTime.now().toUtc().toIso8601String(),
+    });
+
+    map['downloads'] = list;
+    await _saveMap(map);
+  }
+
+  static Future<String?> resolveLocalPath({
+    required String tenantId,
+    required String conversationId,
+    required String messageId,
+    required int attachmentIndex,
+  }) async {
+    final map = await _loadMap();
+    final list = (map['downloads'] as List?) ?? [];
+    final match = list.cast<Map<String, dynamic>?>().firstWhere(
+          (e) =>
+              e != null &&
+              e['tenantId'] == tenantId &&
+              e['conversationId'] == conversationId &&
+              e['messageId'] == messageId &&
+              e['attachmentIndex'] == attachmentIndex,
+          orElse: () => null,
+        );
+    if (match == null) return null;
+    final path = match['localPath'] as String?;
+    if (path == null) return null;
+    final file = File(path);
+    if (!await file.exists()) return null;
+    return path;
+  }
+}
+
+================================================================================
+
+// File: lib\chat\services\chat_storage_uploader.dart
+import 'dart:io';
+
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:path/path.dart' as p;
+import '../models/chat_message.dart';
+
+class ChatStorageUploader {
+  static final FirebaseStorage _storage = FirebaseStorage.instance;
+
+  static Future<ChatAttachment> uploadSingle({
+    required String tenantId,
+    required String conversationId,
+    required String messageTempId,
+    required ChatAttachment localAttachment,
+  }) async {
+    // localAttachment.url currently holds the local file path from picker
+    final file = File(localAttachment.url);
+
+    final fileName = localAttachment.name;
+    final ext = p.extension(fileName);
+    final cleanName = fileName.isEmpty
+        ? 'file${DateTime.now().millisecondsSinceEpoch}$ext'
+        : fileName;
+
+    final path =
+        'tenants/$tenantId/chats/$conversationId/$messageTempId/$cleanName';
+
+    final ref = _storage.ref().child(path);
+
+    final metadata = SettableMetadata(contentType: localAttachment.mimeType);
+
+    final uploadTask = ref.putFile(file, metadata);
+    final snapshot = await uploadTask.whenComplete(() => null);
+
+    final downloadUrl = await snapshot.ref.getDownloadURL();
+
+    final size = await file.length();
+
+    return ChatAttachment(
+      url: downloadUrl,
+      name: cleanName,
+      mimeType: localAttachment.mimeType,
+      sizeBytes: size,
+      compressed: localAttachment.compressed,
+    );
+  }
+
+  static Future<List<ChatAttachment>> uploadAll({
+    required String tenantId,
+    required String conversationId,
+    required List<ChatAttachment> localAttachments,
+  }) async {
+    final tempMessageId =
+        'temp_${DateTime.now().millisecondsSinceEpoch.toString()}';
+
+    final uploaded = <ChatAttachment>[];
+
+    for (final a in localAttachments) {
+      final up = await uploadSingle(
+        tenantId: tenantId,
+        conversationId: conversationId,
+        messageTempId: tempMessageId,
+        localAttachment: a,
+      );
+      uploaded.add(up);
+    }
+
+    return uploaded;
   }
 }
 
 ================================================================================
 
 // File: lib\chat\widgets\chat_input_bar.dart
-// lib/chat/widgets/chat_input_bar.dart
+import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:mime/mime.dart';
+import '../models/chat_message.dart';
+
+typedef SendTextCallback = Future<void> Function(String text);
+typedef SendAttachmentsCallback = Future<void> Function({
+  required List<ChatAttachment> attachments,
+  String? text,
+});
 
 class ChatInputBar extends StatefulWidget {
-  final Future<void> Function(String text) onSend;
+  final SendTextCallback onSendText;
+  final SendAttachmentsCallback onSendAttachments;
   final bool enabled;
   final String hintText;
 
   const ChatInputBar({
     super.key,
-    required this.onSend,
+    required this.onSendText,
+    required this.onSendAttachments,
     this.enabled = true,
     this.hintText = 'Type a message',
   });
@@ -625,36 +914,96 @@ class ChatInputBar extends StatefulWidget {
 }
 
 class _ChatInputBarState extends State<ChatInputBar> {
-  final TextEditingController _controller = TextEditingController();
-  bool _sending = false;
+  final TextEditingController controller = TextEditingController();
+  bool sending = false;
+
+  static const int _maxBytesPerMessage = 10 * 1024 * 1024; // 10 MB
 
   @override
   void dispose() {
-    _controller.dispose();
+    controller.dispose();
     super.dispose();
   }
 
   Future<void> _handleSend() async {
-    final text = _controller.text.trim();
-    if (text.isEmpty || _sending || !widget.enabled) return;
+    final text = controller.text.trim();
+    if (text.isEmpty) return;
+    if (!widget.enabled || sending) return;
 
-    setState(() => _sending = true);
+    setState(() => sending = true);
     try {
-      await widget.onSend(text);
-      _controller.clear();
+      await widget.onSendText(text);
+      controller.clear();
     } finally {
-      if (mounted) setState(() => _sending = false);
+      if (mounted) setState(() => sending = false);
     }
+  }
+
+  Future<void> _pickDocuments() async {
+    if (!widget.enabled || sending) return;
+
+    final result = await FilePicker.platform.pickFiles(
+      allowMultiple: true,
+      withData: false,
+      type: FileType.any,
+    );
+
+    if (result == null || result.files.isEmpty) return;
+
+    int totalBytes = 0;
+    final attachments = <ChatAttachment>[];
+
+    for (final f in result.files) {
+      final path = f.path;
+      if (path == null) continue;
+      final file = File(path);
+      final size = await file.length();
+      totalBytes += size;
+      if (totalBytes > _maxBytesPerMessage) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Max 10 MB per message exceeded.'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+        return;
+      }
+
+      final mime = lookupMimeType(path) ?? 'application/octet-stream';
+
+      attachments.add(
+        ChatAttachment(
+          url: path, // temporary local path, will be replaced after upload
+          name: f.name,
+          mimeType: mime,
+          sizeBytes: size,
+          compressed: false,
+        ),
+      );
+    }
+
+    if (attachments.isEmpty) return;
+
+    await widget.onSendAttachments(
+      attachments: attachments,
+      text: controller.text.trim().isEmpty ? null : controller.text.trim(),
+    );
+    controller.clear();
   }
 
   @override
   Widget build(BuildContext context) {
     return Row(
       children: [
+        IconButton(
+          onPressed: widget.enabled && !sending ? _pickDocuments : null,
+          icon: const Icon(Icons.add, color: Colors.white),
+          tooltip: 'Attach',
+        ),
         Expanded(
           child: TextField(
-            controller: _controller,
-            enabled: widget.enabled && !_sending,
+            controller: controller,
+            enabled: widget.enabled && !sending,
             style: const TextStyle(color: Colors.white),
             minLines: 1,
             maxLines: 4,
@@ -684,14 +1033,15 @@ class _ChatInputBarState extends State<ChatInputBar> {
         ),
         const SizedBox(width: 8),
         IconButton(
-          onPressed: widget.enabled && !_sending ? _handleSend : null,
-          icon: _sending
+          onPressed: widget.enabled && !sending ? _handleSend : null,
+          icon: sending
               ? const SizedBox(
                   width: 16,
                   height: 16,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
-                    valueColor: AlwaysStoppedAnimation(Colors.cyanAccent),
+                    valueColor:
+                        AlwaysStoppedAnimation<Color>(Colors.cyanAccent),
                   ),
                 )
               : const Icon(Icons.send_rounded, color: Colors.cyanAccent),
@@ -711,9 +1061,9 @@ import '../models/chat_channel.dart';
 import '../models/chat_conversation.dart';
 import '../models/chat_message.dart';
 import '../repositories/chat_repository.dart';
+import '../services/chat_storage_uploader.dart';
 import 'chat_input_bar.dart';
 import 'message_list.dart';
-
 class ChatShell extends StatelessWidget {
   final String tenantId;
   final ChatConversation conversation;
@@ -825,7 +1175,7 @@ class ChatShell extends StatelessWidget {
         ChatInputBar(
           enabled: canSend,
           hintText: hint,
-          onSend: (text) => repo.sendTextMessage(
+          onSendText: (text) => repo.sendTextMessage(
             conversationId: conversation.conversationId,
             channel: channel,
             senderId: currentUserId,
@@ -833,7 +1183,30 @@ class ChatShell extends StatelessWidget {
             text: text,
             sendTo: _resolveSendTo(),
           ),
+          onSendAttachments: ({
+            required List<ChatAttachment> attachments,
+            String? text,
+          }) async {
+            // 1. Upload local files (attachments[i].url = local path from picker)
+            final uploadedAttachments = await ChatStorageUploader.uploadAll(
+              tenantId: tenantId,
+              conversationId: conversation.conversationId,
+              localAttachments: attachments,
+            );
+
+            // 2. Save message in Firestore with ATTCHED_FILES using repository
+            await repo.sendFileMessage(
+              conversationId: conversation.conversationId,
+              channel: channel,
+              senderId: currentUserId,
+              senderRole: _roleForCurrentUser(),
+              attachments: uploadedAttachments,
+              text: text,
+              sendTo: _resolveSendTo(),
+            );
+          },
         ),
+
       ],
     );
   }
@@ -856,8 +1229,16 @@ class ChatShell extends StatelessWidget {
 
 // File: lib\chat\widgets\message_bubble.dart
 import 'package:flutter/material.dart';
+import 'package:flutter_pdfview/flutter_pdfview.dart';
+import 'package:open_filex/open_filex.dart';
+import 'package:photo_view/photo_view.dart';
 import '../models/chat_message.dart';
 import '../../task/utils/user_helper.dart';
+import 'dart:io';
+
+import 'package:flutter/material.dart';
+import '../models/chat_message.dart';
+import '../services/chat_attachment_service.dart';
 
 class MessageBubble extends StatefulWidget {
   final ChatMessage message;
@@ -981,28 +1362,39 @@ class _MessageBubbleState extends State<MessageBubble> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Message text
-                      Text(
-                        widget.message.text ?? '',
-                        style: TextStyle(
-                          color: widget.isMe ? Colors.white : Colors.white70,
-                          fontSize: 14,
+                      if (widget.message.text != null &&
+                          widget.message.text!.trim().isNotEmpty)
+                        Text(
+                          widget.message.text!,
+                          style: TextStyle(
+                            color: widget.isMe ? Colors.white : Colors.white70,
+                            fontSize: 14,
+                          ),
                         ),
-                      ),
+                      if (widget.message.attachments.isNotEmpty)
+                        const SizedBox(height: 6),
+                      if (widget.message.attachments.isNotEmpty)
+                        ...List.generate(
+                          widget.message.attachments.length,
+                          (index) => _AttachmentTile(
+                            tenantId: widget.tenantId,
+                            messageId: widget.message.id,
+                            conversationId: '', // fill from parent shell if needed
+                            attachment: widget.message.attachments[index],
+                            attachmentIndex: index,
+                          ),
+                        ),
                       const SizedBox(height: 4),
-
-                      // Timestamp
                       Text(
                         _formatTime(widget.message.createdAt),
                         style: TextStyle(
-                          color: widget.isMe
-                              ? Colors.white38
-                              : Colors.white24,
+                          color: widget.isMe ? Colors.white38 : Colors.white24,
                           fontSize: 10,
                         ),
                       ),
                     ],
                   ),
+
                 ),
               ],
             ),
@@ -1039,6 +1431,178 @@ class _MessageBubbleState extends State<MessageBubble> {
     } else {
       return '${time.day}/${time.month} ${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
     }
+  }
+}
+class _AttachmentTile extends StatefulWidget {
+  final String tenantId;
+  final String conversationId;
+  final String messageId;
+  final ChatAttachment attachment;
+  final int attachmentIndex;
+
+  const _AttachmentTile({
+    required this.tenantId,
+    required this.conversationId,
+    required this.messageId,
+    required this.attachment,
+    required this.attachmentIndex,
+  });
+
+  @override
+  State<_AttachmentTile> createState() => _AttachmentTileState();
+}
+
+class _AttachmentTileState extends State<_AttachmentTile> {
+  bool _downloading = false;
+  double _progress = 0;
+  String? _localPath;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadLocal();
+  }
+
+  Future<void> _loadLocal() async {
+    final path = await ChatAttachmentService.resolveLocalPath(
+      tenantId: widget.tenantId,
+      conversationId: widget.conversationId,
+      messageId: widget.messageId,
+      attachmentIndex: widget.attachmentIndex,
+    );
+    if (mounted) setState(() => _localPath = path);
+  }
+
+  Future<void> _download() async {
+    setState(() {
+      _downloading = true;
+      _progress = 0;
+    });
+
+    try {
+      final file = await ChatAttachmentService.downloadToLocal(
+        tenantId: widget.tenantId,
+        conversationId: widget.conversationId,
+        messageId: widget.messageId,
+        attachmentIndex: widget.attachmentIndex,
+        attachment: widget.attachment,
+        onProgress: (p) {
+          if (mounted) setState(() => _progress = p);
+        },
+      );
+      if (mounted) setState(() => _localPath = file.path);
+    } finally {
+      if (mounted) setState(() => _downloading = false);
+    }
+  }
+
+  Future<void> _open() async {
+    final path = _localPath;
+    if (path == null) return;
+    final mime = widget.attachment.mimeType;
+
+    if (mime.startsWith('image/')) {
+      await showDialog(
+        context: context,
+        builder: (_) => Dialog(
+          backgroundColor: Colors.black,
+          child: PhotoView(
+            imageProvider: FileImage(File(path)),
+          ),
+        ),
+      );
+    } else if (mime == 'application/pdf') {
+      await showDialog(
+        context: context,
+        builder: (_) => Dialog(
+          backgroundColor: Colors.black,
+          child: PDFView(
+            filePath: path,
+          ),
+        ),
+      );
+    } else {
+      await OpenFilex.open(path);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final a = widget.attachment;
+    final hasLocal = _localPath != null;
+
+    return Container(
+      margin: const EdgeInsets.only(top: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.18),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.white24),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            a.mimeType.startsWith('image/')
+                ? Icons.image
+                : a.mimeType == 'application/pdf'
+                    ? Icons.picture_as_pdf
+                    : Icons.insert_drive_file,
+            color: Colors.cyanAccent,
+            size: 20,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  a.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '${(a.sizeBytes / 1024).toStringAsFixed(1)} KB',
+                  style: const TextStyle(
+                    color: Colors.white38,
+                    fontSize: 11,
+                  ),
+                ),
+                if (_downloading)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4.0),
+                    child: LinearProgressIndicator(
+                      value: _progress,
+                      minHeight: 3,
+                      backgroundColor: Colors.white10,
+                      valueColor: const AlwaysStoppedAnimation<Color>(
+                        Colors.cyanAccent,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          TextButton(
+            onPressed: _downloading
+                ? null
+                : hasLocal
+                    ? _open
+                    : _download,
+            child: Text(
+              hasLocal ? 'Open' : 'Download',
+              style: const TextStyle(color: Colors.cyanAccent, fontSize: 12),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -7965,13 +8529,13 @@ class TaskFormRepository {
       'title': values['title'] ?? '',
       'description': values['description'] ?? '',
       'status': 'PENDING',
-      'created_by': createdBy,
-      'created_at': now.toIso8601String(),
-      'updated_at': now.toIso8601String(),
+      'createdby': createdBy,
+      'createdat': now.toIso8601String(),
+      'updatedat': now.toIso8601String(),
     };
 
     if (values['dueDate'] != null && values['dueDate'] is DateTime) {
-      core['due_date'] = (values['dueDate'] as DateTime).toIso8601String();
+      core['duedate'] = (values['dueDate'] as DateTime).toIso8601String();
     }
 
     final custom = Map<String, dynamic>.from(values)
@@ -9650,9 +10214,9 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
     'title': values['title'] ?? '',
     'description': values['description'] ?? '',
     'status': 'PENDING',
-    'assigned_by': assignerUid,
+    'assignedby': assignerUid,
     if (assignedToUserId != null) 'assignedto': assignedToUserId,
-    'created_at': now.toIso8601String(),
+    'createdat': now.toIso8601String(),
     'updatedat': now.toIso8601String(),
     if (groupId != null) 'groupid': groupId,
     if (groupName != null && groupName.isNotEmpty) 'groupname': groupName,
