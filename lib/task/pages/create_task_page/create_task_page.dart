@@ -409,25 +409,136 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
             form: _form!,
           ),
         ),
-        const SizedBox(height: 16),
-        SizedBox(
-          width: double.infinity,
-          height: 48,
-          child: FilledButton.icon(
-            onPressed: _submitting ? null : _onCreatePressed,
-            icon: _submitting
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation(Colors.black),
-                    ),
-                  )
-                : const Icon(Icons.add_task_rounded),
-            label: Text(_submitting ? 'Creating…' : 'Create Task'),
-          ),
+        const SizedBox(height: 24),
+Container(
+  width: double.infinity,
+  height: 54,
+  decoration: BoxDecoration(
+    gradient: LinearGradient(
+      colors: _submitting 
+          ? [
+              const Color(0xFF1A3A3A).withOpacity(0.4),
+              const Color(0xFF1A3A3A).withOpacity(0.3),
+            ]
+          : [
+              const Color(0xFF1A4D4D).withOpacity(0.6),
+              const Color(0xFF0D3333).withOpacity(0.5),
+            ],
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+    ),
+    borderRadius: BorderRadius.circular(16),
+    border: Border.all(
+      color: _submitting 
+          ? Colors.white.withOpacity(0.15)
+          : const Color(0xFF4DD8D8).withOpacity(0.4),
+      width: 1.5,
+    ),
+    boxShadow: [
+      BoxShadow(
+        color: Colors.black.withOpacity(0.2),
+        blurRadius: 16,
+        offset: const Offset(0, 4),
+      ),
+      if (!_submitting)
+        BoxShadow(
+          color: const Color(0xFF4DD8D8).withOpacity(0.1),
+          blurRadius: 24,
+          offset: const Offset(0, 0),
         ),
+    ],
+  ),
+  child: Material(
+    color: Colors.transparent,
+    child: InkWell(
+      onTap: _submitting ? null : _onCreatePressed,
+      borderRadius: BorderRadius.circular(16),
+      splashColor: const Color(0xFF4DD8D8).withOpacity(0.2),
+      highlightColor: const Color(0xFF4DD8D8).withOpacity(0.1),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            // Left icon
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: _submitting
+                    ? Colors.white.withOpacity(0.08)
+                    : const Color(0xFF4DD8D8).withOpacity(0.15),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: _submitting
+                      ? Colors.white.withOpacity(0.1)
+                      : const Color(0xFF4DD8D8).withOpacity(0.3),
+                  width: 1,
+                ),
+              ),
+              child: _submitting
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          Color(0xFF4DD8D8),
+                        ),
+                      ),
+                    )
+                  : const Icon(
+                      Icons.task_alt_rounded,
+                      color: Color(0xFF4DD8D8),
+                      size: 18,
+                    ),
+            ),
+            
+            // Text
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Text(
+                  _submitting ? 'Creating Task…' : 'Create Task',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: _submitting 
+                        ? Colors.white60 
+                        : Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                    letterSpacing: 0.2,
+                  ),
+                ),
+              ),
+            ),
+            
+            // Right arrow
+            Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: _submitting
+                    ? Colors.white.withOpacity(0.05)
+                    : const Color(0xFF4DD8D8).withOpacity(0.12),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(
+                Icons.arrow_forward_ios_rounded,
+                color: _submitting 
+                    ? Colors.white30 
+                    : const Color(0xFF4DD8D8),
+                size: 14,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  ),
+),
+const SizedBox(height: 16),
+
+
+
       ],
     );
   }
