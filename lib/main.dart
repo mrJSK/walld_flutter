@@ -52,7 +52,7 @@ Future<void> _setupDesktopWindow() async {
     );
     
     await windowManager.waitUntilReadyToShow(windowOptions, () async {
-      // REMOVED: await windowManager.show()  // Don't show the window
+      await windowManager.show();  // Don't show the window
       await windowManager.hide();  // ADDED: Explicitly hide the window
       await windowManager.setFullScreen(false);
       // REMOVED: await windowManager.maximize()  // Don't maximize hidden window
