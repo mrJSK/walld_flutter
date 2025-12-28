@@ -42,35 +42,34 @@ Future<void> main() async {
 
 /// Setup desktop window properties (Windows/macOS/Linux)
 Future<void> _setupDesktopWindow() async {
-  try {
+   try {
     await windowManager.ensureInitialized();
-
+    
     const windowOptions = WindowOptions(
       backgroundColor: Colors.black,
       titleBarStyle: TitleBarStyle.hidden,
-      skipTaskbar: false,
+      skipTaskbar: true,  // CHANGED: Hide from taskbar
     );
-
+    
     await windowManager.waitUntilReadyToShow(windowOptions, () async {
-      await windowManager.show();
+      // REMOVED: await windowManager.show()  // Don't show the window
+      await windowManager.hide();  // ADDED: Explicitly hide the window
       await windowManager.setFullScreen(false);
-      await windowManager.maximize();
-
-      // Removed: setMovable (not supported)
+      // REMOVED: await windowManager.maximize()  // Don't maximize hidden window
       await windowManager.setResizable(false);
       await windowManager.setMinimizable(false);
       await windowManager.setClosable(false);
-
+      
       try {
         await windowManager.setAlwaysOnBottom(true);
       } catch (e) {
-        debugPrint('⚠️ Could not set window to bottom: $e');
+        debugPrint("Could not set window to bottom: $e");
       }
     });
-
-    debugPrint('✅ Desktop window configured');
+    
+    debugPrint("Desktop window configured (hidden, background mode)");
   } catch (e) {
-    debugPrint('❌ Desktop window setup failed: $e');
+    debugPrint("Desktop window setup failed: $e");
   }
 }
 

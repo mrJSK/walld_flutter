@@ -628,6 +628,14 @@ class ChatRepository {
     String? sendTo,
     MessageType type = MessageType.text,
   }) async {
+    debugPrint('🔥 [Repo.sendTextMessage] START');
+    debugPrint('🔥 [Repo] Tenant: $tenantId');
+    debugPrint('🔥 [Repo] Conversation: $conversationId');
+    debugPrint('🔥 [Repo] Channel: ${channel.firestoreCollection}');
+    debugPrint('🔥 [Repo] Sender: $senderId ($senderRole)');
+    debugPrint('🔥 [Repo] Text: "$text"');
+    debugPrint('🔥 [Repo] sendTo: $sendTo');
+
     try {
       final message = ChatMessage(
         id: '',
@@ -639,19 +647,21 @@ class ChatRepository {
         sendTo: sendTo,
       );
 
-      debugPrint('💬 Sending text message to Firestore...');
-      debugPrint('Path: tenants/$tenantId/CHATS/$conversationId/${channel.firestoreCollection}');
+      debugPrint('🔥 [Repo] Full Firestore path:');
+      final collection = _channelCollection(conversationId, channel);
+      debugPrint('🔥 [Repo] PATH: tenants/$tenantId/CHATS/$conversationId/${channel.firestoreCollection}');
+      
+      debugPrint('🔥 [Repo] Message data: ${message.toFirestore()}');
 
-      await _channelCollection(conversationId, channel)
-          .add(message.toFirestore());
-
-      debugPrint('✅ Text message saved to Firestore');
+      final docRef = await collection.add(message.toFirestore());
+      debugPrint('✅ [Repo.sendTextMessage] SUCCESS - DocID: ${docRef.id}');
     } catch (e, stackTrace) {
-      debugPrint('❌ Firestore error (text): $e');
-      debugPrint('Stack trace: $stackTrace');
+      debugPrint('❌ [Repo.sendTextMessage] FIRESTORE ERROR: $e');
+      debugPrint('📍 [Repo.sendTextMessage] FULL STACK: $stackTrace');
       rethrow;
     }
   }
+
 
   Future<void> sendFileMessage({
     required String conversationId,
@@ -1030,42 +1040,55 @@ class _ChatInputBarState extends State<ChatInputBar> {
   }
 
   /// ✅ FIXED: Main send handler
-  Future<void> _handleSend() async {
-    if (!widget.enabled || _sending) return;
-
-    // If files are selected, send them (with or without message)
-    if (_selectedFiles.isNotEmpty) {
-      await _sendFilesWithMessage();
-      return;
-    }
-
-    // Otherwise, send text only if not empty
-    final text = _controller.text.trim();
-    if (text.isNotEmpty) {
-      await _sendTextOnly(text);
-    }
+  // Add this at the TOP of handleSend, sendTextOnly, sendFilesWithMessage
+Future<void> _handleSend() async {
+  debugPrint('🔘 [ChatInputBar] SEND BUTTON CLICKED');
+  debugPrint('🔘 [ChatInputBar] enabled: ${widget.enabled}, sending: $_sending');
+  debugPrint('🔘 [ChatInputBar] selectedFiles: ${_selectedFiles.length}');
+  debugPrint('🔘 [ChatInputBar] text: "${_controller.text.trim()}"');
+  
+  if (!widget.enabled || _sending) {
+    debugPrint('🔘 [ChatInputBar] BLOCKED: disabled or sending');
+    return;
   }
 
-  Future<void> _sendTextOnly(String text) async {
-    setState(() => _sending = true);
-
-    try {
-      await widget.onSendText(text);
-      _controller.clear();
-    } catch (e) {
-      debugPrint('❌ Error sending text: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to send: $e'),
-            backgroundColor: Colors.redAccent,
-          ),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _sending = false);
-    }
+  if (_selectedFiles.isNotEmpty) {
+    debugPrint('🔘 [ChatInputBar] → sendFilesWithMessage');
+    await _sendFilesWithMessage();
+    return;
   }
+
+  final text = _controller.text.trim();
+  if (text.isNotEmpty) {
+    debugPrint('🔘 [ChatInputBar] → sendTextOnly: "$text"');
+    await _sendTextOnly(text);
+  } else {
+    debugPrint('🔘 [ChatInputBar] BLOCKED: no text or files');
+  }
+}
+
+Future<void> _sendTextOnly(String text) async {
+  debugPrint('📝 [ChatInputBar.sendTextOnly] START');
+  setState(() => _sending = true);
+  try {
+    debugPrint('📝 [ChatInputBar.sendTextOnly] CALLING onSendText');
+    await widget.onSendText(text);
+    debugPrint('📝 [ChatInputBar.sendTextOnly] onSendText SUCCESS');
+    _controller.clear();
+  } catch (e, st) {
+    debugPrint('❌ [ChatInputBar.sendTextOnly] ERROR: $e');
+    debugPrint('📍 [ChatInputBar.sendTextOnly] STACK: $st');
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to send: $e'), backgroundColor: Colors.redAccent),
+      );
+    }
+  } finally {
+    if (mounted) setState(() => _sending = false);
+    debugPrint('📝 [ChatInputBar.sendTextOnly] END');
+  }
+}
+
 
   Future<void> _sendFilesWithMessage() async {
     setState(() => _sending = true);
@@ -1240,26 +1263,33 @@ class _ChatInputBarState extends State<ChatInputBar> {
             const SizedBox(width: 8),
 
             // Send button - ALWAYS enabled if files or text present
+            // FIXED: Send button - Enable whenever input is enabled, not content-based
             IconButton(
-              onPressed: (widget.enabled &&
-                      !_sending &&
-                      (_selectedFiles.isNotEmpty ||
-                          _controller.text.trim().isNotEmpty))
-                  ? _handleSend
-                  : null,
+              onPressed: widget.enabled && !_sending
+                  ? () {
+                      debugPrint('🚀 [SendButton] CLICK DETECTED - onPressed ACTIVE');
+                      _handleSend();
+                    }
+                  : () {
+                      debugPrint('🚫 [SendButton] CLICK BLOCKED - enabled: ${widget.enabled}, sending: $_sending');
+                    },
               icon: _sending
                   ? const SizedBox(
                       width: 16,
                       height: 16,
                       child: CircularProgressIndicator(
                         strokeWidth: 2,
-                        valueColor:
-                            AlwaysStoppedAnimation<Color>(Colors.cyanAccent),
+                        valueColor: AlwaysStoppedAnimation<Color>(Colors.cyanAccent),
                       ),
                     )
-                  : const Icon(Icons.send_rounded, color: Colors.cyanAccent),
+                  : const Icon(
+                      Icons.send_rounded,
+                      color: Colors.cyanAccent,
+                    ),
               tooltip: 'Send',
             ),
+
+
           ],
         ),
       ],
@@ -1496,22 +1526,31 @@ class ChatShell extends StatelessWidget {
           enabled: canSend,
           hintText: hint,
           onSendText: (text) async {
-            debugPrint('📤 Sending text message...');
-            debugPrint('  ConversationId: ${conversation.conversationId}');
-            debugPrint('  Channel: ${channel.firestoreCollection}');
-            debugPrint('  SenderId: $currentUserId');
+            debugPrint('📤 [ChatShell.onSendText] START: "$text"');
+            debugPrint('📤 [ChatShell] TenantId: $tenantId');
+            debugPrint('📤 [ChatShell] ConversationId: ${conversation.conversationId}');
+            debugPrint('📤 [ChatShell] Channel: ${channel.displayName} (${channel.firestoreCollection})');
+            debugPrint('📤 [ChatShell] CurrentUserId: $currentUserId');
+            debugPrint('📤 [ChatShell] Role: $_roleForCurrentUser');
+            debugPrint('📤 [ChatShell] sendTo: ${_resolveSendTo}');
 
-            await repo.sendTextMessage(
-              conversationId: conversation.conversationId,
-              channel: channel,
-              senderId: currentUserId,
-              senderRole: _roleForCurrentUser,
-              text: text,
-              sendTo: _resolveSendTo,
-            );
-
-            debugPrint('✅ Text message sent successfully');
+            try {
+              await repo.sendTextMessage(
+                conversationId: conversation.conversationId,
+                channel: channel,
+                senderId: currentUserId,
+                senderRole: _roleForCurrentUser,
+                text: text,
+                sendTo: _resolveSendTo,
+              );
+              debugPrint('✅ [ChatShell.onSendText] SUCCESS');
+            } catch (e, st) {
+              debugPrint('❌ [ChatShell.onSendText] FAILED: $e');
+              debugPrint('📍 [ChatShell.onSendText] STACK: $st');
+              rethrow;
+            }
           },
+
           onSendAttachments: ({
             required List<ChatAttachment> attachments,
             String? text,
@@ -10761,25 +10800,136 @@ class _CreateTaskPageState extends State<CreateTaskPage> {
             form: _form!,
           ),
         ),
-        const SizedBox(height: 16),
-        SizedBox(
-          width: double.infinity,
-          height: 48,
-          child: FilledButton.icon(
-            onPressed: _submitting ? null : _onCreatePressed,
-            icon: _submitting
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation(Colors.black),
-                    ),
-                  )
-                : const Icon(Icons.add_task_rounded),
-            label: Text(_submitting ? 'Creating…' : 'Create Task'),
-          ),
+        const SizedBox(height: 24),
+Container(
+  width: double.infinity,
+  height: 54,
+  decoration: BoxDecoration(
+    gradient: LinearGradient(
+      colors: _submitting 
+          ? [
+              const Color(0xFF1A3A3A).withOpacity(0.4),
+              const Color(0xFF1A3A3A).withOpacity(0.3),
+            ]
+          : [
+              const Color(0xFF1A4D4D).withOpacity(0.6),
+              const Color(0xFF0D3333).withOpacity(0.5),
+            ],
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+    ),
+    borderRadius: BorderRadius.circular(16),
+    border: Border.all(
+      color: _submitting 
+          ? Colors.white.withOpacity(0.15)
+          : const Color(0xFF4DD8D8).withOpacity(0.4),
+      width: 1.5,
+    ),
+    boxShadow: [
+      BoxShadow(
+        color: Colors.black.withOpacity(0.2),
+        blurRadius: 16,
+        offset: const Offset(0, 4),
+      ),
+      if (!_submitting)
+        BoxShadow(
+          color: const Color(0xFF4DD8D8).withOpacity(0.1),
+          blurRadius: 24,
+          offset: const Offset(0, 0),
         ),
+    ],
+  ),
+  child: Material(
+    color: Colors.transparent,
+    child: InkWell(
+      onTap: _submitting ? null : _onCreatePressed,
+      borderRadius: BorderRadius.circular(16),
+      splashColor: const Color(0xFF4DD8D8).withOpacity(0.2),
+      highlightColor: const Color(0xFF4DD8D8).withOpacity(0.1),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            // Left icon
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: _submitting
+                    ? Colors.white.withOpacity(0.08)
+                    : const Color(0xFF4DD8D8).withOpacity(0.15),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: _submitting
+                      ? Colors.white.withOpacity(0.1)
+                      : const Color(0xFF4DD8D8).withOpacity(0.3),
+                  width: 1,
+                ),
+              ),
+              child: _submitting
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          Color(0xFF4DD8D8),
+                        ),
+                      ),
+                    )
+                  : const Icon(
+                      Icons.task_alt_rounded,
+                      color: Color(0xFF4DD8D8),
+                      size: 18,
+                    ),
+            ),
+            
+            // Text
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Text(
+                  _submitting ? 'Creating Task…' : 'Create Task',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: _submitting 
+                        ? Colors.white60 
+                        : Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                    letterSpacing: 0.2,
+                  ),
+                ),
+              ),
+            ),
+            
+            // Right arrow
+            Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: _submitting
+                    ? Colors.white.withOpacity(0.05)
+                    : const Color(0xFF4DD8D8).withOpacity(0.12),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(
+                Icons.arrow_forward_ios_rounded,
+                color: _submitting 
+                    ? Colors.white30 
+                    : const Color(0xFF4DD8D8),
+                size: 14,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  ),
+),
+const SizedBox(height: 16),
+
+
+
       ],
     );
   }

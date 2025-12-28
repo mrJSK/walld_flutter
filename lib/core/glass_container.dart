@@ -73,30 +73,100 @@ class GlassContainer extends StatelessWidget {
     return boxShadow;
   }
 
-  // ✅ FIXED: Simplified backdrop filter logic - respect user blurMode only
+  // 🚀 OPTIMIZED: Smart BackdropFilter decision logic
   bool get shouldUseBackdropFilter {
-    if (effectiveBlur == 0) return false;
+    // FAST PATH 1: Skip blur entirely for very low values
+    if (effectiveBlur < 2.0) return false;
     
+    // FAST PATH 2: During interactions, never use expensive blur
+    if (isInteracting) return false;
+    
+    // Respect blurMode setting
     switch (blurMode) {
       case GlassBlurMode.none:
         return false;
       case GlassBlurMode.perWidget:
         return true;
       case GlassBlurMode.auto:
-        // Always use backdrop filter if user set blur > 0
-        return true;
+        // Only use backdrop filter for meaningful blur values
+        return effectiveBlur >= 2.0;
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    // 🚀 FAST PATH 1: Low blur values - skip BackdropFilter entirely (BIG FPS WIN)
+    if (effectiveBlur < 2.0) {
+      return _buildSolidContainer();
+    }
+    
+    // 🚀 FAST PATH 2: During interaction - use simple overlay (no blur) (BIG FPS WIN)
+    if (isInteracting) {
+      return _buildInteractionOverlay();
+    }
+    
+    // 🚀 HIGH QUALITY: Only use BackdropFilter for static, high-quality states
+    return _buildBackdropFilter();
+  }
+
+  /// 🚀 Solid container without blur - fastest rendering path
+  Widget _buildSolidContainer() {
+    final a = effectiveOpacity;
+    final fill = tint.withOpacity(a);
+    final effBorderOpacity = borderOpacity.clamp(0.0, 1.0);
+    final effBorderWidth = borderWidth;
+
+    final decoration = BoxDecoration(
+      color: fill,
+      borderRadius: borderRadius,
+      border: Border.all(
+        color: Colors.white.withOpacity(effBorderOpacity),
+        width: effBorderWidth,
+      ),
+      boxShadow: effectiveShadows,
+    );
+
+    return Container(
+      decoration: decoration,
+      padding: padding,
+      child: child,
+    );
+  }
+
+  /// 🚀 Simple overlay for interactions - no blur, reduced opacity
+  Widget _buildInteractionOverlay() {
+    // Reduced opacity during interaction for better performance
+    final interactionOpacity = effectiveOpacity * 0.7;
+    final fill = tint.withOpacity(interactionOpacity.clamp(0.0, 1.0));
+    final effBorderOpacity = borderOpacity.clamp(0.0, 1.0);
+    final effBorderWidth = borderWidth;
+
+    final decoration = BoxDecoration(
+      color: fill,
+      borderRadius: borderRadius,
+      border: Border.all(
+        color: Colors.white.withOpacity(effBorderOpacity),
+        width: effBorderWidth,
+      ),
+      boxShadow: effectiveShadows,
+    );
+
+    return Container(
+      decoration: decoration,
+      padding: padding,
+      child: child,
+    );
+  }
+
+  /// 🚀 High-quality BackdropFilter - only for static widgets
+  Widget _buildBackdropFilter() {
     final blurSigma = effectiveBlur.clamp(0.0, 30.0);
     final a = effectiveOpacity;
     
     // Tint fill
     final fill = tint.withOpacity(a);
     
-    // Full border (no performance reduction)
+    // Full border
     final effBorderOpacity = borderOpacity.clamp(0.0, 1.0);
     final effBorderWidth = borderWidth;
 
@@ -116,18 +186,14 @@ class GlassContainer extends StatelessWidget {
       child: child,
     );
 
-    // Fast path: no BackdropFilter
-    if (!shouldUseBackdropFilter) {
-      return body;
-    }
-
-    // High quality: per-widget BackdropFilter
+    // ✅ High quality BackdropFilter with optimizations
     return ClipRRect(
       borderRadius: borderRadius,
       child: BackdropFilter(
         filter: ImageFilter.blur(
           sigmaX: blurSigma,
           sigmaY: blurSigma,
+          tileMode: TileMode.clamp, // 🚀 Prevents edge artifacts + GPU optimization
         ),
         child: body,
       ),
