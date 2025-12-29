@@ -267,34 +267,80 @@ class _AttachmentTileState extends State<_AttachmentTile> {
   }
 
   Future<void> _open() async {
-    final path = _localPath;
-    if (path == null) return;
-    final mime = widget.attachment.mimeType;
-
-    if (mime.startsWith('image/')) {
-      await showDialog(
-        context: context,
-        builder: (_) => Dialog(
-          backgroundColor: Colors.black,
-          child: PhotoView(
-            imageProvider: FileImage(File(path)),
-          ),
+  final path = _localPath;
+  if (path == null) return;
+  final mime = widget.attachment.mimeType;
+  
+  if (mime.startsWith('image')) {
+    await showDialog(
+      context: context,
+      builder: (_) => Dialog(
+        backgroundColor: Colors.black,
+        child: Stack(
+          children: [
+            // Image viewer
+            PhotoView(
+              imageProvider: FileImage(File(path)),
+            ),
+            // Close button
+            Positioned(
+              top: 16,
+              right: 16,
+              child: IconButton(
+                icon: const Icon(Icons.close, color: Colors.white, size: 32),
+                onPressed: () => Navigator.of(context).pop(),
+                tooltip: 'Close',
+                style: IconButton.styleFrom(
+                  backgroundColor: Colors.black.withOpacity(0.5),
+                  padding: const EdgeInsets.all(12),
+                ),
+              ),
+            ),
+          ],
         ),
-      );
-    } else if (mime == 'application/pdf') {
+      ),
+    );
+  } else if (mime == 'application/pdf') {
+    // PLATFORM CHECK: Only use PDFView on mobile
+    if (Platform.isAndroid || Platform.isIOS) {
       await showDialog(
         context: context,
         builder: (_) => Dialog(
           backgroundColor: Colors.black,
-          child: PDFView(
-            filePath: path,
+          child: Stack(
+            children: [
+              // PDF viewer (mobile only)
+              PDFView(
+                filePath: path,
+              ),
+              // Close button
+              Positioned(
+                top: 16,
+                right: 16,
+                child: IconButton(
+                  icon: const Icon(Icons.close, color: Colors.white, size: 32),
+                  onPressed: () => Navigator.of(context).pop(),
+                  tooltip: 'Close',
+                  style: IconButton.styleFrom(
+                    backgroundColor: Colors.black.withOpacity(0.5),
+                    padding: const EdgeInsets.all(12),
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       );
     } else {
+      // On Windows/macOS/Linux - use system default PDF viewer
       await OpenFilex.open(path);
     }
+  } else {
+    // For all other file types, use system default
+    await OpenFilex.open(path);
   }
+}
+
 
   @override
   Widget build(BuildContext context) {
