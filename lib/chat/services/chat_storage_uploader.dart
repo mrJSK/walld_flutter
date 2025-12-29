@@ -11,6 +11,11 @@ class ChatStorageUploader {
   /// Ensure user is authenticated before upload
   static Future<void> _ensureAuth() async {
     final user = FirebaseAuth.instance.currentUser;
+    debugPrint("=== AUTH CHECK ===");
+    debugPrint("User authenticated: ${user != null}");
+    debugPrint("User ID: ${user?.uid}");
+    debugPrint("Is Anonymous: ${user?.isAnonymous}");
+    debugPrint("==================");
     if (user == null) {
       debugPrint('🔐 Signing in anonymously...');
       await FirebaseAuth.instance.signInAnonymously();
@@ -69,13 +74,13 @@ class ChatStorageUploader {
       // ✅ Wait + verify file exists before getting URL
       await Future.delayed(const Duration(seconds: 1));
       
-      // ✅ List files to verify upload
-      final listResult = await ref.parent!.listAll();
-      debugPrint('📂 Files in parent: ${listResult.items.length}');
+      //  ✅ List files to verify upload
+      // final listResult = await ref.parent!.listAll();
+      // debugPrint('📂 Files in parent: ${listResult.items.length}');
       
-      if (!listResult.items.any((item) => item.fullPath == storagePath)) {
-        throw Exception('❌ File not found in storage after upload');
-      }
+      // if (!listResult.items.any((item) => item.fullPath == storagePath)) {
+      //   throw Exception('❌ File not found in storage after upload');
+      // }
 
       // ✅ Get download URL with retry
       String? downloadUrl;

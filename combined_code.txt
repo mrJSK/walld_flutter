@@ -273,35 +273,34 @@ Future<void> main() async {
 
 /// Setup desktop window properties (Windows/macOS/Linux)
 Future<void> _setupDesktopWindow() async {
-  try {
+   try {
     await windowManager.ensureInitialized();
-
+    
     const windowOptions = WindowOptions(
       backgroundColor: Colors.black,
       titleBarStyle: TitleBarStyle.hidden,
-      skipTaskbar: false,
+      skipTaskbar: true,  // CHANGED: Hide from taskbar
     );
-
+    
     await windowManager.waitUntilReadyToShow(windowOptions, () async {
-      await windowManager.show();
+      await windowManager.show();  // Don't show the window
+      await windowManager.hide();  // ADDED: Explicitly hide the window
       await windowManager.setFullScreen(false);
-      await windowManager.maximize();
-
-      // Removed: setMovable (not supported)
+      // REMOVED: await windowManager.maximize()  // Don't maximize hidden window
       await windowManager.setResizable(false);
       await windowManager.setMinimizable(false);
       await windowManager.setClosable(false);
-
+      
       try {
         await windowManager.setAlwaysOnBottom(true);
       } catch (e) {
-        debugPrint('⚠️ Could not set window to bottom: $e');
+        debugPrint("Could not set window to bottom: $e");
       }
     });
-
-    debugPrint('✅ Desktop window configured');
+    
+    debugPrint("Desktop window configured (hidden, background mode)");
   } catch (e) {
-    debugPrint('❌ Desktop window setup failed: $e');
+    debugPrint("Desktop window setup failed: $e");
   }
 }
 
@@ -2114,30 +2113,100 @@ class GlassContainer extends StatelessWidget {
     return boxShadow;
   }
 
-  // ✅ FIXED: Simplified backdrop filter logic - respect user blurMode only
+  // 🚀 OPTIMIZED: Smart BackdropFilter decision logic
   bool get shouldUseBackdropFilter {
-    if (effectiveBlur == 0) return false;
+    // FAST PATH 1: Skip blur entirely for very low values
+    if (effectiveBlur < 2.0) return false;
     
+    // FAST PATH 2: During interactions, never use expensive blur
+    if (isInteracting) return false;
+    
+    // Respect blurMode setting
     switch (blurMode) {
       case GlassBlurMode.none:
         return false;
       case GlassBlurMode.perWidget:
         return true;
       case GlassBlurMode.auto:
-        // Always use backdrop filter if user set blur > 0
-        return true;
+        // Only use backdrop filter for meaningful blur values
+        return effectiveBlur >= 2.0;
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    // 🚀 FAST PATH 1: Low blur values - skip BackdropFilter entirely (BIG FPS WIN)
+    if (effectiveBlur < 2.0) {
+      return _buildSolidContainer();
+    }
+    
+    // 🚀 FAST PATH 2: During interaction - use simple overlay (no blur) (BIG FPS WIN)
+    if (isInteracting) {
+      return _buildInteractionOverlay();
+    }
+    
+    // 🚀 HIGH QUALITY: Only use BackdropFilter for static, high-quality states
+    return _buildBackdropFilter();
+  }
+
+  /// 🚀 Solid container without blur - fastest rendering path
+  Widget _buildSolidContainer() {
+    final a = effectiveOpacity;
+    final fill = tint.withOpacity(a);
+    final effBorderOpacity = borderOpacity.clamp(0.0, 1.0);
+    final effBorderWidth = borderWidth;
+
+    final decoration = BoxDecoration(
+      color: fill,
+      borderRadius: borderRadius,
+      border: Border.all(
+        color: Colors.white.withOpacity(effBorderOpacity),
+        width: effBorderWidth,
+      ),
+      boxShadow: effectiveShadows,
+    );
+
+    return Container(
+      decoration: decoration,
+      padding: padding,
+      child: child,
+    );
+  }
+
+  /// 🚀 Simple overlay for interactions - no blur, reduced opacity
+  Widget _buildInteractionOverlay() {
+    // Reduced opacity during interaction for better performance
+    final interactionOpacity = effectiveOpacity * 0.7;
+    final fill = tint.withOpacity(interactionOpacity.clamp(0.0, 1.0));
+    final effBorderOpacity = borderOpacity.clamp(0.0, 1.0);
+    final effBorderWidth = borderWidth;
+
+    final decoration = BoxDecoration(
+      color: fill,
+      borderRadius: borderRadius,
+      border: Border.all(
+        color: Colors.white.withOpacity(effBorderOpacity),
+        width: effBorderWidth,
+      ),
+      boxShadow: effectiveShadows,
+    );
+
+    return Container(
+      decoration: decoration,
+      padding: padding,
+      child: child,
+    );
+  }
+
+  /// 🚀 High-quality BackdropFilter - only for static widgets
+  Widget _buildBackdropFilter() {
     final blurSigma = effectiveBlur.clamp(0.0, 30.0);
     final a = effectiveOpacity;
     
     // Tint fill
     final fill = tint.withOpacity(a);
     
-    // Full border (no performance reduction)
+    // Full border
     final effBorderOpacity = borderOpacity.clamp(0.0, 1.0);
     final effBorderWidth = borderWidth;
 
@@ -2157,18 +2226,14 @@ class GlassContainer extends StatelessWidget {
       child: child,
     );
 
-    // Fast path: no BackdropFilter
-    if (!shouldUseBackdropFilter) {
-      return body;
-    }
-
-    // High quality: per-widget BackdropFilter
+    // ✅ High quality BackdropFilter with optimizations
     return ClipRRect(
       borderRadius: borderRadius,
       child: BackdropFilter(
         filter: ImageFilter.blur(
           sigmaX: blurSigma,
           sigmaY: blurSigma,
+          tileMode: TileMode.clamp, // 🚀 Prevents edge artifacts + GPU optimization
         ),
         child: body,
       ),
@@ -16372,6 +16437,52 @@ class FPSCounter extends StatelessWidget {
     );
   }
 }
+
+================================================================================
+
+# File: F:\WALLD_Flutter\walld_flutter\pubspec.yaml
+name: walld_flutter
+description: "A new Flutter project."
+publish_to: 'none'
+version: 0.1.0
+
+environment:
+  sdk: ^3.9.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  firebase_core: ^3.6.0  # Core Firebase
+  firebase_auth: ^5.3.1  # Email/password auth
+  cloud_firestore: ^5.4.4  # Metadata, tasks, org data
+  shared_preferences: ^2.3.0
+  flex_color_picker: ^3.5.0
+  firebase_storage: ^12.3.3  # Attachments
+  window_manager: ^0.3.7 # Window positioning/sizing control
+  screen_retriever: ^0.1.9  # or latest compatible
+  file_picker: ^6.1.1
+  csv: ^5.1.1
+  path_provider: ^2.1.4
+  path: ^1.9.0
+  image: ^4.2.0
+  mime: ^1.0.5
+  photo_view: ^0.15.0
+  flutter_pdfview: ^1.3.2
+  open_filex: ^4.5.0
+  intl: ^0.19.0
+  system_tray: ^2.0.3
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+
+================================================================================
+
+# File: F:\WALLD_Flutter\walld_flutter\firebase.json
+{"flutter":{"platforms":{"android":{"default":{"projectId":"wall-d-fcc76","appId":"1:272745497278:android:538512854c58fbab7794ef","fileOutput":"android/app/google-services.json"}},"dart":{"lib/firebase_options.dart":{"projectId":"wall-d-fcc76","configurations":{"android":"1:272745497278:android:538512854c58fbab7794ef","ios":"1:272745497278:ios:635ef9197be82e587794ef","macos":"1:272745497278:ios:635ef9197be82e587794ef","web":"1:272745497278:web:5e70e948a3b71cda7794ef","windows":"1:272745497278:web:a251ae5cafedf1077794ef"}}}}}}
 
 ================================================================================
 
