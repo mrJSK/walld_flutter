@@ -47,7 +47,6 @@ class _MessageBubbleState extends State<MessageBubble> {
   }
 
   /// Helper: Forces long strings to wrap by inserting zero-width spaces
-  /// This prevents "Right Overflowed" errors on long URLs or mashed text.
   String _breakLongLines(String text, int limit) {
     final words = text.split(' ');
     final List<String> processedWords = [];
@@ -73,10 +72,9 @@ class _MessageBubbleState extends State<MessageBubble> {
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
     
-    // WhatsApp style width (approx 75% of screen)
-    final maxBubbleWidth = screenWidth * 0.75; 
+    // 🔥 FIXED: Exactly 60% of the screen width
+    final maxBubbleWidth = screenWidth * 0.6; 
 
-    // Pre-process text to handle long unbreakable words
     final processedText = widget.message.text != null 
         ? _breakLongLines(widget.message.text!, 51) 
         : "";
@@ -84,6 +82,7 @@ class _MessageBubbleState extends State<MessageBubble> {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       child: Row(
+        // Align Right for Me, Left for Others
         mainAxisAlignment: widget.isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -100,7 +99,7 @@ class _MessageBubbleState extends State<MessageBubble> {
             const SizedBox(width: 8),
           ],
 
-          // 🔥 FIXED: Wrapped in Flexible to prevent "RenderFlex overflowed" crash
+          // 🔥 FIXED: Flexible prevents crash, ConstrainedBox limits to 60%
           Flexible(
             child: ConstrainedBox(
               constraints: BoxConstraints(maxWidth: maxBubbleWidth),
@@ -134,7 +133,6 @@ class _MessageBubbleState extends State<MessageBubble> {
                   Container(
                     padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
                     decoration: BoxDecoration(
-                      // Colors matching your screenshots
                       color: widget.isMe ? Colors.cyan.withOpacity(0.2) : Colors.white.withOpacity(0.08),
                       borderRadius: BorderRadius.only(
                         topLeft: const Radius.circular(18),
@@ -150,7 +148,7 @@ class _MessageBubbleState extends State<MessageBubble> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        // 1. TEXT CONTENT (Stack used for floating timestamp)
+                        // 1. TEXT CONTENT
                         if (processedText.isNotEmpty)
                           Stack(
                             children: [
@@ -169,7 +167,7 @@ class _MessageBubbleState extends State<MessageBubble> {
                                           height: 1.3,
                                         ),
                                       ),
-                                      // Invisible padding to reserve space for timestamp on last line
+                                      // Invisible padding for timestamp
                                       const TextSpan(
                                         text: "      \u200B\u200B\u200B\u200B\u200B\u200B   ",
                                         style: TextStyle(fontSize: 12, letterSpacing: 1),
@@ -178,7 +176,6 @@ class _MessageBubbleState extends State<MessageBubble> {
                                   ),
                                 ),
                               ),
-                              // Floating Timestamp Positioned at Bottom Right
                               Positioned(
                                 bottom: 0,
                                 right: 0,
@@ -219,7 +216,6 @@ class _MessageBubbleState extends State<MessageBubble> {
                               ),
                             ),
                           ),
-                          // If NO text, show timestamp below attachment
                           if (processedText.isEmpty)
                             Padding(
                               padding: const EdgeInsets.only(top: 4),
@@ -394,7 +390,6 @@ class _AttachmentTileState extends State<_AttachmentTile> {
     }
   }
 
-  // Helper to safely break filenames to avoid overflow
   String _breakLongFileName(String text, int limit) {
     final words = text.split(' ');
     final List<String> processedWords = [];
@@ -420,8 +415,6 @@ class _AttachmentTileState extends State<_AttachmentTile> {
   Widget build(BuildContext context) {
     final a = widget.attachment;
     final hasLocal = _localPath != null;
-
-    // Fix long filename overflow
     final processedFileName = _breakLongFileName(a.name, 40);
 
     return Container(
@@ -447,8 +440,10 @@ class _AttachmentTileState extends State<_AttachmentTile> {
               ),
               const SizedBox(width: 10),
               
-              // 🔥 EXPANDED: Prevents filename from pushing width beyond limit
-              Expanded(
+              // 🔥 FIXED: Changed 'Expanded' to 'Flexible'
+              // This ensures the bubble only grows as wide as the filename needs,
+              // rather than forcing the bubble to take the full 60% width for small files.
+              Flexible( 
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
