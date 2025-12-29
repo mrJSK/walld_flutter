@@ -70,10 +70,10 @@ class _CreatedTaskWorkspaceState extends State<CreatedTaskWorkspace> {
               ),
             ],
           ),
-          
+
           const SizedBox(height: 16),
 
-          // Tab buttons
+          // ✅ FIXED: Only 2 tabs (Details, Manager Communication) for View All
           Row(
             children: [
               Expanded(
@@ -88,7 +88,7 @@ class _CreatedTaskWorkspaceState extends State<CreatedTaskWorkspace> {
               Expanded(
                 child: _buildTabButton(
                   icon: Icons.support_agent,
-                  label: 'Manager Communication',
+                  label: 'Manager Comm',
                   isActive: activeView == 'manager',
                   onTap: () => setState(() => activeView = 'manager'),
                   activeColor: Colors.greenAccent,
@@ -155,7 +155,6 @@ class _CreatedTaskWorkspaceState extends State<CreatedTaskWorkspace> {
     switch (activeView) {
       case 'manager':
         return _buildManagerCommunication();
-
       case 'details':
       default:
         return ManagerTaskDetailsPanel(

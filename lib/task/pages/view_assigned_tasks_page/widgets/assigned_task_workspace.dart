@@ -31,20 +31,44 @@ class _AssignedTaskWorkspaceState extends State<AssignedTaskWorkspace> {
 
   String get currentUserUid => FirebaseAuth.instance.currentUser?.uid ?? '';
 
+  /// ✅ Determine user role
   TaskRole get role {
-    if (currentUserUid == widget.task.assignedByUid) {
-      return TaskRole.manager;
-    }
-    if (widget.task.isUserLead(currentUserUid)) {
-      return TaskRole.lead;
-    }
+    if (currentUserUid == widget.task.assignedByUid) return TaskRole.manager;
+    if (widget.task.isUserLead(currentUserUid)) return TaskRole.lead;
     return TaskRole.member;
   }
 
-  bool get showManagerComm =>
-      role == TaskRole.manager || role == TaskRole.lead;
+  /// ✅ NEW: Check if this is a single-member task
+  bool get isSingleMember => widget.task.assigneeCount == 1;
 
-  bool get showTeamCollab => role == TaskRole.lead || role == TaskRole.member;
+  /// ✅ NEW: Check if this is a group task
+  bool get isGroupTask => widget.task.assigneeCount > 1;
+
+  /// ✅ NEW: Show Manager Communication tab logic
+  bool get showManagerComm {
+    // Single member (Member): YES (Details, Manager Comm)
+    if (isSingleMember && role == TaskRole.member) return true;
+    
+    // Group task (Lead): YES (Details, Manager, Team)
+    if (isGroupTask && role == TaskRole.lead) return true;
+    
+    // Group task (Member): NO (Details, Team only)
+    return false;
+  }
+
+  /// ✅ NEW: Show Team Collaboration tab logic
+  bool get showTeamCollab {
+    // Single member: NO (only Details, Manager Comm)
+    if (isSingleMember) return false;
+    
+    // Group task (Lead): YES (Details, Manager, Team)
+    if (isGroupTask && role == TaskRole.lead) return true;
+    
+    // Group task (Member): YES (Details, Team)
+    if (isGroupTask && role == TaskRole.member) return true;
+    
+    return false;
+  }
 
   @override
   void initState() {
@@ -52,6 +76,7 @@ class _AssignedTaskWorkspaceState extends State<AssignedTaskWorkspace> {
     _validateActiveView();
   }
 
+  /// ✅ Ensure activeView is valid for current role and task type
   void _validateActiveView() {
     if (!showManagerComm && activeView == 'manager') {
       activeView = 'details';
@@ -102,39 +127,40 @@ class _AssignedTaskWorkspaceState extends State<AssignedTaskWorkspace> {
               ),
             ],
           ),
-          
+
           const SizedBox(height: 16),
 
-          // Tab buttons (responsive to role)
+          // ✅ Dynamic tab buttons based on role and task type
           _buildTabButtons(),
         ],
       ),
     );
   }
 
+  /// ✅ NEW: Build tabs dynamically based on visibility rules
   Widget _buildTabButtons() {
     final List<Widget> buttons = [];
 
-    // Task Details (always visible)
+    // 1. Task Details - ALWAYS VISIBLE
     buttons.add(
       Expanded(
         child: _buildTabButton(
           icon: Icons.info_outline,
-          label: 'Task Details',
+          label: 'Details',
           isActive: activeView == 'details',
           onTap: () => setState(() => activeView = 'details'),
         ),
       ),
     );
 
-    // Manager Communication (Manager + Lead)
+    // 2. Manager Communication - Conditional
     if (showManagerComm) {
       buttons.add(const SizedBox(width: 12));
       buttons.add(
         Expanded(
           child: _buildTabButton(
             icon: Icons.support_agent,
-            label: 'Manager Communication',
+            label: 'Manager',
             isActive: activeView == 'manager',
             onTap: () => setState(() => activeView = 'manager'),
             activeColor: Colors.cyanAccent,
@@ -143,14 +169,14 @@ class _AssignedTaskWorkspaceState extends State<AssignedTaskWorkspace> {
       );
     }
 
-    // Team Collaboration (Lead + Members)
+    // 3. Team Collaboration - Conditional
     if (showTeamCollab) {
       buttons.add(const SizedBox(width: 12));
       buttons.add(
         Expanded(
           child: _buildTabButton(
             icon: Icons.group,
-            label: 'Team Collaboration',
+            label: 'Team',
             isActive: activeView == 'team',
             onTap: () => setState(() => activeView = 'team'),
             activeColor: Colors.greenAccent,
@@ -213,20 +239,15 @@ class _AssignedTaskWorkspaceState extends State<AssignedTaskWorkspace> {
   }
 
   Widget _buildContent() {
-    if (!showManagerComm && activeView == 'manager') {
-      activeView = 'details';
-    }
-    if (!showTeamCollab && activeView == 'team') {
-      activeView = 'details';
-    }
+    // ✅ Validate view before rendering
+    if (!showManagerComm && activeView == 'manager') activeView = 'details';
+    if (!showTeamCollab && activeView == 'team') activeView = 'details';
 
     switch (activeView) {
       case 'manager':
         return _buildManagerCommunication();
-
       case 'team':
         return _buildTeamCollaboration();
-
       case 'details':
       default:
         return TaskDetailsPanel(
