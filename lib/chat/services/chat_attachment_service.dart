@@ -5,10 +5,35 @@ import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:archive/archive.dart';
+import 'package:flutter/foundation.dart';
 import '../models/chat_message.dart';
 
 class ChatAttachmentService {
   static const _prefsKey = 'chat_downloads_v1';
+
+  /// Decompress GZip file
+  static Future<File> decompressFile(File compressedFile, String originalFileName) async {
+    debugPrint("📦 Decompressing: ${compressedFile.path}");
+    
+    // Read compressed bytes
+    final compressedBytes = await compressedFile.readAsBytes();
+    
+    // Decompress using GZip
+    final decompressed = GZipDecoder().decodeBytes(compressedBytes);
+    
+    // Save decompressed file (remove .gz extension)
+    final decompressedPath = compressedFile.path.replaceAll('.gz', '');
+    final decompressedFile = File(decompressedPath);
+    await decompressedFile.writeAsBytes(decompressed);
+    
+    final compressedSize = compressedBytes.length / 1024; // KB
+    final decompressedSize = decompressed.length / 1024; // KB
+    
+    debugPrint("✅ Decompressed: ${compressedSize.toStringAsFixed(1)} KB → ${decompressedSize.toStringAsFixed(1)} KB");
+    
+    return decompressedFile;
+  }
 
   static Future<File> downloadToLocal({
     required String tenantId,
@@ -35,9 +60,14 @@ class ChatAttachmentService {
       await dir.create(recursive: true);
     }
 
-    final filePath = p.join(dir.path, attachment.name);
-    final file = File(filePath);
-    final sink = file.openWrite();
+    // Determine if file is compressed based on attachment metadata
+    final isCompressed = attachment.compressed;
+    
+    // Download with appropriate filename
+    final downloadFileName = isCompressed ? '${attachment.name}.gz' : attachment.name;
+    final downloadPath = p.join(dir.path, downloadFileName);
+    final downloadFile = File(downloadPath);
+    final sink = downloadFile.openWrite();
 
     final contentLength = response.contentLength ?? 0;
     int received = 0;
@@ -51,20 +81,45 @@ class ChatAttachmentService {
     }
 
     await sink.close();
+    debugPrint("📥 Downloaded file: ${downloadFile.path}");
+
+    // Handle decompression if needed
+    File finalFile;
+    if (isCompressed) {
+      try {
+        // Decompress the file
+        finalFile = await decompressFile(downloadFile, attachment.name);
+        
+        // Delete compressed file to save storage
+        try {
+          await downloadFile.delete();
+          debugPrint("🗑️ Deleted compressed file to save storage");
+        } catch (e) {
+          debugPrint("⚠️ Could not delete compressed file: $e");
+        }
+      } catch (e) {
+        debugPrint("❌ Decompression failed: $e");
+        // If decompression fails, use the downloaded file as-is
+        finalFile = downloadFile;
+      }
+    } else {
+      // Not compressed, use downloaded file directly
+      finalFile = downloadFile;
+    }
 
     await _persistDownload(
       tenantId: tenantId,
       conversationId: conversationId,
       messageId: messageId,
       attachmentIndex: attachmentIndex,
-      localPath: file.path,
+      localPath: finalFile.path,
       remoteUrl: attachment.url,
       mimeType: attachment.mimeType,
       fileName: attachment.name,
-      sizeBytes: await file.length(),
+      sizeBytes: await finalFile.length(),
     );
 
-    return file;
+    return finalFile;
   }
 
   static Future<Map<String, dynamic>> _loadMap() async {

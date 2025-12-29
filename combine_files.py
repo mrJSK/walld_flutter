@@ -7,7 +7,7 @@ from pathlib import Path
 # ============================================================================
 
 # Output file path where all content will be saved
-OUTPUT_FILE = "combined_code.txt"
+OUTPUT_FILE = r"F:\WALLD_Flutter\walld_flutter\APP_BUILDS_ZIP\combined_code.txt"
 
 # Set to True to include a visual file tree at the top of the output file
 INCLUDE_FILE_STRUCTURE = True
