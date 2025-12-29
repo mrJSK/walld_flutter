@@ -5,9 +5,6 @@ import 'package:photo_view/photo_view.dart';
 import '../models/chat_message.dart';
 import '../../task/utils/user_helper.dart';
 import 'dart:io';
-
-import 'package:flutter/material.dart';
-import '../models/chat_message.dart';
 import '../services/chat_attachment_service.dart';
 
 class MessageBubble extends StatefulWidget {
@@ -41,7 +38,6 @@ class _MessageBubbleState extends State<MessageBubble> {
       tenantId: widget.tenantId,
       userId: widget.message.senderId,
     );
-
     if (mounted) {
       setState(() {
         senderName = name;
@@ -50,137 +46,220 @@ class _MessageBubbleState extends State<MessageBubble> {
     }
   }
 
+  /// Helper: Forces long strings to wrap by inserting zero-width spaces
+  /// This prevents "Right Overflowed" errors on long URLs or mashed text.
+  String _breakLongLines(String text, int limit) {
+    final words = text.split(' ');
+    final List<String> processedWords = [];
+
+    for (var word in words) {
+      if (word.length > limit) {
+        final StringBuffer buffer = StringBuffer();
+        for (int i = 0; i < word.length; i++) {
+          buffer.write(word[i]);
+          if ((i + 1) % limit == 0 && i != word.length - 1) {
+            buffer.write('\u{200B}'); // Zero-width space
+          }
+        }
+        processedWords.add(buffer.toString());
+      } else {
+        processedWords.add(word);
+      }
+    }
+    return processedWords.join(' ');
+  }
+
   @override
   Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    
+    // WhatsApp style width (approx 75% of screen)
+    final maxBubbleWidth = screenWidth * 0.75; 
+
+    // Pre-process text to handle long unbreakable words
+    final processedText = widget.message.text != null 
+        ? _breakLongLines(widget.message.text!, 51) 
+        : "";
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       child: Row(
-        mainAxisAlignment:
-            widget.isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
+        mainAxisAlignment: widget.isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Avatar for other users (left side)
+          // Avatar (left for others)
           if (!widget.isMe) ...[
             CircleAvatar(
               radius: 16,
               backgroundColor: Colors.cyan.withOpacity(0.2),
               child: Text(
                 UserHelper.getUserInitials(senderName ?? 'U'),
-                style: const TextStyle(
-                  color: Colors.cyan,
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                ),
+                style: const TextStyle(color: Colors.cyan, fontSize: 12, fontWeight: FontWeight.bold),
               ),
             ),
             const SizedBox(width: 8),
           ],
 
-          // Message bubble
+          // 🔥 FIXED: Wrapped in Flexible to prevent "RenderFlex overflowed" crash
           Flexible(
-            child: Column(
-              crossAxisAlignment: widget.isMe
-                  ? CrossAxisAlignment.end
-                  : CrossAxisAlignment.start,
-              children: [
-                // Sender name (only for other users)
-                if (!widget.isMe) ...[
-                  Padding(
-                    padding: const EdgeInsets.only(left: 12, bottom: 2),
-                    child: isLoadingName
-                        ? const SizedBox(
-                            height: 10,
-                            width: 10,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 1,
-                              valueColor: AlwaysStoppedAnimation(Colors.white38),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: maxBubbleWidth),
+              child: Column(
+                crossAxisAlignment: widget.isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Sender name (only received messages)
+                  if (!widget.isMe) ...[
+                    Padding(
+                      padding: const EdgeInsets.only(left: 12, bottom: 2),
+                      child: isLoadingName
+                          ? const SizedBox(
+                              height: 10, width: 10,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 1, valueColor: AlwaysStoppedAnimation(Colors.white38),
+                              ),
+                            )
+                          : Text(
+                              senderName ?? 'Loading...',
+                              style: const TextStyle(
+                                color: Colors.white70, fontSize: 11, fontWeight: FontWeight.w600,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                             ),
-                          )
-                        : Text(
-                            senderName ?? 'Loading...',
-                            style: const TextStyle(
-                              color: Colors.white70,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
+                    ),
+                  ],
+
+                  // MAIN BUBBLE CONTAINER
+                  Container(
+                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+                    decoration: BoxDecoration(
+                      // Colors matching your screenshots
+                      color: widget.isMe ? Colors.cyan.withOpacity(0.2) : Colors.white.withOpacity(0.08),
+                      borderRadius: BorderRadius.only(
+                        topLeft: const Radius.circular(18),
+                        topRight: const Radius.circular(18),
+                        bottomLeft: Radius.circular(widget.isMe ? 18 : 4),
+                        bottomRight: Radius.circular(widget.isMe ? 4 : 18),
+                      ),
+                      border: Border.all(
+                        color: widget.isMe ? Colors.cyan.withOpacity(0.4) : Colors.white.withOpacity(0.1),
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // 1. TEXT CONTENT (Stack used for floating timestamp)
+                        if (processedText.isNotEmpty)
+                          Stack(
+                            children: [
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 4), 
+                                child: RichText(
+                                  softWrap: true,
+                                  overflow: TextOverflow.visible,
+                                  text: TextSpan(
+                                    children: [
+                                      TextSpan(
+                                        text: processedText,
+                                        style: TextStyle(
+                                          color: widget.isMe ? Colors.white : Colors.white70,
+                                          fontSize: 14,
+                                          height: 1.3,
+                                        ),
+                                      ),
+                                      // Invisible padding to reserve space for timestamp on last line
+                                      const TextSpan(
+                                        text: "      \u200B\u200B\u200B\u200B\u200B\u200B   ",
+                                        style: TextStyle(fontSize: 12, letterSpacing: 1),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                              // Floating Timestamp Positioned at Bottom Right
+                              Positioned(
+                                bottom: 0,
+                                right: 0,
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      _formatTime(widget.message.createdAt),
+                                      style: TextStyle(
+                                        color: widget.isMe ? Colors.white60 : Colors.white38,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                    if (widget.isMe) ...[
+                                      const SizedBox(width: 3),
+                                      Icon(Icons.done_all, size: 13, color: Colors.cyanAccent.withOpacity(0.8)),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+
+                        // 2. ATTACHMENTS
+                        if (widget.message.attachments.isNotEmpty) ...[
+                          if (processedText.isNotEmpty) const SizedBox(height: 8),
+                          ...List.generate(
+                            widget.message.attachments.length,
+                            (index) => Padding(
+                              padding: const EdgeInsets.only(top: 8),
+                              child: _AttachmentTile(
+                                tenantId: widget.tenantId,
+                                messageId: widget.message.id,
+                                conversationId: '',
+                                attachment: widget.message.attachments[index],
+                                attachmentIndex: index,
+                              ),
                             ),
                           ),
+                          // If NO text, show timestamp below attachment
+                          if (processedText.isEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Align(
+                                alignment: Alignment.centerRight,
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      _formatTime(widget.message.createdAt),
+                                      style: TextStyle(
+                                        color: widget.isMe ? Colors.white60 : Colors.white38,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                    if (widget.isMe) ...[
+                                      const SizedBox(width: 3),
+                                      Icon(Icons.done_all, size: 13, color: Colors.cyanAccent.withOpacity(0.8)),
+                                    ],
+                                  ],
+                                ),
+                              ),
+                            ),
+                        ],
+                      ],
+                    ),
                   ),
                 ],
-
-                // Message container
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 10,
-                  ),
-                  decoration: BoxDecoration(
-                    color: widget.isMe
-                        ? Colors.cyan.withOpacity(0.2)
-                        : Colors.white.withOpacity(0.08),
-                    borderRadius: BorderRadius.only(
-                      topLeft: const Radius.circular(16),
-                      topRight: const Radius.circular(16),
-                      bottomLeft: Radius.circular(widget.isMe ? 16 : 4),
-                      bottomRight: Radius.circular(widget.isMe ? 4 : 16),
-                    ),
-                    border: Border.all(
-                      color: widget.isMe
-                          ? Colors.cyan.withOpacity(0.4)
-                          : Colors.white.withOpacity(0.1),
-                    ),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (widget.message.text != null &&
-                          widget.message.text!.trim().isNotEmpty)
-                        Text(
-                          widget.message.text!,
-                          style: TextStyle(
-                            color: widget.isMe ? Colors.white : Colors.white70,
-                            fontSize: 14,
-                          ),
-                        ),
-                      if (widget.message.attachments.isNotEmpty)
-                        const SizedBox(height: 6),
-                      if (widget.message.attachments.isNotEmpty)
-                        ...List.generate(
-                          widget.message.attachments.length,
-                          (index) => _AttachmentTile(
-                            tenantId: widget.tenantId,
-                            messageId: widget.message.id,
-                            conversationId: '', // fill from parent shell if needed
-                            attachment: widget.message.attachments[index],
-                            attachmentIndex: index,
-                          ),
-                        ),
-                      const SizedBox(height: 4),
-                      Text(
-                        _formatTime(widget.message.createdAt),
-                        style: TextStyle(
-                          color: widget.isMe ? Colors.white38 : Colors.white24,
-                          fontSize: 10,
-                        ),
-                      ),
-                    ],
-                  ),
-
-                ),
-              ],
+              ),
             ),
           ),
 
-          // Avatar for current user (right side)
+          // Avatar (right for sent)
           if (widget.isMe) ...[
             const SizedBox(width: 8),
             CircleAvatar(
               radius: 16,
               backgroundColor: Colors.cyan.withOpacity(0.3),
-              child: const Icon(
-                Icons.person,
-                size: 16,
-                color: Colors.cyan,
-              ),
+              child: const Icon(Icons.person, size: 16, color: Colors.cyan),
             ),
           ],
         ],
@@ -191,22 +270,17 @@ class _MessageBubbleState extends State<MessageBubble> {
   String _formatTime(DateTime time) {
     final now = DateTime.now();
     final difference = now.difference(time);
-
-    if (difference.inMinutes < 1) {
-      return 'Just now';
-    } else if (difference.inHours < 1) {
-      return '${difference.inMinutes}m ago';
-    } else if (difference.inDays < 1) {
+    if (difference.inMinutes < 1) return 'Just now';
+    if (difference.inHours < 1) return '${difference.inMinutes}m';
+    if (difference.inDays < 1) {
       return '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
-    } else {
-      return '${time.day}/${time.month} ${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
     }
+    return '${time.day}/${time.month} ${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
   }
 }
+
 class _AttachmentTile extends StatefulWidget {
-  final String tenantId;
-  final String conversationId;
-  final String messageId;
+  final String tenantId, conversationId, messageId;
   final ChatAttachment attachment;
   final int attachmentIndex;
 
@@ -244,11 +318,7 @@ class _AttachmentTileState extends State<_AttachmentTile> {
   }
 
   Future<void> _download() async {
-    setState(() {
-      _downloading = true;
-      _progress = 0;
-    });
-
+    setState(() => _downloading = true);
     try {
       final file = await ChatAttachmentService.downloadToLocal(
         tenantId: widget.tenantId,
@@ -256,9 +326,7 @@ class _AttachmentTileState extends State<_AttachmentTile> {
         messageId: widget.messageId,
         attachmentIndex: widget.attachmentIndex,
         attachment: widget.attachment,
-        onProgress: (p) {
-          if (mounted) setState(() => _progress = p);
-        },
+        onProgress: (p) => mounted ? setState(() => _progress = p) : null,
       );
       if (mounted) setState(() => _localPath = file.path);
     } finally {
@@ -267,62 +335,25 @@ class _AttachmentTileState extends State<_AttachmentTile> {
   }
 
   Future<void> _open() async {
-  final path = _localPath;
-  if (path == null) return;
-  final mime = widget.attachment.mimeType;
-  
-  if (mime.startsWith('image')) {
-    await showDialog(
-      context: context,
-      builder: (_) => Dialog(
-        backgroundColor: Colors.black,
-        child: Stack(
-          children: [
-            // Image viewer
-            PhotoView(
-              imageProvider: FileImage(File(path)),
-            ),
-            // Close button
-            Positioned(
-              top: 16,
-              right: 16,
-              child: IconButton(
-                icon: const Icon(Icons.close, color: Colors.white, size: 32),
-                onPressed: () => Navigator.of(context).pop(),
-                tooltip: 'Close',
-                style: IconButton.styleFrom(
-                  backgroundColor: Colors.black.withOpacity(0.5),
-                  padding: const EdgeInsets.all(12),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  } else if (mime == 'application/pdf') {
-    // PLATFORM CHECK: Only use PDFView on mobile
-    if (Platform.isAndroid || Platform.isIOS) {
-      await showDialog(
+    final path = _localPath;
+    if (path == null) return;
+    final mime = widget.attachment.mimeType;
+
+    if (mime.startsWith('image/')) {
+      showDialog(
         context: context,
         builder: (_) => Dialog(
           backgroundColor: Colors.black,
           child: Stack(
             children: [
-              // PDF viewer (mobile only)
-              PDFView(
-                filePath: path,
-              ),
-              // Close button
+              PhotoView(imageProvider: FileImage(File(path))),
               Positioned(
-                top: 16,
-                right: 16,
+                top: 16, right: 16,
                 child: IconButton(
                   icon: const Icon(Icons.close, color: Colors.white, size: 32),
-                  onPressed: () => Navigator.of(context).pop(),
-                  tooltip: 'Close',
+                  onPressed: () => Navigator.pop(context),
                   style: IconButton.styleFrom(
-                    backgroundColor: Colors.black.withOpacity(0.5),
+                    backgroundColor: Colors.black54,
                     padding: const EdgeInsets.all(12),
                   ),
                 ),
@@ -331,91 +362,147 @@ class _AttachmentTileState extends State<_AttachmentTile> {
           ),
         ),
       );
+    } else if (mime == 'application/pdf') {
+      if (Platform.isAndroid || Platform.isIOS) {
+        showDialog(
+          context: context,
+          builder: (_) => Dialog(
+            backgroundColor: Colors.black,
+            child: Stack(
+              children: [
+                PDFView(filePath: path),
+                Positioned(
+                  top: 16, right: 16,
+                  child: IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white, size: 32),
+                    onPressed: () => Navigator.pop(context),
+                    style: IconButton.styleFrom(
+                      backgroundColor: Colors.black54,
+                      padding: const EdgeInsets.all(12),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      } else {
+        await OpenFilex.open(path);
+      }
     } else {
-      // On Windows/macOS/Linux - use system default PDF viewer
       await OpenFilex.open(path);
     }
-  } else {
-    // For all other file types, use system default
-    await OpenFilex.open(path);
   }
-}
 
+  // Helper to safely break filenames to avoid overflow
+  String _breakLongFileName(String text, int limit) {
+    final words = text.split(' ');
+    final List<String> processedWords = [];
+
+    for (var word in words) {
+      if (word.length > limit) {
+        final StringBuffer buffer = StringBuffer();
+        for (int i = 0; i < word.length; i++) {
+          buffer.write(word[i]);
+          if ((i + 1) % limit == 0 && i != word.length - 1) {
+            buffer.write('\u{200B}');
+          }
+        }
+        processedWords.add(buffer.toString());
+      } else {
+        processedWords.add(word);
+      }
+    }
+    return processedWords.join(' ');
+  }
 
   @override
   Widget build(BuildContext context) {
     final a = widget.attachment;
     final hasLocal = _localPath != null;
 
+    // Fix long filename overflow
+    final processedFileName = _breakLongFileName(a.name, 40);
+
     return Container(
-      margin: const EdgeInsets.only(top: 4),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.18),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.white24),
+        color: Colors.black.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withOpacity(0.2)),
       ),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(
-            a.mimeType.startsWith('image/')
-                ? Icons.image
-                : a.mimeType == 'application/pdf'
-                    ? Icons.picture_as_pdf
-                    : Icons.insert_drive_file,
-            color: Colors.cyanAccent,
-            size: 20,
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  a.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  '${(a.sizeBytes / 1024).toStringAsFixed(1)} KB',
-                  style: const TextStyle(
-                    color: Colors.white38,
-                    fontSize: 11,
-                  ),
-                ),
-                if (_downloading)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4.0),
-                    child: LinearProgressIndicator(
-                      value: _progress,
-                      minHeight: 3,
-                      backgroundColor: Colors.white10,
-                      valueColor: const AlwaysStoppedAnimation<Color>(
-                        Colors.cyanAccent,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                a.mimeType.startsWith('image/') ? Icons.image :
+                a.mimeType == 'application/pdf' ? Icons.picture_as_pdf :
+                Icons.insert_drive_file,
+                color: Colors.cyanAccent,
+                size: 20,
+              ),
+              const SizedBox(width: 10),
+              
+              // 🔥 EXPANDED: Prevents filename from pushing width beyond limit
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      processedFileName,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                        height: 1.2,
                       ),
+                      softWrap: true,
                     ),
-                  ),
-              ],
+                    const SizedBox(height: 2),
+                    Text(
+                      '${(a.sizeBytes / 1024).toStringAsFixed(1)} KB',
+                      style: const TextStyle(color: Colors.white54, fontSize: 11),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: _downloading ? null : (hasLocal ? _open : _download),
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: Text(
+                _downloading ? 'Downloading...' : (hasLocal ? 'OPEN' : 'DOWNLOAD'),
+                style: const TextStyle(
+                  color: Colors.cyanAccent,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
             ),
           ),
-          const SizedBox(width: 8),
-          TextButton(
-            onPressed: _downloading
-                ? null
-                : hasLocal
-                    ? _open
-                    : _download,
-            child: Text(
-              hasLocal ? 'Open' : 'Download',
-              style: const TextStyle(color: Colors.cyanAccent, fontSize: 12),
+          if (_downloading)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: LinearProgressIndicator(
+                value: _progress,
+                minHeight: 2,
+                backgroundColor: Colors.white12,
+                valueColor: const AlwaysStoppedAnimation(Colors.cyanAccent),
+              ),
             ),
-          ),
         ],
       ),
     );
